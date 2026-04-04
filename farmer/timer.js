@@ -1,13 +1,4 @@
-var H_RADIUS = 15;
-var V_RADIUS = 15;
-var CHEST_SEARCH_RADIUS = 16;
 var TIMER_ID = 1;
-var MOVE_SPEED = 0.5;
-var HARVEST_BATCH = 8;
-var CROP_REACH_SQ = 3.0;
-var CHEST_REACH_SQ = 4.0;
-var PICKUP_RADIUS = 1.8;
-var COBBLEMON_BERRY_DROP_COUNT = 3;
 
 var BlockPos = Java.type("net.minecraft.core.BlockPos");
 var AABB = Java.type("net.minecraft.world.phys.AABB");
@@ -68,6 +59,7 @@ function timer(event) {
 function doSearchCrop(npc) {
     var level = npc.getMCEntity().level();
     var cropPos = findNearestMatureCrop(level, npc);
+    var moveSpeed = getCfgFloat(npc, "farm_cfg_move_speed", 0.5);
 
     if (cropPos == null) {
         stopNavigation(npc);
@@ -76,28 +68,33 @@ function doSearchCrop(npc) {
 
     setTargetPos(npc, cropPos);
     npc.getStoreddata().put("farm_state", "move_to_crop");
-    moveNpcToPos(npc, cropPos, MOVE_SPEED);
+    moveNpcToPos(npc, cropPos, moveSpeed);
 }
 
 function doMoveToCrop(npc) {
     var pos = getTargetPos(npc);
+    var cropReachSq = getCfgFloat(npc, "farm_cfg_crop_reach_sq", 3.0);
+    var moveSpeed = getCfgFloat(npc, "farm_cfg_move_speed", 0.5);
+
     if (pos == null) {
         npc.getStoreddata().put("farm_state", "search_crop");
         return;
     }
 
-    if (distanceSqToPos(npc, pos) <= CROP_REACH_SQ) {
+    if (distanceSqToPos(npc, pos) <= cropReachSq) {
         stopNavigation(npc);
         npc.getStoreddata().put("farm_state", "harvest_crop");
         return;
     }
 
-    moveNpcToPos(npc, pos, MOVE_SPEED);
+    moveNpcToPos(npc, pos, moveSpeed);
 }
 
 function doHarvestCrop(npc) {
     var level = npc.getMCEntity().level();
     var pos = getTargetPos(npc);
+    var harvestBatch = getCfgInt(npc, "farm_cfg_harvest_batch", 8);
+
     if (pos == null) {
         npc.getStoreddata().put("farm_state", "search_crop");
         return;
@@ -124,7 +121,7 @@ function doHarvestCrop(npc) {
         var batch = parseIntSafe(npc.getStoreddata().get("farm_batch_count"), 0) + 1;
         npc.getStoreddata().put("farm_batch_count", "" + batch);
 
-        if (batch >= HARVEST_BATCH) {
+        if (batch >= harvestBatch) {
             npc.getStoreddata().put("farm_state", "move_to_chest");
             moveNpcToChest(npc);
         } else {
@@ -136,19 +133,22 @@ function doHarvestCrop(npc) {
 }
 
 function doMoveToChest(npc) {
+    var chestReachSq = getCfgFloat(npc, "farm_cfg_chest_reach_sq", 4.0);
+    var moveSpeed = getCfgFloat(npc, "farm_cfg_move_speed", 0.5);
+
     if (!hasBoundChest(npc)) {
         npc.getStoreddata().put("farm_state", "search_crop");
         return;
     }
 
     var chestPos = getBoundChestPos(npc);
-    if (distanceSqToPos(npc, chestPos) <= CHEST_REACH_SQ) {
+    if (distanceSqToPos(npc, chestPos) <= chestReachSq) {
         stopNavigation(npc);
         npc.getStoreddata().put("farm_state", "deposit");
         return;
     }
 
-    moveNpcToPos(npc, chestPos, MOVE_SPEED);
+    moveNpcToPos(npc, chestPos, moveSpeed);
 }
 
 function doDeposit(npc) {
@@ -172,18 +172,6 @@ function doDeposit(npc) {
     }
 
     npc.getStoreddata().put("farm_state", "search_crop");
-}
-
-function bindChestOnce(npc) {
-    if (hasBoundChest(npc)) return;
-
-    var level = npc.getMCEntity().level();
-    var chestPos = findNearestChestPos(level, npc);
-    if (chestPos == null) return;
-
-    npc.getStoreddata().put("farm_chest_x", "" + chestPos.getX());
-    npc.getStoreddata().put("farm_chest_y", "" + chestPos.getY());
-    npc.getStoreddata().put("farm_chest_z", "" + chestPos.getZ());
 }
 
 function hasBoundChest(npc) {
@@ -213,13 +201,15 @@ function findNearestMatureCrop(level, npc) {
     var cx = Math.floor(npc.getX());
     var cy = Math.floor(npc.getY());
     var cz = Math.floor(npc.getZ());
+    var hRadius = getCfgInt(npc, "farm_cfg_h_radius", 15);
+    var vRadius = getCfgInt(npc, "farm_cfg_v_radius", 15);
 
     var bestPos = null;
     var bestDist = 999999999;
 
-    for (var y = cy - V_RADIUS; y <= cy + V_RADIUS; y++) {
-        for (var x = cx - H_RADIUS; x <= cx + H_RADIUS; x++) {
-            for (var z = cz - H_RADIUS; z <= cz + H_RADIUS; z++) {
+    for (var y = cy - vRadius; y <= cy + vRadius; y++) {
+        for (var x = cx - hRadius; x <= cx + hRadius; x++) {
+            for (var z = cz - hRadius; z <= cz + hRadius; z++) {
                 var pos = BlockPos.containing(x, y, z);
                 var state = level.getBlockState(pos);
 
@@ -382,7 +372,8 @@ function harvestCobblemonPlant(level, pos, state, npc) {
 
         if (isCobblemonBerry(state)) {
             var berryItemId = String(BuiltInRegistries.BLOCK.getKey(block));
-            var berryStack = npc.getWorld().createItem(berryItemId, 0, COBBLEMON_BERRY_DROP_COUNT);
+            var berryDropCount = getCfgInt(npc, "farm_cfg_cobblemon_berry_drop_count", 3);
+            var berryStack = npc.getWorld().createItem(berryItemId, 0, berryDropCount);
             if (berryStack != null && !berryStack.isEmpty()) {
                 cargo.add(berryStack.getMCItemStack().copy());
             }
@@ -397,9 +388,10 @@ function harvestCobblemonPlant(level, pos, state, npc) {
 }
 
 function collectDropsIntoCargo(level, pos, npc) {
+    var pickupRadius = getCfgFloat(npc, "farm_cfg_pickup_radius", 1.8);
     var box = new AABB(
-        pos.getX() + 0.5 - PICKUP_RADIUS, pos.getY() - 0.5, pos.getZ() + 0.5 - PICKUP_RADIUS,
-        pos.getX() + 0.5 + PICKUP_RADIUS, pos.getY() + 1.5, pos.getZ() + 0.5 + PICKUP_RADIUS
+        pos.getX() + 0.5 - pickupRadius, pos.getY() - 0.5, pos.getZ() + 0.5 - pickupRadius,
+        pos.getX() + 0.5 + pickupRadius, pos.getY() + 1.5, pos.getZ() + 0.5 + pickupRadius
     );
 
     var list = level.getEntitiesOfClass(ItemEntity.class, box);
@@ -490,7 +482,7 @@ function moveNpcToPos(npc, pos, speed) {
 
 function moveNpcToChest(npc) {
     if (!hasBoundChest(npc)) return;
-    moveNpcToPos(npc, getBoundChestPos(npc), MOVE_SPEED);
+    moveNpcToPos(npc, getBoundChestPos(npc), getCfgFloat(npc, "farm_cfg_move_speed", 0.5));
 }
 
 function stopNavigation(npc) {
@@ -504,44 +496,6 @@ function distanceSqToPos(npc, pos) {
     var dy = pos.getY() - npc.getY();
     var dz = (pos.getZ() + 0.5) - npc.getZ();
     return dx * dx + dy * dy + dz * dz;
-}
-
-function findNearestChestPos(level, npc) {
-    var cx = Math.floor(npc.getX());
-    var cy = Math.floor(npc.getY());
-    var cz = Math.floor(npc.getZ());
-
-    var best = null;
-    var bestDist = 999999999;
-
-    for (var y = cy - V_RADIUS; y <= cy + V_RADIUS; y++) {
-        for (var x = cx - CHEST_SEARCH_RADIUS; x <= cx + CHEST_SEARCH_RADIUS; x++) {
-            for (var z = cz - CHEST_SEARCH_RADIUS; z <= cz + CHEST_SEARCH_RADIUS; z++) {
-                var pos = BlockPos.containing(x, y, z);
-                var state = level.getBlockState(pos);
-                if (state == null || state.isAir()) continue;
-
-                var blockId = String(BuiltInRegistries.BLOCK.getKey(state.getBlock()));
-                if (blockId.indexOf("chest") === -1 && blockId.indexOf("barrel") === -1) continue;
-
-                var be = level.getBlockEntity(pos);
-                if (be == null) continue;
-                if (!(be instanceof Container)) continue;
-
-                var dx = x - cx;
-                var dy = y - cy;
-                var dz = z - cz;
-                var distSq = dx * dx + dy * dy + dz * dz;
-
-                if (distSq < bestDist) {
-                    bestDist = distSq;
-                    best = pos;
-                }
-            }
-        }
-    }
-
-    return best;
 }
 
 function ensureRuntime(npc) {
@@ -577,8 +531,26 @@ function getTargetPos(npc) {
 
 function parseIntSafe(s, def) {
     try {
-        return parseInt("" + s);
+        var value = parseInt("" + s, 10);
+        return isNaN(value) ? def : value;
     } catch (e) {
         return def;
     }
+}
+
+function parseFloatSafe(s, def) {
+    try {
+        var value = parseFloat("" + s);
+        return isNaN(value) ? def : value;
+    } catch (e) {
+        return def;
+    }
+}
+
+function getCfgInt(npc, key, def) {
+    return parseIntSafe(npc.getStoreddata().get(key), def);
+}
+
+function getCfgFloat(npc, key, def) {
+    return parseFloatSafe(npc.getStoreddata().get(key), def);
 }
