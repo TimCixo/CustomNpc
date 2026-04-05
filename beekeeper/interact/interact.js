@@ -36,13 +36,11 @@ function readRefreshCoupon(player, item) {
         var tag = customData.copyTag();
         var couponType = "" + tag.getString("quest_coupon_type");
         var couponId = "" + tag.getString("quest_coupon_id");
-        var couponOwner = "" + tag.getString("quest_coupon_owner");
         if (couponType != "beekeeper_refresh" || couponId.length == 0) return null;
-        if (couponOwner != getPlayerName(player)) return null;
 
         var couponKey = getCouponKey(couponId);
         var state = "" + player.getStoreddata().get(couponKey);
-        if (state != "issued") return null;
+        if (state == "used") return null;
 
         return {
             couponId: couponId
@@ -106,14 +104,6 @@ function markCouponUsed(player, couponId) {
 
 function getCouponKey(couponId) {
     return "quest_coupon_" + couponId;
-}
-
-function getPlayerName(player) {
-    try {
-        return "" + player.getName();
-    } catch (e) {
-        return "" + player.getDisplayName();
-    }
 }
 
 function cancelInteraction(event, player) {

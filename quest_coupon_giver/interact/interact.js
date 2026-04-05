@@ -16,16 +16,13 @@ var COUPON_TYPE = "beekeeper_refresh";
 function interact(event) {
     var player = event.player;
     var couponId = createCouponId();
-    var item = createCouponItem(player, couponId);
+    var item = createCouponItem(couponId);
     if (item == null || item.isEmpty()) {
         player.message("§cНе удалось создать купон.");
         return;
     }
 
-    registerCoupon(player, couponId);
-
     if (!giveItemToPlayer(player, item)) {
-        unregisterCoupon(player, couponId);
         player.message("§cНе удалось выдать купон. Освободи место в инвентаре.");
         return;
     }
@@ -41,19 +38,7 @@ function createCouponId() {
     }
 }
 
-function registerCoupon(player, couponId) {
-    player.getStoreddata().put(getCouponKey(couponId), "issued");
-}
-
-function unregisterCoupon(player, couponId) {
-    player.getStoreddata().remove(getCouponKey(couponId));
-}
-
-function getCouponKey(couponId) {
-    return "quest_coupon_" + couponId;
-}
-
-function createCouponItem(player, couponId) {
+function createCouponItem(couponId) {
     try {
         var itemType = BuiltInRegistries.ITEM.get(ResourceLocation.parse(COUPON_ITEM_ID));
         if (itemType == null) return null;
@@ -61,7 +46,7 @@ function createCouponItem(player, couponId) {
         var mcStack = new MCItemStack(itemType);
         if (mcStack == null || mcStack.isEmpty()) return null;
 
-        applyCouponPresentation(mcStack, player, couponId);
+        applyCouponPresentation(mcStack, couponId);
 
         var item = NpcAPI.Instance().getIItemStack(mcStack);
         if (item == null || item.isEmpty()) return null;
@@ -73,11 +58,10 @@ function createCouponItem(player, couponId) {
     }
 }
 
-function applyCouponPresentation(mcStack, player, couponId) {
+function applyCouponPresentation(mcStack, couponId) {
     var tag = new CompoundTag();
     tag.putString("quest_coupon_type", COUPON_TYPE);
     tag.putString("quest_coupon_id", couponId);
-    tag.putString("quest_coupon_owner", getPlayerName(player));
 
     mcStack.set(DataComponents.CUSTOM_NAME, Component.literal("§eКупон на обновление заданий"));
     mcStack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
@@ -88,7 +72,7 @@ function buildCouponLore() {
     var lines = new CouponArrayList();
     lines.add(Component.literal("Обновляет все задания выбранного NPC."));
     lines.add(Component.literal("Чтобы применить, нажми ПКМ по NPC."));
-    lines.add(Component.literal("§8Одноразовый персональный купон."));
+    lines.add(Component.literal("§8Одноразовый купон."));
     return lines;
 }
 
@@ -122,12 +106,4 @@ function putInFirstEmptySlot(player, item) {
     } catch (e) {}
 
     return false;
-}
-
-function getPlayerName(player) {
-    try {
-        return "" + player.getName();
-    } catch (e) {
-        return "" + player.getDisplayName();
-    }
 }
