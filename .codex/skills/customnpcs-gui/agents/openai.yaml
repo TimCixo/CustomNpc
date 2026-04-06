@@ -1,0 +1,7 @@
+interface:
+  display_name: "CustomNPCs GUI"
+  short_description: "Build safe scripted GUI for CustomNPCs 1.21.1"
+  default_prompt: "Use $customnpcs-gui to create or refactor a safe scripted CustomNPCs GUI for this repository."
+
+policy:
+  allow_implicit_invocation: true
