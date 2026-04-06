@@ -120,5 +120,70 @@ Confirmed behavior of this workaround:
 
 Recommended files in this repository:
 
-- `docs/gui_scroll_buttons_demo.js` contains a working end-to-end demo
 - `modules/gui_scroll_menu.js` contains reusable helpers for scroll-driven GUI menus and text field persistence
+
+## Recommended UI Pattern
+
+Use the following pattern when building scripted GUI in this environment.
+
+### 1. Treat scroll as the button layer
+
+- Do not rely on `addButton(...)`, `addTexturedButton(...)`, or `addButtonList(...)`.
+- Represent actions as entries in `addScroll(...)`.
+- Read the selected action through `scroll.getSelection()[0]`.
+- Handle the action in `customGuiScroll(event)` immediately.
+
+### 2. Treat text fields as the editable state layer
+
+- Use `addTextField(...)` and `addTextArea(...)` for user-editable values.
+- Read current values from `event.gui` during `customGuiScroll(event)` or `customGuiClosed(event)`.
+- Do not expect values to survive a full GUI rebuild automatically.
+
+### 3. Persist state outside the GUI instance
+
+- Rebuilding the GUI creates a fresh instance, so field values must be restored manually.
+- Persist values through `player.getStoreddata()` when they must survive closing and reopening.
+- Rehydrate fields during GUI creation before opening it.
+- `player.getTempdata()` was not reliable for this reopen flow in the tested environment.
+
+### 4. Update the existing GUI instead of reopening it
+
+- After handling a scroll action, change labels, hints, or text field contents on the existing GUI.
+- Call `gui.update()` after those changes.
+- Do not call `player.showCustomGui(gui)` again just to refresh text.
+- Do not call `player.closeGui()` at the start of `interact(event)` before opening a new GUI, because that close/open overlap caused unstable reopen behavior and apparent "double-click to open" symptoms in testing.
+
+### 5. Keep hooks separated by responsibility
+
+- `interact(event)` should only build and open the GUI.
+- `customGuiScroll(event)` should resolve pseudo-button actions.
+- `customGuiClosed(event)` should persist current field values.
+- Avoid spreading GUI state across unrelated hooks unless it is stored explicitly through `storeddata`.
+
+### 6. Preferred structure
+
+Recommended flow:
+
+1. `interact(event)` checks whether a custom GUI is already open.
+2. `interact(event)` builds a fresh GUI and hydrates fields from `storeddata`.
+3. The player changes text fields and selects actions from the scroll menu.
+4. `customGuiScroll(event)` reads `event.gui`, resolves the selected index, applies the action, and calls `gui.update()`.
+5. `customGuiClosed(event)` saves the latest text field values back to `storeddata`.
+
+### 7. Reusable helper module
+
+Use `modules/gui_scroll_menu.js` for the stable parts of this pattern:
+
+- resolving the selected scroll index
+- reading and writing text components
+- storing and hydrating values through `storeddata`
+- checking GUI and scroll identity
+- safe `gui.update()`
+
+### 8. What to avoid
+
+- Native GUI button components for production logic
+- Player inventory slots in scripted GUI
+- Item slots and item renderers in scripted GUI
+- Forced close-and-reopen loops for ordinary updates
+- Assuming GUI component state persists automatically across new `createCustomGui(...)` calls
