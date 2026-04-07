@@ -1,0 +1,7 @@
+interface:
+  display_name: "CustomNPCs Custom Item"
+  short_description: "Create custom items with name, lore, and hidden metadata"
+  default_prompt: "Use $customnpcs-custom-item to create or refactor a CustomNPCs item with display name, lore, and technical metadata."
+
+policy:
+  allow_implicit_invocation: true

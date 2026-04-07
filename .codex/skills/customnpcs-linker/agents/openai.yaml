@@ -1,0 +1,7 @@
+interface:
+  display_name: "CustomNPCs Linker"
+  short_description: "Build linked main/sub NPC systems with linker items"
+  default_prompt: "Use $customnpcs-linker to create or refactor linked CustomNPCs main/sub NPC systems for this repository."
+
+policy:
+  allow_implicit_invocation: true
