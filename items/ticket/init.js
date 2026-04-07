@@ -54,9 +54,9 @@ function applyLegacyItemPresentation(item, linked) {
 
 function buildTicketLore() {
     var lines = new Ticket_ArrayList();
-    lines.add(Ticket_Component.literal("Entry ticket for the timed event."));
-    lines.add(Ticket_Component.literal("Right-click Main to bind it."));
-    lines.add(Ticket_Component.literal("Durability shows remaining time."));
+    lines.add(Ticket_Component.literal("Template ticket for Pokemon Catch."));
+    lines.add(Ticket_Component.literal("Operator can load it into Configurator."));
+    lines.add(Ticket_Component.literal("Issued tickets show remaining time."));
     return lines;
 }
 

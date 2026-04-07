@@ -19,7 +19,9 @@ var LINKER_TYPE = "pokemon_catch_linker";
 var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
 var LINKED_COMMAND_UUID_KEY = "pokemon_catch_linked_command_uuid";
 var SUB_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
-var CONFIG_PARTICIPANT_LEAF_MARKER = "pokemon_multiplier_config_participant_leaf";
+var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
+var TICKET_TEMPLATE_TEMP_KEY = "pokemon_catch_ticket_template_stack";
+var TICKET_NAME = "Event Ticket";
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
 var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
@@ -64,8 +66,8 @@ function interact(event) {
     ensureBaseTitle(npc);
     ensureManagerDefaults(npc);
 
-    if (isParticipantLeafForNpc(item, npc)) {
-        handleParticipantLeafUse(event, npc, player, item);
+    if (isParticipantTicketForNpc(item, npc)) {
+        handleParticipantTicketUse(event, npc, player, item);
         return;
     }
 
@@ -106,19 +108,19 @@ function showMainSummary(npc, player) {
 function handleRegistrationJoin(event, npc, player) {
     var playerName = getPlayerName(player);
     if (findParticipantIndex(npc, playerName) !== -1) {
-        if (hasParticipantLeaf(player, npc, playerName)) {
+        if (hasParticipantTicket(player, npc, playerName)) {
             player.message("You are already registered.");
-        } else if (giveParticipantLeafToPlayer(npc, player)) {
-            player.message("You are registered. Leaf restored.");
+        } else if (giveParticipantTicketToPlayer(npc, player)) {
+            player.message("You are registered. Ticket restored.");
         } else {
-            player.message("You are registered, but leaf restore failed.");
+            player.message("You are registered, but ticket restore failed.");
         }
         cancelInteraction(event, player);
         return;
     }
 
     addParticipantEntry(npc, playerName);
-    if (!giveParticipantLeafToPlayer(npc, player)) {
+    if (!giveParticipantTicketToPlayer(npc, player)) {
         removeParticipantEntry(npc, playerName);
         player.message("Registration failed.");
         cancelInteraction(event, player);
@@ -130,9 +132,9 @@ function handleRegistrationJoin(event, npc, player) {
     cancelInteraction(event, player);
 }
 
-function handleParticipantLeafUse(event, npc, player, item) {
-    if (!isParticipantLeafOwnedByPlayer(item, player)) {
-        player.message("This leaf belongs to another player.");
+function handleParticipantTicketUse(event, npc, player, item) {
+    if (!isParticipantTicketOwnedByPlayer(item, player)) {
+        player.message("This ticket belongs to another player.");
         cancelInteraction(event, player);
         return;
     }
@@ -147,7 +149,7 @@ function handleParticipantLeafUse(event, npc, player, item) {
         return;
     }
 
-    player.message("This leaf is inactive right now.");
+    player.message("This ticket is inactive right now.");
     cancelInteraction(event, player);
 }
 
@@ -384,10 +386,10 @@ function buildCurrentConfigEntries(mainNpc) {
     return entries;
 }
 
-function buildParticipantLeafLore(npc) {
+function buildParticipantTicketLore(npc) {
     var lore = [
-        "Use on Main NPC while registration is open to leave.",
-        "Use on Main NPC while counting is open to score Pokemon.",
+        "Issued by Main during registration.",
+        "Use on Main to leave or score while active.",
         "Configured species:"
     ];
 
@@ -404,28 +406,47 @@ function buildParticipantLeafLore(npc) {
     return lore;
 }
 
-function giveParticipantLeafToPlayer(npc, player) {
-    var item = createParticipantLeafItem(npc, player);
+function giveParticipantTicketToPlayer(npc, player) {
+    var item = createParticipantTicketItem(npc, player);
     if (item == null || item.isEmpty()) return false;
     return giveItemToPlayer(player, item);
 }
 
-function createParticipantLeafItem(npc, player) {
+function createParticipantTicketItem(npc, player) {
+    var templateItem = createTicketFromConfiguratorTemplate(npc);
+    if (templateItem != null && !templateItem.isEmpty()) {
+        if (!applyParticipantTicketData(templateItem, npc, player)) return null;
+        return templateItem;
+    }
+
     try {
         var itemType = PM_BuiltInRegistries.ITEM.get(PM_ResourceLocation.parse("minecraft:paper"));
         if (itemType == null) return null;
 
         var mcStack = new PM_MCItemStack(itemType);
-        var tag = new PM_CompoundTag();
-        tag.putString("config_type", CONFIG_PARTICIPANT_LEAF_MARKER);
-        tag.putString("main_uuid", getNpcUuid(npc));
-        tag.putString("participant_name", getPlayerName(player));
-
-        mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
-        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal("Participant Leaf"));
-        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantLeafLore(npc))));
+        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal(TICKET_NAME));
+        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantTicketLore(npc))));
 
         var item = PM_NpcAPI.Instance().getIItemStack(mcStack);
+        if (item == null || item.isEmpty()) return null;
+        item.setStackSize(1);
+        if (!applyParticipantTicketData(item, npc, player)) return null;
+        return item;
+    } catch (e) {
+        return null;
+    }
+}
+
+function createTicketFromConfiguratorTemplate(mainNpc) {
+    var configNpc = resolveConfigNpc(mainNpc);
+    if (configNpc == null) return null;
+
+    try {
+        var templateStack = configNpc.getTempdata().get(TICKET_TEMPLATE_TEMP_KEY);
+        if (templateStack == null || templateStack.isEmpty()) return null;
+
+        var copiedStack = templateStack.copy();
+        var item = PM_NpcAPI.Instance().getIItemStack(copiedStack);
         if (item == null || item.isEmpty()) return null;
         item.setStackSize(1);
         return item;
@@ -434,23 +455,56 @@ function createParticipantLeafItem(npc, player) {
     }
 }
 
-function isParticipantLeafForNpc(item, npc) {
+function applyParticipantTicketData(item, mainNpc, player) {
+    try {
+        var mcStack = item.getMCItemStack();
+        if (mcStack == null || mcStack.isEmpty()) return false;
+
+        var tag = getCustomTag(item);
+        if (tag == null) tag = new PM_CompoundTag();
+
+        tag.putString("item_type", TICKET_ITEM_TYPE);
+        tag.putString("main_uuid", getNpcUuid(mainNpc));
+        tag.putString("owner_uuid", getNpcUuid(player));
+        tag.putString("owner_name", getPlayerName(player));
+
+        mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
+        mcStack.set(PM_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
+        item.setStackSize(1);
+
+        try {
+            if (item.setDurabilityShow != null) item.setDurabilityShow(true);
+        } catch (e1) {}
+
+        try {
+            if (item.setDurabilityColor != null) item.setDurabilityColor(5635925);
+        } catch (e2) {}
+
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function isParticipantTicketForNpc(item, npc) {
     if (item == null || item.isEmpty()) return false;
 
     var tag = getCustomTag(item);
     if (tag == null) return false;
-    return safeTag(tag, "config_type") == CONFIG_PARTICIPANT_LEAF_MARKER
+    return safeTag(tag, "item_type") == TICKET_ITEM_TYPE
         && safeTag(tag, "main_uuid") == getNpcUuid(npc);
 }
 
-function isParticipantLeafOwnedByPlayer(item, player) {
-    return readCustomString(item, "participant_name") == getPlayerName(player);
+function isParticipantTicketOwnedByPlayer(item, player) {
+    var ownerUuid = readCustomString(item, "owner_uuid");
+    if (hasText(ownerUuid) && ownerUuid == getNpcUuid(player)) return true;
+    return readCustomString(item, "owner_name") == getPlayerName(player);
 }
 
-function hasParticipantLeaf(player, npc, playerName) {
+function hasParticipantTicket(player, npc, playerName) {
     try {
         var held = player.getMainhandItem();
-        if (isParticipantLeafForNpc(held, npc) && readCustomString(held, "participant_name") == playerName) {
+        if (isParticipantTicketForNpc(held, npc) && isParticipantTicketOwnedByPlayer(held, player)) {
             return true;
         }
 
@@ -460,8 +514,8 @@ function hasParticipantLeaf(player, npc, playerName) {
         var size = inv.getSize();
         for (var i = 0; i < size; i++) {
             var item = inv.getSlot(i);
-            if (!isParticipantLeafForNpc(item, npc)) continue;
-            if (readCustomString(item, "participant_name") == playerName) return true;
+            if (!isParticipantTicketForNpc(item, npc)) continue;
+            if (readCustomString(item, "owner_name") == playerName) return true;
         }
     } catch (e) {}
 

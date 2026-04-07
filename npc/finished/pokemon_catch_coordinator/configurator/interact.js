@@ -5,6 +5,8 @@ var PM_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
 var PM_ItemContainerContents = Java.type("net.minecraft.world.item.component.ItemContainerContents");
 var LINKER_TYPE = "pokemon_catch_linker";
 var LOCAL_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
+var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
+var TICKET_TEMPLATE_TEMP_KEY = "pokemon_catch_ticket_template_stack";
 
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
@@ -46,6 +48,11 @@ function interact(event) {
     if (!canManageConfig(npc, player)) {
         player.message("No access to config.");
         event.setCanceled(true);
+        return;
+    }
+
+    if (isTicketItem(item)) {
+        handleTicketTemplateCapture(event, npc, player, item);
         return;
     }
 
@@ -202,6 +209,18 @@ function bindToLinker(npc, player, item) {
 function handleShulkerImport(event, npc, player, item) {
     var importResult = importPokemonFromShulker(npc, player, item);
     player.message(importResult.message);
+    event.setCanceled(true);
+}
+
+function handleTicketTemplateCapture(event, npc, player, item) {
+    if (!captureTicketTemplate(npc, item)) {
+        player.message("Invalid ticket template.");
+        event.setCanceled(true);
+        return;
+    }
+
+    npc.getStoreddata().put(CONFIG_OWNER_KEY, getPlayerName(player));
+    player.message("Ticket template loaded into Configurator memory.");
     event.setCanceled(true);
 }
 
@@ -428,6 +447,33 @@ function readStoredOrFallback(npc, fallbackNpc, key, def) {
 function isLinker(item) {
     var tag = getCustomTag(item);
     return tag != null && readTag(tag, "linker_type") == LINKER_TYPE;
+}
+
+function isTicketItem(item) {
+    var tag = getCustomTag(item);
+    return tag != null && readTag(tag, "item_type") == TICKET_ITEM_TYPE;
+}
+
+function captureTicketTemplate(npc, item) {
+    if (item == null || item.isEmpty()) return false;
+
+    try {
+        var sourceStack = item.getMCItemStack();
+        if (sourceStack == null || sourceStack.isEmpty()) return false;
+
+        var tag = getCustomTag(item);
+        if (tag == null || readTag(tag, "item_type") != TICKET_ITEM_TYPE) return false;
+
+        var templateStack = sourceStack.copy();
+        try {
+            templateStack.remove(PM_DataComponents.CUSTOM_DATA);
+        } catch (e1) {}
+
+        npc.getTempdata().put(TICKET_TEMPLATE_TEMP_KEY, templateStack);
+        return true;
+    } catch (e) {
+        return false;
+    }
 }
 
 function isShulkerBoxItem(item) {
