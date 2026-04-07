@@ -308,6 +308,19 @@ function parseIntSafe(value, def) {
     }
 }
 
+function parseDurationToMs(value) {
+    var text = trimString(value);
+    var match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+    if (match == null) return 0;
+
+    var hours = parseIntSafe(match[1], -1);
+    var minutes = parseIntSafe(match[2], -1);
+    var seconds = parseIntSafe(match[3], -1);
+    if (hours < 0 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return 0;
+
+    return ((hours * 60 * 60) + (minutes * 60) + seconds) * 1000;
+}
+
 function trimString(value) {
     return ("" + value).replace(/^\s+|\s+$/g, "");
 }

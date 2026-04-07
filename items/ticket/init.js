@@ -1,13 +1,11 @@
 var Ticket_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var Ticket_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
-var Ticket_ItemLore = Java.type("net.minecraft.world.item.component.ItemLore");
 var Ticket_Component = Java.type("net.minecraft.network.chat.Component");
 var Ticket_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
-var Ticket_ArrayList = Java.type("java.util.ArrayList");
 
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_MAX_DAMAGE = 100;
-var TICKET_NAME = "Event Ticket";
+var TICKET_NAME = "Билет события";
 var TICKET_TEXTURE_SLOT = 1;
 var TICKET_TEXTURE_ID = "minecraft:paper";
 var TICKET_DURABILITY_COLOR_LINKED = 5635925;
@@ -31,7 +29,6 @@ function init(event) {
     mcStack.set(Ticket_DataComponents.CUSTOM_DATA, Ticket_CustomData.of(tag));
     mcStack.set(Ticket_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
     mcStack.set(Ticket_DataComponents.CUSTOM_NAME, Ticket_Component.literal(TICKET_NAME));
-    mcStack.set(Ticket_DataComponents.LORE, new Ticket_ItemLore(buildTicketLore()));
 }
 
 function applyLegacyItemPresentation(item, linked) {
@@ -51,15 +48,6 @@ function applyLegacyItemPresentation(item, linked) {
         return;
     }
 }
-
-function buildTicketLore() {
-    var lines = new Ticket_ArrayList();
-    lines.add(Ticket_Component.literal("Template ticket for Pokemon Catch."));
-    lines.add(Ticket_Component.literal("Operator can load it into Configurator."));
-    lines.add(Ticket_Component.literal("Issued tickets show remaining time."));
-    return lines;
-}
-
 function readOrCreateTag(mcStack) {
     try {
         var customData = mcStack.get(Ticket_DataComponents.CUSTOM_DATA);

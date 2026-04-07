@@ -21,7 +21,7 @@ var LINKED_COMMAND_UUID_KEY = "pokemon_catch_linked_command_uuid";
 var SUB_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_TEMPLATE_TEMP_KEY = "pokemon_catch_ticket_template_stack";
-var TICKET_NAME = "Event Ticket";
+var TICKET_NAME = "Билет события";
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
 var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
@@ -388,19 +388,17 @@ function buildCurrentConfigEntries(mainNpc) {
 
 function buildParticipantTicketLore(npc) {
     var lore = [
-        "Issued by Main during registration.",
-        "Use on Main to leave or score while active.",
-        "Configured species:"
+        "Поймай и принеси следующих покемонов:",
     ];
 
     var entries = buildCurrentConfigEntries(npc);
     if (entries.length <= 0) {
-        lore.push(" - no configured Pokemon");
+        lore.push(" - список пока пуст");
         return lore;
     }
 
     for (var i = 0; i < entries.length; i++) {
-        lore.push(" - " + normalizeConfiguredSpecies(entries[i].species) + ": x" + entries[i].multiplier);
+        lore.push(" - " + normalizeConfiguredSpecies(entries[i].species) + " x" + entries[i].multiplier);
     }
 
     return lore;
@@ -424,8 +422,6 @@ function createParticipantTicketItem(npc, player) {
         if (itemType == null) return null;
 
         var mcStack = new PM_MCItemStack(itemType);
-        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal(TICKET_NAME));
-        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantTicketLore(npc))));
 
         var item = PM_NpcAPI.Instance().getIItemStack(mcStack);
         if (item == null || item.isEmpty()) return null;
@@ -470,7 +466,13 @@ function applyParticipantTicketData(item, mainNpc, player) {
 
         mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
         mcStack.set(PM_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
+        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal(TICKET_NAME));
+        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantTicketLore(mainNpc))));
         item.setStackSize(1);
+
+        try {
+            if (item.setCustomName != null) item.setCustomName(TICKET_NAME);
+        } catch (e0) {}
 
         try {
             if (item.setDurabilityShow != null) item.setDurabilityShow(true);
