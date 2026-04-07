@@ -69,6 +69,7 @@ function stopCycle(npc) {
     try {
         npc.timers.stop(CONTROL_TIMER_ID);
     } catch (e) {}
+
 }
 
 function announceByMode(npc, message) {

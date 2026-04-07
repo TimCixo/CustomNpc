@@ -19,7 +19,6 @@ var LINKER_TYPE = "pokemon_catch_linker";
 var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
 var LINKED_COMMAND_UUID_KEY = "pokemon_catch_linked_command_uuid";
 var SUB_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
-
 var CONFIG_PARTICIPANT_LEAF_MARKER = "pokemon_multiplier_config_participant_leaf";
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
