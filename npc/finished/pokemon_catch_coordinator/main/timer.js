@@ -1,9 +1,17 @@
 var CONTROL_TIMER_ID = 1;
 var PM_ArrayList = Java.type("java.util.ArrayList");
 var PM_CommandSource = Java.type("net.minecraft.commands.CommandSource");
+
+var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
+
 var COMMAND_GUI_ID = 9211;
 var COMMAND_STATUS_AREA_ID = 9213;
+
+var CONFIG_TIMER_KEY = "pokemon_multiplier_config_timer";
+var CONFIG_INTERVAL_KEY = "pokemon_multiplier_config_interval";
 var CONFIG_CHAT_MODE_KEY = "pokemon_multiplier_config_chat_mode";
+var CONFIG_DEBUG_KEY = "pokemon_multiplier_config_debug";
+
 var CYCLE_RUNNING_KEY = "pokemon_multiplier_cycle_running";
 var CYCLE_PAUSED_KEY = "pokemon_multiplier_cycle_paused";
 var CYCLE_END_MS_KEY = "pokemon_multiplier_cycle_end_ms";
@@ -48,6 +56,7 @@ function timer(event) {
         data.put(CYCLE_NEXT_NOTICE_MS_KEY, "" + (now + intervalMs));
     }
 }
+
 function stopCycle(npc) {
     var data = npc.getStoreddata();
     data.put(CYCLE_RUNNING_KEY, "0");
@@ -63,8 +72,8 @@ function stopCycle(npc) {
 }
 
 function announceByMode(npc, message) {
-    var mode = readStoredOrDefault(npc.getStoreddata(), CONFIG_CHAT_MODE_KEY, "global");
-    if (mode == "local") {
+    var settings = buildCurrentSettings(npc);
+    if (settings.chatMode == "local") {
         sayLocal(npc, message);
         return;
     }
@@ -76,14 +85,34 @@ function announceByMode(npc, message) {
     }
 }
 
+function buildCurrentSettings(mainNpc) {
+    var configNpc = resolveConfigNpc(mainNpc);
+    var sourceNpc = configNpc == null ? mainNpc : configNpc;
+    var data = sourceNpc.getStoreddata();
+
+    return {
+        timer: readStoredOrDefault(data, CONFIG_TIMER_KEY, "00:00:00"),
+        interval: readStoredOrDefault(data, CONFIG_INTERVAL_KEY, "00:00:00"),
+        chatMode: readStoredOrDefault(data, CONFIG_CHAT_MODE_KEY, "local"),
+        debug: readStoredOrDefault(data, CONFIG_DEBUG_KEY, "false")
+    };
+}
+
+function resolveConfigNpc(mainNpc) {
+    var linkedUuid = "" + mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY);
+    if (!hasText(linkedUuid)) return null;
+
+    try {
+        return mainNpc.getWorld().getEntity(linkedUuid);
+    } catch (e) {
+        return null;
+    }
+}
+
 function runBroadcastCommand(npc, message) {
     var command = "bc " + sanitizeBroadcastText(message);
     var serverOutput = tryServerCommand(npc, command);
-    if (serverOutput != null) {
-        return true;
-    }
-
-    return false;
+    return serverOutput != null;
 }
 
 function tryServerCommand(npc, command) {
@@ -153,9 +182,7 @@ function sanitizeBroadcastText(text) {
 
 function stripLeadingSlash(command) {
     var cmd = trimString(command);
-    if (cmd.indexOf("/") === 0) {
-        return cmd.substring(1);
-    }
+    if (cmd.indexOf("/") === 0) return cmd.substring(1);
     return cmd;
 }
 
@@ -267,6 +294,7 @@ function isRegistrationModeEnabled(npc) {
 
 function readStoredOrDefault(data, key, def) {
     var value = trimString(data.get(key));
+    if (value == "null" || value == "undefined") return def;
     return hasText(value) ? value : def;
 }
 
@@ -286,7 +314,3 @@ function trimString(value) {
 function hasText(value) {
     return value != null && trimString(value).length > 0;
 }
-
-
-
-
