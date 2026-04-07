@@ -6,6 +6,7 @@ var Ticket_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_MAX_DAMAGE = 100;
 var TICKET_NAME = "Билет события";
+var TICKET_NAME_PREFIX = "Билет события игрока ";
 var TICKET_TEXTURE_SLOT = 1;
 var TICKET_TEXTURE_ID = "minecraft:paper";
 var TICKET_DURABILITY_COLOR_LINKED = 5635925;
@@ -24,16 +25,22 @@ function init(event) {
     if (!hasText(readTag(tag, "owner_name"))) tag.putString("owner_name", "");
 
     var linked = hasText(readTag(tag, "main_uuid"));
-    applyLegacyItemPresentation(item, linked);
+    var itemName = buildTicketName(tag);
+    applyLegacyItemPresentation(item, itemName, linked);
 
     mcStack.set(Ticket_DataComponents.CUSTOM_DATA, Ticket_CustomData.of(tag));
     mcStack.set(Ticket_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
-    mcStack.set(Ticket_DataComponents.CUSTOM_NAME, Ticket_Component.literal(TICKET_NAME));
+    mcStack.set(Ticket_DataComponents.CUSTOM_NAME, Ticket_Component.literal(itemName));
 }
 
-function applyLegacyItemPresentation(item, linked) {
+function buildTicketName(tag) {
+    var ownerName = readTag(tag, "owner_name");
+    return hasText(ownerName) ? (TICKET_NAME_PREFIX + ownerName) : TICKET_NAME;
+}
+
+function applyLegacyItemPresentation(item, itemName, linked) {
     try {
-        if (item.setCustomName != null) item.setCustomName(TICKET_NAME);
+        if (item.setCustomName != null) item.setCustomName(itemName);
     } catch (e1) {}
 
     try {

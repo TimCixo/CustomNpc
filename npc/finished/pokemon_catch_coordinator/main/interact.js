@@ -21,7 +21,9 @@ var LINKED_COMMAND_UUID_KEY = "pokemon_catch_linked_command_uuid";
 var SUB_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_TEMPLATE_TEMP_KEY = "pokemon_catch_ticket_template_stack";
-var TICKET_NAME = "Билет события";
+var REGISTRATION_COOLDOWN_MS = 5000;
+var REGISTRATION_COOLDOWN_PREFIX = "pokemon_multiplier_registration_cooldown_";
+var TICKET_NAME_PREFIX = "Билет события игрока ";
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
 var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
@@ -111,6 +113,13 @@ function showMainSummary(npc, player) {
 
 function handleRegistrationJoin(event, npc, player) {
     var playerName = getPlayerName(player);
+    var remainingCooldownMs = getRegistrationCooldownRemainingMs(npc, player);
+    if (remainingCooldownMs > 0) {
+        player.message("Подождите " + formatCooldownSeconds(remainingCooldownMs) + " сек.");
+        cancelInteraction(event, player);
+        return;
+    }
+
     if (findParticipantIndex(npc, playerName) !== -1) {
         if (hasParticipantTicket(player, npc, playerName)) {
             player.message("You are already registered.");
@@ -131,7 +140,8 @@ function handleRegistrationJoin(event, npc, player) {
         return;
     }
 
-    announceByMode(npc, playerName + " joined the event.");
+    setRegistrationCooldown(npc, player);
+    announceByMode(npc, playerName + " присоединился к событию.");
     player.message("Registration complete.");
     cancelInteraction(event, player);
 }
@@ -159,6 +169,13 @@ function handleParticipantTicketUse(event, npc, player, item) {
 
 function handleParticipantRemoval(event, npc, player, item) {
     var playerName = getPlayerName(player);
+    var remainingCooldownMs = getRegistrationCooldownRemainingMs(npc, player);
+    if (remainingCooldownMs > 0) {
+        player.message("Подождите " + formatCooldownSeconds(remainingCooldownMs) + " сек.");
+        cancelInteraction(event, player);
+        return;
+    }
+
     if (findParticipantIndex(npc, playerName) === -1) {
         player.message("You are not registered.");
         cancelInteraction(event, player);
@@ -167,7 +184,8 @@ function handleParticipantRemoval(event, npc, player, item) {
 
     removeParticipantEntry(npc, playerName);
     consumeMainhandItem(player, item);
-    announceByMode(npc, playerName + " left the event.");
+    setRegistrationCooldown(npc, player);
+    announceByMode(npc, playerName + " покинул событие.");
     player.message("You left the event.");
     cancelInteraction(event, player);
 }
@@ -298,6 +316,28 @@ function ensureManagerDefaults(mainNpc) {
     }
 }
 
+function getRegistrationCooldownRemainingMs(npc, player) {
+    try {
+        var key = REGISTRATION_COOLDOWN_PREFIX + getPlayerName(player);
+        var untilMs = parseIntSafe(npc.getTempdata().get(key), 0);
+        var remainingMs = untilMs - getNowMs();
+        return remainingMs > 0 ? remainingMs : 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function setRegistrationCooldown(npc, player) {
+    try {
+        var key = REGISTRATION_COOLDOWN_PREFIX + getPlayerName(player);
+        npc.getTempdata().put(key, "" + (getNowMs() + REGISTRATION_COOLDOWN_MS));
+    } catch (e) {}
+}
+
+function formatCooldownSeconds(ms) {
+    return Math.max(1, Math.ceil(ms / 1000));
+}
+
 function getManagerWhitelistText(mainNpc) {
     var configNpc = resolveConfigNpc(mainNpc);
     if (configNpc != null) {
@@ -390,9 +430,12 @@ function buildCurrentConfigEntries(mainNpc) {
     return entries;
 }
 
-function buildParticipantTicketLore(npc) {
+function buildParticipantTicketLore(npc, player) {
+    var stats = buildParticipantTicketStats(npc, player);
     var lore = [
-        "Поймай и принеси следующих покемонов:",
+        "ПКМ: правила и статус события.",
+        "Ваш результат: " + formatScore(stats.score) + " / " + stats.pcount,
+        "Целевые покемоны и множитель очков:",
     ];
 
     var entries = buildCurrentConfigEntries(npc);
@@ -406,6 +449,23 @@ function buildParticipantTicketLore(npc) {
     }
 
     return lore;
+}
+
+function buildParticipantTicketStats(npc, player) {
+    var playerName = getPlayerName(player);
+    var index = findParticipantIndex(npc, playerName);
+    if (index < 0) {
+        return {
+            score: 0,
+            pcount: 0
+        };
+    }
+
+    var data = npc.getStoreddata();
+    return {
+        score: parseFloatSafe(data.get(CYCLE_SCORE_PREFIX + index), 0),
+        pcount: parseIntSafe(data.get(CYCLE_PCOUNT_PREFIX + index), 0)
+    };
 }
 
 function giveParticipantTicketToPlayer(npc, player) {
@@ -459,6 +519,7 @@ function applyParticipantTicketData(item, mainNpc, player) {
     try {
         var mcStack = item.getMCItemStack();
         if (mcStack == null || mcStack.isEmpty()) return false;
+        var ticketName = buildParticipantTicketName(player);
 
         var tag = getCustomTag(item);
         if (tag == null) tag = new PM_CompoundTag();
@@ -470,12 +531,12 @@ function applyParticipantTicketData(item, mainNpc, player) {
 
         mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
         mcStack.set(PM_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
-        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal(TICKET_NAME));
-        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantTicketLore(mainNpc))));
+        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal(ticketName));
+        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore(buildParticipantTicketLore(mainNpc, player))));
         item.setStackSize(1);
 
         try {
-            if (item.setCustomName != null) item.setCustomName(TICKET_NAME);
+            if (item.setCustomName != null) item.setCustomName(ticketName);
         } catch (e0) {}
 
         try {
@@ -490,6 +551,10 @@ function applyParticipantTicketData(item, mainNpc, player) {
     } catch (e) {
         return false;
     }
+}
+
+function buildParticipantTicketName(player) {
+    return TICKET_NAME_PREFIX + getPlayerName(player);
 }
 
 function isParticipantTicketForNpc(item, npc) {
@@ -895,6 +960,10 @@ function normalizeMultiplier(value) {
     text = text.replace(/0+$/, "");
     text = text.replace(/\.$/, "");
     return text;
+}
+
+function getNowMs() {
+    return new Date().getTime();
 }
 
 function formatScore(value) {

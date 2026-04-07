@@ -87,6 +87,7 @@ function customGuiScroll(event) {
     try {
         var gui = event.gui;
         var scroll = event.scroll;
+        var player = event.player;
         var commandNpc = event.npc != null ? event.npc : ACTIVE_NPC;
         if (gui == null || gui.getID() != GUI_ID) return;
         if (commandNpc == null) return;
@@ -98,12 +99,12 @@ function customGuiScroll(event) {
             return;
         }
 
-        if (!canManageSystem(mainNpc, event.player)) return;
+        if (!canManageSystem(mainNpc, player)) return;
 
         if (scroll != null && scroll.getID() == ACTION_SCROLL_ID) {
-            handleActionScroll(mainNpc, gui, scroll);
+            handleActionScroll(mainNpc, player, gui, scroll);
         } else if (scroll != null && scroll.getID() == DANGER_SCROLL_ID) {
-            handleDangerScroll(mainNpc, event.player, gui, scroll);
+            handleDangerScroll(mainNpc, player, gui, scroll);
         }
     } catch (e) {}
 }
@@ -130,7 +131,7 @@ function createGui(player, mainNpc) {
     return gui;
 }
 
-function handleActionScroll(mainNpc, gui, scroll) {
+function handleActionScroll(mainNpc, player, gui, scroll) {
     var selected = getSelectedIndex(scroll);
     if (selected < 0 || selected >= ACTIONS.length) return;
 
@@ -148,7 +149,8 @@ function handleActionScroll(mainNpc, gui, scroll) {
         var teleported = teleportParticipantsToNpc(mainNpc);
         setCommandFeedback(gui, "Teleported: " + teleported + ".");
     } else if (selected == 4) {
-        setCommandFeedback(gui, buildLeaderboardSummaryText(mainNpc));
+        sendLeaderboardToPlayer(mainNpc, player);
+        setCommandFeedback(gui, "Leaderboard sent to chat.");
     }
 
     refreshCommandGuiState(gui, mainNpc);
@@ -425,11 +427,21 @@ function clearCycleEntries(mainNpc) {
 }
 
 function setCountingMode(mainNpc, enabled) {
-    mainNpc.getStoreddata().put(COUNTING_MODE_KEY, enabled ? "1" : "0");
+    var data = mainNpc.getStoreddata();
+    var wasEnabled = trimString(data.get(COUNTING_MODE_KEY)) == "1";
+    if (wasEnabled == enabled) return;
+
+    data.put(COUNTING_MODE_KEY, enabled ? "1" : "0");
+    announceByMode(mainNpc, enabled ? "Подсчет очков начат." : "Подсчет очков закончен.");
 }
 
 function setRegistrationMode(mainNpc, enabled) {
-    mainNpc.getStoreddata().put(REGISTRATION_MODE_KEY, enabled ? "1" : "0");
+    var data = mainNpc.getStoreddata();
+    var wasEnabled = trimString(data.get(REGISTRATION_MODE_KEY)) == "1";
+    if (wasEnabled == enabled) return;
+
+    data.put(REGISTRATION_MODE_KEY, enabled ? "1" : "0");
+    announceByMode(mainNpc, enabled ? "Регистрация начата." : "Регистрация окончена.");
 }
 
 function isCycleRunning(mainNpc) {
@@ -473,9 +485,30 @@ function buildLeaderboardSummaryText(mainNpc) {
     var lines = ["Leaderboard:"];
     var limit = Math.min(entries.length, 5);
     for (var i = 0; i < limit; i++) {
-        lines.push((i + 1) + ". " + entries[i].player + " " + formatScore(entries[i].score));
+        lines.push(
+            (i + 1) + ". " + entries[i].player
+            + ": " + formatScore(entries[i].score)
+            + " / " + entries[i].pcount
+        );
     }
     return lines.join("\n");
+}
+
+function sendLeaderboardToPlayer(mainNpc, player) {
+    var text = buildLeaderboardSummaryText(mainNpc);
+    var lines = text.split(/\r?\n/);
+
+    for (var i = 0; i < lines.length; i++) {
+        var line = trimString(lines[i]);
+        if (!hasText(line)) continue;
+        try {
+            mainNpc.sayTo(player, line);
+        } catch (e) {
+            try {
+                player.message(line);
+            } catch (e2) {}
+        }
+    }
 }
 
 function buildLeaderboardEntries(mainNpc) {

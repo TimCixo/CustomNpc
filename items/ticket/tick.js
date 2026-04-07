@@ -1,5 +1,8 @@
 var Ticket_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var Ticket_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
+var Ticket_ItemLore = Java.type("net.minecraft.world.item.component.ItemLore");
+var Ticket_Component = Java.type("net.minecraft.network.chat.Component");
+var Ticket_ArrayList = Java.type("java.util.ArrayList");
 
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_MAX_DAMAGE = 100;
@@ -9,6 +12,13 @@ var CYCLE_END_MS_KEY = "pokemon_multiplier_cycle_end_ms";
 var CYCLE_STARTED_MS_KEY = "pokemon_multiplier_cycle_started_ms";
 var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
 var CONFIG_TIMER_KEY = "pokemon_multiplier_config_timer";
+var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
+var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
+var CONFIG_MULTIPLIER_KEY_PREFIX = "pokemon_multiplier_config_multiplier_";
+var CYCLE_ENTRY_COUNT_KEY = "pokemon_multiplier_cycle_entry_count";
+var CYCLE_PLAYER_PREFIX = "pokemon_multiplier_cycle_player_";
+var CYCLE_SCORE_PREFIX = "pokemon_multiplier_cycle_score_";
+var CYCLE_PCOUNT_PREFIX = "pokemon_multiplier_cycle_pcount_";
 
 function tick(event) {
     var item = event.item;
@@ -23,7 +33,7 @@ function tick(event) {
 
     var mainNpc = resolveMainNpc(event, tag);
     var damage = computeTicketDamage(mainNpc);
-    applyTicketDamage(item, mcStack, tag, damage);
+    applyTicketState(item, mcStack, tag, damage, mainNpc);
 }
 
 function resolveMainNpc(event, tag) {
@@ -90,7 +100,7 @@ function resolveConfiguredTimerMs(mainNpc) {
     }
 }
 
-function applyTicketDamage(item, mcStack, tag, damage) {
+function applyTicketState(item, mcStack, tag, damage, mainNpc) {
     var clamped = clampDamage(damage);
 
     try {
@@ -104,6 +114,10 @@ function applyTicketDamage(item, mcStack, tag, damage) {
     try {
         if (item.setDurabilityValue != null) item.setDurabilityValue(computeDurabilityValue(clamped));
     } catch (e3) {}
+
+    try {
+        mcStack.set(Ticket_DataComponents.LORE, new Ticket_ItemLore(buildLore(buildTicketLore(mainNpc, tag))));
+    } catch (e4) {}
 }
 
 function isTicketPaper(item) {
@@ -133,6 +147,97 @@ function readTag(tag, key) {
     }
 }
 
+function buildTicketLore(mainNpc, tag) {
+    var stats = buildParticipantStats(mainNpc, tag);
+    var lore = [
+        "ПКМ: правила и статус события.",
+        "Ваш результат: " + formatScore(stats.score) + " / " + stats.pcount,
+        "Целевые покемоны и множитель очков:"
+    ];
+
+    var entries = buildCurrentConfigEntries(mainNpc);
+    if (entries.length <= 0) {
+        lore.push(" - список пока пуст");
+        return lore;
+    }
+
+    for (var i = 0; i < entries.length; i++) {
+        lore.push(" - " + normalizeConfiguredSpecies(entries[i].species) + " x" + entries[i].multiplier);
+    }
+
+    return lore;
+}
+
+function buildParticipantStats(mainNpc, tag) {
+    if (mainNpc == null) {
+        return {
+            score: 0,
+            pcount: 0
+        };
+    }
+
+    var playerName = trimString(readTag(tag, "owner_name"));
+    if (!hasText(playerName)) {
+        return {
+            score: 0,
+            pcount: 0
+        };
+    }
+
+    var data = mainNpc.getStoreddata();
+    var count = parseIntSafe(data.get(CYCLE_ENTRY_COUNT_KEY), 0);
+    for (var i = 0; i < count; i++) {
+        if (trimString(data.get(CYCLE_PLAYER_PREFIX + i)) != playerName) continue;
+        return {
+            score: parseFloatSafe(data.get(CYCLE_SCORE_PREFIX + i), 0),
+            pcount: parseIntSafe(data.get(CYCLE_PCOUNT_PREFIX + i), 0)
+        };
+    }
+
+    return {
+        score: 0,
+        pcount: 0
+    };
+}
+
+function buildCurrentConfigEntries(mainNpc) {
+    if (mainNpc == null) return [];
+
+    var sourceNpc = mainNpc;
+    try {
+        var configUuid = trimString(mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY));
+        if (hasText(configUuid)) {
+            var configNpc = mainNpc.getWorld().getEntity(configUuid);
+            if (configNpc != null) sourceNpc = configNpc;
+        }
+    } catch (e1) {}
+
+    var data = sourceNpc.getStoreddata();
+    var count = parseIntSafe(data.get(CONFIG_COUNT_KEY), 0);
+    var entries = [];
+
+    for (var i = 0; i < count; i++) {
+        var species = trimString(data.get(CONFIG_SPECIES_KEY_PREFIX + i));
+        var multiplier = trimString(data.get(CONFIG_MULTIPLIER_KEY_PREFIX + i));
+        if (!hasText(species) || !hasText(multiplier)) continue;
+
+        entries.push({
+            species: species,
+            multiplier: multiplier
+        });
+    }
+
+    return entries;
+}
+
+function buildLore(lines) {
+    var lore = new Ticket_ArrayList();
+    for (var i = 0; i < lines.length; i++) {
+        lore.add(Ticket_Component.literal(lines[i]));
+    }
+    return lore;
+}
+
 function parseDurationToMs(value) {
     var text = trimString(value);
     var match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
@@ -151,11 +256,32 @@ function computeDurabilityValue(damage) {
     return clamped / TICKET_MAX_DAMAGE;
 }
 
+function formatScore(value) {
+    return normalizeMultiplier(parseFloatSafe(value, 0));
+}
+
+function normalizeMultiplier(value) {
+    var text = ("" + value).replace(",", ".");
+    if (text.indexOf(".") == -1) return text;
+    text = text.replace(/0+$/, "");
+    text = text.replace(/\.$/, "");
+    return text;
+}
+
 function clampDamage(damage) {
     var parsed = parseIntSafe(damage, 0);
     if (parsed < 0) parsed = 0;
     if (parsed > TICKET_MAX_DAMAGE) parsed = TICKET_MAX_DAMAGE;
     return parsed;
+}
+
+function parseFloatSafe(value, def) {
+    try {
+        var parsed = parseFloat(("" + value).replace(",", "."));
+        return isNaN(parsed) ? def : parsed;
+    } catch (e) {
+        return def;
+    }
 }
 
 function parseIntSafe(value, def) {
@@ -173,4 +299,16 @@ function trimString(value) {
 
 function hasText(value) {
     return value != null && trimString(value).length > 0;
+}
+
+function normalizeConfiguredSpecies(value) {
+    var species = trimString(value).toLowerCase();
+    if (!hasText(species)) return "";
+
+    var colonIndex = species.indexOf(":");
+    if (colonIndex >= 0) {
+        species = trimString(species.substring(colonIndex + 1));
+    }
+
+    return species;
 }
