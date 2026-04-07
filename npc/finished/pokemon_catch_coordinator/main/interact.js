@@ -61,6 +61,8 @@ function interact(event) {
     var npc = event.npc;
     var player = event.player;
     var item = player.getMainhandItem();
+    var countingMode = isCountingModeEnabled(npc);
+    var registrationMode = isRegistrationModeEnabled(npc);
 
     ensureCycleDefaults(npc);
     ensureBaseTitle(npc);
@@ -76,13 +78,15 @@ function interact(event) {
         return;
     }
 
-    if (isRegistrationModeEnabled(npc)) {
+    if (registrationMode) {
         handleRegistrationJoin(event, npc, player);
         return;
     }
 
-    cancelInteractionOnly(event);
-    cancelInteractionOnly(event);
+    if (countingMode) {
+        cancelInteractionOnly(event);
+        return;
+    }
 }
 
 function handleReturnedLinker(event, npc, player, item) {
