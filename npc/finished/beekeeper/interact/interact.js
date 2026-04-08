@@ -10,43 +10,31 @@ var BEEKEEPER_REFRESH_QUESTS = [11, 12];
 function interact(event) {
     var player = event.player;
     var item = player.getMainhandItem();
-    var couponData = readRefreshCoupon(player, item);
-    if (couponData == null) {
+    if (!isRefreshCoupon(item)) {
         return;
     }
 
     refreshBeekeeperQuests(player);
     consumeMainhandItem(player, item);
-    markCouponUsed(player, couponData.couponId);
     player.message("§aЗадания пасечника обновлены.");
     cancelInteraction(event, player);
 }
 
-function readRefreshCoupon(player, item) {
-    if (item == null || item.isEmpty()) return null;
+function isRefreshCoupon(item) {
+    if (item == null || item.isEmpty()) return false;
 
     try {
         var mcStack = item.getMCItemStack();
         var itemId = String(BuiltInRegistries.ITEM.getKey(mcStack.getItem()));
-        if (itemId != "minecraft:paper") return null;
+        if (itemId != "minecraft:paper") return false;
 
         var customData = mcStack.get(DataComponents.CUSTOM_DATA);
-        if (customData == null) return null;
+        if (customData == null) return false;
 
         var tag = customData.copyTag();
-        var couponType = "" + tag.getString("quest_coupon_type");
-        var couponId = "" + tag.getString("quest_coupon_id");
-        if (couponType != "beekeeper_refresh" || couponId.length == 0) return null;
-
-        var couponKey = getCouponKey(couponId);
-        var state = "" + player.getStoreddata().get(couponKey);
-        if (state == "used") return null;
-
-        return {
-            couponId: couponId
-        };
+        return ("" + tag.getString("coupon_type")) == "quest_refresh_coupon";
     } catch (e) {
-        return null;
+        return false;
     }
 }
 
@@ -96,14 +84,6 @@ function consumeMainhandItem(player, item) {
 
         player.updatePlayerInventory();
     } catch (e) {}
-}
-
-function markCouponUsed(player, couponId) {
-    player.getStoreddata().put(getCouponKey(couponId), "used");
-}
-
-function getCouponKey(couponId) {
-    return "quest_coupon_" + couponId;
 }
 
 function cancelInteraction(event, player) {

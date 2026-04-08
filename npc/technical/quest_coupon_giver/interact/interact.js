@@ -1,5 +1,4 @@
 var CouponArrayList = Java.type("java.util.ArrayList");
-var UUID = Java.type("java.util.UUID");
 var NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 var DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var CustomData = Java.type("net.minecraft.world.item.component.CustomData");
@@ -11,12 +10,11 @@ var Component = Java.type("net.minecraft.network.chat.Component");
 var CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 
 var COUPON_ITEM_ID = "minecraft:paper";
-var COUPON_TYPE = "beekeeper_refresh";
+var COUPON_TYPE = "quest_refresh_coupon";
 
 function interact(event) {
     var player = event.player;
-    var couponId = createCouponId();
-    var item = createCouponItem(couponId);
+    var item = createCouponItem();
     if (item == null || item.isEmpty()) {
         player.message("§cНе удалось создать купон.");
         return;
@@ -30,15 +28,7 @@ function interact(event) {
     player.message("§aПолучен купон на обновление заданий.");
 }
 
-function createCouponId() {
-    try {
-        return "" + UUID.randomUUID();
-    } catch (e) {
-        return "coupon_" + new Date().getTime();
-    }
-}
-
-function createCouponItem(couponId) {
+function createCouponItem() {
     try {
         var itemType = BuiltInRegistries.ITEM.get(ResourceLocation.parse(COUPON_ITEM_ID));
         if (itemType == null) return null;
@@ -46,7 +36,7 @@ function createCouponItem(couponId) {
         var mcStack = new MCItemStack(itemType);
         if (mcStack == null || mcStack.isEmpty()) return null;
 
-        applyCouponPresentation(mcStack, couponId);
+        applyCouponPresentation(mcStack);
 
         var item = NpcAPI.Instance().getIItemStack(mcStack);
         if (item == null || item.isEmpty()) return null;
@@ -58,10 +48,9 @@ function createCouponItem(couponId) {
     }
 }
 
-function applyCouponPresentation(mcStack, couponId) {
+function applyCouponPresentation(mcStack) {
     var tag = new CompoundTag();
-    tag.putString("quest_coupon_type", COUPON_TYPE);
-    tag.putString("quest_coupon_id", couponId);
+    tag.putString("coupon_type", COUPON_TYPE);
 
     mcStack.set(DataComponents.CUSTOM_NAME, Component.literal("§eКупон на обновление заданий"));
     mcStack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
@@ -71,8 +60,8 @@ function applyCouponPresentation(mcStack, couponId) {
 function buildCouponLore() {
     var lines = new CouponArrayList();
     lines.add(Component.literal("Обновляет все задания выбранного NPC."));
-    lines.add(Component.literal("Чтобы применить, нажми ПКМ по NPC."));
-    lines.add(Component.literal("§8Одноразовый купон."));
+    lines.add(Component.literal("Чтобы применить, нажми ПКМ по нужному NPC."));
+    lines.add(Component.literal("§7Одноразовый предмет."));
     return lines;
 }
 
