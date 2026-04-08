@@ -15,7 +15,8 @@ var SCROLL_ID = 9511;
 var STATUS_ID = 9512;
 var ACTIONS = [
     "Выдать купон обновления заданий",
-    "Выдать купон на изучение движения"
+    "Выдать купон на изучение движения",
+    "Выдать купон на детский сад"
 ];
 
 var COUPON_ITEM_ID = "minecraft:paper";
@@ -45,6 +46,8 @@ function customGuiScroll(event) {
             item = createQuestRefreshCoupon();
         } else if (index == 1) {
             item = createMoveTeachCoupon();
+        } else if (index == 2) {
+            item = createDaycareCoupon();
         } else {
             setStatus(event.gui, "Неизвестное действие.");
             safeUpdate(event.gui);
@@ -65,8 +68,10 @@ function customGuiScroll(event) {
 
         if (index == 0) {
             setStatus(event.gui, "Выдан купон обновления заданий.");
-        } else {
+        } else if (index == 1) {
             setStatus(event.gui, "Выдан купон на изучение движения.");
+        } else {
+            setStatus(event.gui, "Выдан купон на детский сад.");
         }
         safeUpdate(event.gui);
     } catch (e) {
@@ -104,6 +109,18 @@ function createMoveTeachCoupon() {
         "§eКупон на изучение движения",
         [
             "Позволяет изучить одно движение.",
+            "Чтобы применить, нажми ПКМ по нужному NPC.",
+            "§7Одноразовый предмет."
+        ]
+    );
+}
+
+function createDaycareCoupon() {
+    return createCouponItem(
+        "pokemon_daycare_coupon",
+        "§eКупон на детский сад",
+        [
+            "Позволяет разместить одного покемона в детском саду.",
             "Чтобы применить, нажми ПКМ по нужному NPC.",
             "§7Одноразовый предмет."
         ]
