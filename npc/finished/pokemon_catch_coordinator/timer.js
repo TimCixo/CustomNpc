@@ -2,8 +2,6 @@ var CONTROL_TIMER_ID = 1;
 var PM_ArrayList = Java.type("java.util.ArrayList");
 var PM_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 
-var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
-
 var COMMAND_GUI_ID = 9211;
 var COMMAND_STATUS_AREA_ID = 9213;
 
@@ -69,7 +67,6 @@ function stopCycle(npc) {
     try {
         npc.timers.stop(CONTROL_TIMER_ID);
     } catch (e) {}
-
 }
 
 function announceByMode(npc, message) {
@@ -87,27 +84,13 @@ function announceByMode(npc, message) {
 }
 
 function buildCurrentSettings(mainNpc) {
-    var configNpc = resolveConfigNpc(mainNpc);
-    var sourceNpc = configNpc == null ? mainNpc : configNpc;
-    var data = sourceNpc.getStoreddata();
-
+    var data = mainNpc.getStoreddata();
     return {
         timer: readStoredOrDefault(data, CONFIG_TIMER_KEY, "00:00:00"),
         interval: readStoredOrDefault(data, CONFIG_INTERVAL_KEY, "00:00:00"),
         chatMode: readStoredOrDefault(data, CONFIG_CHAT_MODE_KEY, "local"),
         debug: readStoredOrDefault(data, CONFIG_DEBUG_KEY, "false")
     };
-}
-
-function resolveConfigNpc(mainNpc) {
-    var linkedUuid = "" + mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY);
-    if (!hasText(linkedUuid)) return null;
-
-    try {
-        return mainNpc.getWorld().getEntity(linkedUuid);
-    } catch (e) {
-        return null;
-    }
 }
 
 function runBroadcastCommand(npc, message) {
@@ -306,19 +289,6 @@ function parseIntSafe(value, def) {
     } catch (e) {
         return def;
     }
-}
-
-function parseDurationToMs(value) {
-    var text = trimString(value);
-    var match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
-    if (match == null) return 0;
-
-    var hours = parseIntSafe(match[1], -1);
-    var minutes = parseIntSafe(match[2], -1);
-    var seconds = parseIntSafe(match[3], -1);
-    if (hours < 0 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return 0;
-
-    return ((hours * 60 * 60) + (minutes * 60) + seconds) * 1000;
 }
 
 function trimString(value) {

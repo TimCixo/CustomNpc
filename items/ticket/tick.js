@@ -1,5 +1,4 @@
 var Ticket_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
-var Ticket_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
 var Ticket_ItemLore = Java.type("net.minecraft.world.item.component.ItemLore");
 var Ticket_Component = Java.type("net.minecraft.network.chat.Component");
 var Ticket_ArrayList = Java.type("java.util.ArrayList");
@@ -8,9 +7,7 @@ var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_MAX_DAMAGE = 100;
 var TICKET_DURABILITY_COLOR_LINKED = 5635925;
 var CYCLE_RUNNING_KEY = "pokemon_multiplier_cycle_running";
-var CYCLE_END_MS_KEY = "pokemon_multiplier_cycle_end_ms";
 var CYCLE_STARTED_MS_KEY = "pokemon_multiplier_cycle_started_ms";
-var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
 var CONFIG_TIMER_KEY = "pokemon_multiplier_config_timer";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
 var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
@@ -66,7 +63,7 @@ function computeTicketDamage(mainNpc) {
         if (trimString(data.get(CYCLE_RUNNING_KEY)) != "1") return 0;
 
         var startMs = parseIntSafe(data.get(CYCLE_STARTED_MS_KEY), 0);
-        var totalMs = resolveConfiguredTimerMs(mainNpc);
+        var totalMs = parseDurationToMs(trimString(data.get(CONFIG_TIMER_KEY)));
         if (startMs <= 0 || totalMs <= 0) return 0;
 
         var elapsedMs = new Date().getTime() - startMs;
@@ -78,24 +75,6 @@ function computeTicketDamage(mainNpc) {
 
         return Math.max(0, Math.min(TICKET_MAX_DAMAGE, Math.round(elapsedRatio * TICKET_MAX_DAMAGE)));
     } catch (e) {
-        return 0;
-    }
-}
-
-function resolveConfiguredTimerMs(mainNpc) {
-    var sourceNpc = mainNpc;
-
-    try {
-        var configUuid = trimString(mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY));
-        if (hasText(configUuid)) {
-            var configNpc = mainNpc.getWorld().getEntity(configUuid);
-            if (configNpc != null) sourceNpc = configNpc;
-        }
-    } catch (e1) {}
-
-    try {
-        return parseDurationToMs(trimString(sourceNpc.getStoreddata().get(CONFIG_TIMER_KEY)));
-    } catch (e2) {
         return 0;
     }
 }
@@ -150,14 +129,14 @@ function readTag(tag, key) {
 function buildTicketLore(mainNpc, tag) {
     var stats = buildParticipantStats(mainNpc, tag);
     var lore = [
-        "ПКМ: правила и статус события.",
-        "Ваш результат: " + formatScore(stats.score) + " / " + stats.pcount,
-        "Целевые покемоны и множитель очков:"
+        "Right click: rules and event status.",
+        "Your result: " + formatScore(stats.score) + " / " + stats.pcount,
+        "Target Pokemon and score multiplier:"
     ];
 
     var entries = buildCurrentConfigEntries(mainNpc);
     if (entries.length <= 0) {
-        lore.push(" - список пока пуст");
+        lore.push(" - no Pokemon configured");
         return lore;
     }
 
@@ -203,16 +182,7 @@ function buildParticipantStats(mainNpc, tag) {
 function buildCurrentConfigEntries(mainNpc) {
     if (mainNpc == null) return [];
 
-    var sourceNpc = mainNpc;
-    try {
-        var configUuid = trimString(mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY));
-        if (hasText(configUuid)) {
-            var configNpc = mainNpc.getWorld().getEntity(configUuid);
-            if (configNpc != null) sourceNpc = configNpc;
-        }
-    } catch (e1) {}
-
-    var data = sourceNpc.getStoreddata();
+    var data = mainNpc.getStoreddata();
     var count = parseIntSafe(data.get(CONFIG_COUNT_KEY), 0);
     var entries = [];
 

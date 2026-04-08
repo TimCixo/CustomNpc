@@ -43,10 +43,10 @@ The main finished module in this repository is:
 It includes:
 
 - `main` NPC
-- `configurator` NPC
-- `command` NPC
+- scripted `pokemon_catch_configurator` item
+- scripted `pokemon_catch_command` item
 - scripted `ticket`
-- linker-based NPC binding flow
+- bind-to-main item flow
 
 Detailed module documentation:
 

@@ -1,18 +1,11 @@
 var PM_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 var PM_ArrayList = Java.type("java.util.ArrayList");
 var PM_CommandSource = Java.type("net.minecraft.commands.CommandSource");
-var PM_BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
-var PM_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var PM_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var PM_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
-var PM_ItemLore = Java.type("net.minecraft.world.item.component.ItemLore");
-var PM_Component = Java.type("net.minecraft.network.chat.Component");
-var PM_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
-var PM_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
 
-var LINKER_TYPE = "pokemon_catch_linker";
-var LOCAL_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
-var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
+var COMMAND_ITEM_TYPE = "pokemon_catch_command_tool";
+var ACTIVE_MAIN_TEMP_KEY = "pokemon_catch_command_active_main_uuid";
 
 var CONFIG_TIMER_KEY = "pokemon_multiplier_config_timer";
 var CONFIG_INTERVAL_KEY = "pokemon_multiplier_config_interval";
@@ -20,9 +13,9 @@ var CONFIG_CHAT_MODE_KEY = "pokemon_multiplier_config_chat_mode";
 var CONFIG_DEBUG_KEY = "pokemon_multiplier_config_debug";
 var CONFIG_WHITELIST_KEY = "pokemon_multiplier_config_whitelist";
 var CONFIG_DEFAULT_MANAGER = "HunterTim";
+var DISPLAY_BASE_TITLE_KEY = "pokemon_multiplier_display_base_title";
 
 var CONTROL_TIMER_ID = 1;
-var DISPLAY_BASE_TITLE_KEY = "pokemon_multiplier_display_base_title";
 
 var CYCLE_RUNNING_KEY = "pokemon_multiplier_cycle_running";
 var CYCLE_PAUSED_KEY = "pokemon_multiplier_cycle_paused";
@@ -45,29 +38,26 @@ var DANGER_SCROLL_ID = 9214;
 var FEEDBACK_AREA_ID = 9215;
 
 var ACTIONS = ["Start/Pause", "Counting", "Register", "Teleport", "Leaders"];
-var DANGER_ACTIONS = ["Finish", "Reset", "Clear", "Linker"];
-
-var ACTIVE_NPC = null;
+var DANGER_ACTIONS = ["Finish", "Reset", "Clear"];
 
 function interact(event) {
-    var npc = event.npc;
+    var item = event.item;
     var player = event.player;
-    var item = player.getMainhandItem();
+    var target = event.target;
 
-    ACTIVE_NPC = npc;
-
-    if (isLinker(item)) {
-        bindToLinker(npc, player, item);
+    if (tryBindToMain(item, player, target)) {
         event.setCanceled(true);
         return;
     }
 
-    var mainNpc = resolveMainNpc(npc);
+    var mainNpc = resolveMainNpc(item, player, target);
     if (mainNpc == null) {
-        player.message("Main NPC is not linked.");
+        player.message("Command item is not linked. Right click Main NPC first.");
         event.setCanceled(true);
         return;
     }
+
+    rememberActiveMain(player, mainNpc);
 
     if (!canManageSystem(mainNpc, player)) {
         player.message("No access to commands.");
@@ -88,11 +78,9 @@ function customGuiScroll(event) {
         var gui = event.gui;
         var scroll = event.scroll;
         var player = event.player;
-        var commandNpc = event.npc != null ? event.npc : ACTIVE_NPC;
         if (gui == null || gui.getID() != GUI_ID) return;
-        if (commandNpc == null) return;
 
-        var mainNpc = resolveMainNpc(commandNpc);
+        var mainNpc = resolveActiveMain(player);
         if (mainNpc == null) {
             setCommandFeedback(gui, "Main NPC is missing.");
             safeUpdate(gui);
@@ -104,7 +92,7 @@ function customGuiScroll(event) {
         if (scroll != null && scroll.getID() == ACTION_SCROLL_ID) {
             handleActionScroll(mainNpc, player, gui, scroll);
         } else if (scroll != null && scroll.getID() == DANGER_SCROLL_ID) {
-            handleDangerScroll(mainNpc, player, gui, scroll);
+            handleDangerScroll(mainNpc, gui, scroll);
         }
     } catch (e) {}
 }
@@ -122,13 +110,70 @@ function createGui(player, mainNpc) {
     gui.addTextArea(STATUS_AREA_ID, 140, 72, 130, 146);
 
     gui.addLabel(12, "Reset", 280, 56, 70, 14, 0xE0E0E0);
-    gui.addScroll(DANGER_SCROLL_ID, 280, 72, 70, 90, DANGER_ACTIONS);
+    gui.addScroll(DANGER_SCROLL_ID, 280, 72, 70, 70, DANGER_ACTIONS);
 
     gui.addTextArea(FEEDBACK_AREA_ID, 10, 236, 340, 12);
 
     refreshCommandGuiState(gui, mainNpc);
     setCommandFeedback(gui, "Ready.");
     return gui;
+}
+
+function tryBindToMain(item, player, target) {
+    if (!isBindableNpcTarget(target)) return false;
+
+    var tag = getCustomTag(item);
+    if (tag == null || readTag(tag, "item_type") != COMMAND_ITEM_TYPE) return false;
+
+    tag.putString("main_uuid", getNpcUuid(target));
+    if (!writeHeldTag(player, item, tag)) {
+        player.message("Bind write failed.");
+        return true;
+    }
+
+    rememberActiveMain(player, target);
+    player.message("Command item linked.");
+    return true;
+}
+
+function resolveMainNpc(item, player, target) {
+    var tag = getCustomTag(item);
+    if (tag == null) return isBindableNpcTarget(target) ? target : null;
+
+    var mainUuid = readTag(tag, "main_uuid");
+    if (!hasText(mainUuid)) return isBindableNpcTarget(target) ? target : null;
+
+    try {
+        if (player != null) {
+            var fromPlayerWorld = player.getWorld().getEntity(mainUuid);
+            if (fromPlayerWorld != null) return fromPlayerWorld;
+        }
+    } catch (e1) {}
+
+    try {
+        if (target != null) {
+            var fromTargetWorld = target.getWorld().getEntity(mainUuid);
+            if (fromTargetWorld != null) return fromTargetWorld;
+        }
+    } catch (e2) {}
+
+    return isBindableNpcTarget(target) ? target : null;
+}
+
+function rememberActiveMain(player, mainNpc) {
+    try {
+        player.getTempdata().put(ACTIVE_MAIN_TEMP_KEY, getNpcUuid(mainNpc));
+    } catch (e) {}
+}
+
+function resolveActiveMain(player) {
+    try {
+        var mainUuid = trimString(player.getTempdata().get(ACTIVE_MAIN_TEMP_KEY));
+        if (!hasText(mainUuid)) return null;
+        return player.getWorld().getEntity(mainUuid);
+    } catch (e) {
+        return null;
+    }
 }
 
 function handleActionScroll(mainNpc, player, gui, scroll) {
@@ -157,7 +202,7 @@ function handleActionScroll(mainNpc, player, gui, scroll) {
     safeUpdate(gui);
 }
 
-function handleDangerScroll(mainNpc, player, gui, scroll) {
+function handleDangerScroll(mainNpc, gui, scroll) {
     var selected = getSelectedIndex(scroll);
     if (selected < 0 || selected >= DANGER_ACTIONS.length) return;
 
@@ -170,48 +215,14 @@ function handleDangerScroll(mainNpc, player, gui, scroll) {
     } else if (selected == 2) {
         clearParticipantEntries(mainNpc);
         setCommandFeedback(gui, "Participants cleared.");
-    } else if (selected == 3) {
-        if (issueLinkerFromCommand(mainNpc, player)) {
-            setCommandFeedback(gui, "Linker issued.");
-        } else {
-            setCommandFeedback(gui, "Failed to issue linker.");
-        }
     }
 
     refreshCommandGuiState(gui, mainNpc);
     safeUpdate(gui);
 }
 
-function bindToLinker(npc, player, item) {
-    var tag = getCustomTag(item);
-    if (tag == null || readTag(tag, "linker_type") != LINKER_TYPE || !hasText(readTag(tag, "main_uuid"))) {
-        player.message("Invalid linker.");
-        return;
-    }
-
-    tag.putString("command_uuid", getNpcUuid(npc));
-    npc.getStoreddata().put(LOCAL_MAIN_UUID_KEY, readTag(tag, "main_uuid"));
-    if (!writeHeldTag(player, item, tag)) {
-        player.message("Bind write failed.");
-        return;
-    }
-
-    player.message("Command NPC linked.");
-}
-
-function resolveMainNpc(npc) {
-    var mainUuid = trimString(npc.getStoreddata().get(LOCAL_MAIN_UUID_KEY));
-    if (!hasText(mainUuid)) return null;
-
-    try {
-        return npc.getWorld().getEntity(mainUuid);
-    } catch (e) {
-        return null;
-    }
-}
-
 function canManageSystem(mainNpc, player) {
-    var whitelist = normalizeWhitelistText(readManagerWhitelist(mainNpc));
+    var whitelist = normalizeWhitelistText(readStoredOrDefault(mainNpc.getStoreddata(), CONFIG_WHITELIST_KEY, CONFIG_DEFAULT_MANAGER));
     var names = whitelist.split(/\s+/);
     var playerName = getPlayerName(player);
 
@@ -222,72 +233,14 @@ function canManageSystem(mainNpc, player) {
     return false;
 }
 
-function readManagerWhitelist(mainNpc) {
-    var configNpc = resolveConfigNpc(mainNpc);
-    if (configNpc != null) {
-        return trimString(configNpc.getStoreddata().get(CONFIG_WHITELIST_KEY));
-    }
-
-    return trimString(mainNpc.getStoreddata().get(CONFIG_WHITELIST_KEY));
-}
-
-function resolveConfigNpc(mainNpc) {
-    var linkedUuid = trimString(mainNpc.getStoreddata().get(LINKED_CONFIG_UUID_KEY));
-    if (!hasText(linkedUuid)) return null;
-
-    try {
-        return mainNpc.getWorld().getEntity(linkedUuid);
-    } catch (e) {
-        return null;
-    }
-}
-
 function buildCurrentSettings(mainNpc) {
-    var configNpc = resolveConfigNpc(mainNpc);
-    var sourceNpc = configNpc == null ? mainNpc : configNpc;
-    var data = sourceNpc.getStoreddata();
-
+    var data = mainNpc.getStoreddata();
     return {
         timer: readStoredOrDefault(data, CONFIG_TIMER_KEY, "00:00:00"),
         interval: readStoredOrDefault(data, CONFIG_INTERVAL_KEY, "00:00:00"),
         chatMode: readStoredOrDefault(data, CONFIG_CHAT_MODE_KEY, "local"),
         debug: readStoredOrDefault(data, CONFIG_DEBUG_KEY, "false")
     };
-}
-
-function issueLinkerFromCommand(mainNpc, player) {
-    var linker = createLinkerItem(mainNpc);
-    if (linker == null || linker.isEmpty()) return false;
-    return giveItemToPlayer(player, linker);
-}
-
-function createLinkerItem(mainNpc) {
-    try {
-        var itemType = PM_BuiltInRegistries.ITEM.get(PM_ResourceLocation.parse("minecraft:tripwire_hook"));
-        if (itemType == null) return null;
-
-        var mcStack = new PM_MCItemStack(itemType);
-        var tag = new PM_CompoundTag();
-        tag.putString("linker_type", LINKER_TYPE);
-        tag.putString("main_uuid", getNpcUuid(mainNpc));
-        tag.putString("config_uuid", "");
-        tag.putString("command_uuid", "");
-
-        mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
-        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal("Pokemon Catch Linker"));
-        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore([
-            "1. Bind Configurator NPC.",
-            "2. Bind Command NPC.",
-            "3. Return linker to Main NPC."
-        ])));
-
-        var item = PM_NpcAPI.Instance().getIItemStack(mcStack);
-        if (item == null || item.isEmpty()) return null;
-        item.setStackSize(1);
-        return item;
-    } catch (e) {
-        return null;
-    }
 }
 
 function refreshCommandGuiState(gui, mainNpc) {
@@ -432,7 +385,7 @@ function setCountingMode(mainNpc, enabled) {
     if (wasEnabled == enabled) return;
 
     data.put(COUNTING_MODE_KEY, enabled ? "1" : "0");
-    announceByMode(mainNpc, enabled ? "Подсчет очков начат." : "Подсчет очков закончен.");
+    announceByMode(mainNpc, enabled ? "Counting started." : "Counting finished.");
 }
 
 function setRegistrationMode(mainNpc, enabled) {
@@ -441,7 +394,7 @@ function setRegistrationMode(mainNpc, enabled) {
     if (wasEnabled == enabled) return;
 
     data.put(REGISTRATION_MODE_KEY, enabled ? "1" : "0");
-    announceByMode(mainNpc, enabled ? "Регистрация начата." : "Регистрация окончена.");
+    announceByMode(mainNpc, enabled ? "Registration started." : "Registration finished.");
 }
 
 function isCycleRunning(mainNpc) {
@@ -640,42 +593,16 @@ function ensureBaseTitle(mainNpc) {
     } catch (e) {}
 }
 
-function isLinker(item) {
-    var tag = getCustomTag(item);
-    return tag != null && readTag(tag, "linker_type") == LINKER_TYPE;
-}
-
-function giveItemToPlayer(player, item) {
-    var given = false;
+function isBindableNpcTarget(target) {
+    if (target == null) return false;
 
     try {
-        given = player.giveItem(item);
-    } catch (e) {}
-    if (given) return true;
-
-    try {
-        var inv = player.getInventory();
-        if (inv == null) return false;
-
-        var size = inv.getSize();
-        for (var i = 0; i < size; i++) {
-            var slot = inv.getSlot(i);
-            if (slot == null || slot.isEmpty()) {
-                inv.setSlot(i, item);
-                return true;
-            }
-        }
-    } catch (e2) {}
-
-    return false;
-}
-
-function buildLore(lines) {
-    var lore = new PM_ArrayList();
-    for (var i = 0; i < lines.length; i++) {
-        lore.add(PM_Component.literal(lines[i]));
+        var data = target.getStoreddata();
+        if (data == null) return false;
+        return hasText(getNpcUuid(target));
+    } catch (e) {
+        return false;
     }
-    return lore;
 }
 
 function getCustomTag(item) {
@@ -691,7 +618,12 @@ function getCustomTag(item) {
 
 function writeHeldTag(player, item, tag) {
     try {
-        item.getMCItemStack().set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
+        var mcStack = item.getMCItemStack();
+        if (mcStack == null || mcStack.isEmpty()) return false;
+        mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
+        try {
+            if (item.setDurabilityShow != null) item.setDurabilityShow(false);
+        } catch (e1) {}
         player.updatePlayerInventory();
         return true;
     } catch (e) {

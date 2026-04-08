@@ -1,4 +1,3 @@
-var PM_UUID = Java.type("java.util.UUID");
 var PM_ArrayList = Java.type("java.util.ArrayList");
 var PM_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 var PM_CommandSource = Java.type("net.minecraft.commands.CommandSource");
@@ -15,15 +14,13 @@ var PM_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 var PM_Stats = Java.type("com.cobblemon.mod.common.api.pokemon.stats.Stats");
 var PM_CubixCobblemonDataComponents = Java.type("net.im51111n355.cubixcobblemon.common.CubixCobblemonDataComponents");
 
-var LINKER_TYPE = "pokemon_catch_linker";
-var LINKED_CONFIG_UUID_KEY = "pokemon_catch_linked_config_uuid";
-var LINKED_COMMAND_UUID_KEY = "pokemon_catch_linked_command_uuid";
-var SUB_MAIN_UUID_KEY = "pokemon_catch_local_main_uuid";
+var COMMAND_ITEM_TYPE = "pokemon_catch_command_tool";
+var CONFIG_ITEM_TYPE = "pokemon_catch_configurator_tool";
 var TICKET_ITEM_TYPE = "pokemon_catch_ticket";
 var TICKET_TEMPLATE_TEMP_KEY = "pokemon_catch_ticket_template_stack";
 var REGISTRATION_COOLDOWN_MS = 5000;
 var REGISTRATION_COOLDOWN_PREFIX = "pokemon_multiplier_registration_cooldown_";
-var TICKET_NAME_PREFIX = "Билет события игрока ";
+var TICKET_NAME_PREFIX = "Ticket of ";
 var CONFIG_OWNER_KEY = "pokemon_multiplier_config_owner";
 var CONFIG_COUNT_KEY = "pokemon_multiplier_config_count";
 var CONFIG_SPECIES_KEY_PREFIX = "pokemon_multiplier_config_species_";
@@ -75,8 +72,7 @@ function interact(event) {
         return;
     }
 
-    if (isLinkerForMain(item, npc)) {
-        handleReturnedLinker(event, npc, player, item);
+    if (tryBindManagerItem(event, npc, player, item)) {
         return;
     }
 
@@ -87,35 +83,33 @@ function interact(event) {
 
     if (countingMode) {
         cancelInteractionOnly(event);
-        return;
     }
 }
 
-function handleReturnedLinker(event, npc, player, item) {
-    if (!bindFromLinker(npc, item)) {
-        player.message("Invalid linker.");
+function tryBindManagerItem(event, npc, player, item) {
+    var tag = getCustomTag(item);
+    if (tag == null) return false;
+
+    var itemType = safeTag(tag, "item_type");
+    if (itemType != COMMAND_ITEM_TYPE && itemType != CONFIG_ITEM_TYPE) return false;
+
+    tag.putString("main_uuid", getNpcUuid(npc));
+    if (!writeHeldTag(player, item, tag)) {
+        player.message("Bind write failed.");
         cancelInteractionOnly(event);
-        return;
+        return true;
     }
 
-    consumeMainhandItem(player, item);
-    showMainSummary(npc, player);
+    player.message(itemType == COMMAND_ITEM_TYPE ? "Command item linked." : "Configurator item linked.");
     cancelInteractionOnly(event);
-}
-
-function showMainSummary(npc, player) {
-    var configNpc = resolveConfigNpc(npc);
-    var commandNpc = resolveCommandNpc(npc);
-    if (configNpc != null) player.message("Configurator joined.");
-    if (commandNpc != null) player.message("Command NPC joined.");
-    if (configNpc == null && commandNpc == null) player.message("No child NPC linked.");
+    return true;
 }
 
 function handleRegistrationJoin(event, npc, player) {
     var playerName = getPlayerName(player);
     var remainingCooldownMs = getRegistrationCooldownRemainingMs(npc, player);
     if (remainingCooldownMs > 0) {
-        player.message("Подождите " + formatCooldownSeconds(remainingCooldownMs) + " сек.");
+        player.message("Wait " + formatCooldownSeconds(remainingCooldownMs) + " sec.");
         cancelInteraction(event, player);
         return;
     }
@@ -141,7 +135,7 @@ function handleRegistrationJoin(event, npc, player) {
     }
 
     setRegistrationCooldown(npc, player);
-    announceByMode(npc, playerName + " присоединился к событию.");
+    announceByMode(npc, playerName + " joined the event.");
     player.message("Registration complete.");
     cancelInteraction(event, player);
 }
@@ -171,7 +165,7 @@ function handleParticipantRemoval(event, npc, player, item) {
     var playerName = getPlayerName(player);
     var remainingCooldownMs = getRegistrationCooldownRemainingMs(npc, player);
     if (remainingCooldownMs > 0) {
-        player.message("Подождите " + formatCooldownSeconds(remainingCooldownMs) + " сек.");
+        player.message("Wait " + formatCooldownSeconds(remainingCooldownMs) + " sec.");
         cancelInteraction(event, player);
         return;
     }
@@ -185,7 +179,7 @@ function handleParticipantRemoval(event, npc, player, item) {
     removeParticipantEntry(npc, playerName);
     consumeMainhandItem(player, item);
     setRegistrationCooldown(npc, player);
-    announceByMode(npc, playerName + " покинул событие.");
+    announceByMode(npc, playerName + " left the event.");
     player.message("You left the event.");
     cancelInteraction(event, player);
 }
@@ -212,110 +206,6 @@ function handleParticipantScoring(event, npc, player) {
     cancelInteraction(event, player);
 }
 
-function createLinkerItem(npc) {
-    try {
-        var itemType = PM_BuiltInRegistries.ITEM.get(PM_ResourceLocation.parse("minecraft:tripwire_hook"));
-        if (itemType == null) return null;
-
-        var mcStack = new PM_MCItemStack(itemType);
-        var tag = new PM_CompoundTag();
-        tag.putString("linker_type", LINKER_TYPE);
-        tag.putString("main_uuid", getNpcUuid(npc));
-        tag.putString("config_uuid", "");
-        tag.putString("command_uuid", "");
-
-        mcStack.set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
-        mcStack.set(PM_DataComponents.CUSTOM_NAME, PM_Component.literal("Pokemon Catch Linker"));
-        mcStack.set(PM_DataComponents.LORE, new PM_ItemLore(buildLore([
-            "1. Bind Configurator NPC.",
-            "2. Bind Command NPC.",
-            "3. Return linker to Main NPC."
-        ])));
-
-        var item = PM_NpcAPI.Instance().getIItemStack(mcStack);
-        if (item == null || item.isEmpty()) return null;
-        item.setStackSize(1);
-        return item;
-    } catch (e) {
-        return null;
-    }
-}
-
-function isLinkerForMain(item, npc) {
-    var tag = getCustomTag(item);
-    if (tag == null) return false;
-    return safeTag(tag, "linker_type") == LINKER_TYPE
-        && safeTag(tag, "main_uuid") == getNpcUuid(npc);
-}
-
-function bindFromLinker(npc, item) {
-    var tag = getCustomTag(item);
-    if (tag == null) return false;
-    if (safeTag(tag, "linker_type") != LINKER_TYPE) return false;
-    if (safeTag(tag, "main_uuid") != getNpcUuid(npc)) return false;
-
-    var data = npc.getStoreddata();
-    var configUuid = safeTag(tag, "config_uuid");
-    var commandUuid = safeTag(tag, "command_uuid");
-    if (!hasText(configUuid)) return false;
-    if (!hasText(commandUuid)) return false;
-
-    if (hasText(configUuid)) data.put(LINKED_CONFIG_UUID_KEY, configUuid);
-    if (hasText(commandUuid)) data.put(LINKED_COMMAND_UUID_KEY, commandUuid);
-    syncMainUuidToLinkedNpc(npc, configUuid);
-    syncMainUuidToLinkedNpc(npc, commandUuid);
-    syncWhitelistFromConfigurator(npc, configUuid);
-    return true;
-}
-
-function syncMainUuidToLinkedNpc(mainNpc, linkedUuid) {
-    if (!hasText(linkedUuid)) return;
-
-    try {
-        var linkedNpc = mainNpc.getWorld().getEntity(linkedUuid);
-        if (linkedNpc == null) return;
-        linkedNpc.getStoreddata().put(SUB_MAIN_UUID_KEY, getNpcUuid(mainNpc));
-    } catch (e) {}
-}
-
-function resolveConfigNpc(mainNpc) {
-    return resolveLinkedNpc(mainNpc, LINKED_CONFIG_UUID_KEY);
-}
-
-function resolveCommandNpc(mainNpc) {
-    return resolveLinkedNpc(mainNpc, LINKED_COMMAND_UUID_KEY);
-}
-
-function resolveLinkedNpc(mainNpc, linkKey) {
-    var linkedUuid = "" + mainNpc.getStoreddata().get(linkKey);
-    if (!hasText(linkedUuid)) return null;
-
-    try {
-        return mainNpc.getWorld().getEntity(linkedUuid);
-    } catch (e) {
-        return null;
-    }
-}
-
-function canManageNpc(mainNpc, player) {
-    var names = parseWhitelistNames(getManagerWhitelistText(mainNpc));
-    var playerName = getPlayerName(player);
-
-    for (var i = 0; i < names.length; i++) {
-        if (names[i] == playerName) return true;
-    }
-
-    return false;
-}
-
-function ensureManagerDefaults(mainNpc) {
-    var data = mainNpc.getStoreddata();
-    var whitelist = trimString(data.get(CONFIG_WHITELIST_KEY));
-    if (!hasText(whitelist) || whitelist == "null" || whitelist == "undefined") {
-        data.put(CONFIG_WHITELIST_KEY, CONFIG_DEFAULT_MANAGER);
-    }
-}
-
 function getRegistrationCooldownRemainingMs(npc, player) {
     try {
         var key = REGISTRATION_COOLDOWN_PREFIX + getPlayerName(player);
@@ -338,25 +228,12 @@ function formatCooldownSeconds(ms) {
     return Math.max(1, Math.ceil(ms / 1000));
 }
 
-function getManagerWhitelistText(mainNpc) {
-    var configNpc = resolveConfigNpc(mainNpc);
-    if (configNpc != null) {
-        return normalizeWhitelistText(configNpc.getStoreddata().get(CONFIG_WHITELIST_KEY));
+function ensureManagerDefaults(mainNpc) {
+    var data = mainNpc.getStoreddata();
+    var whitelist = trimString(data.get(CONFIG_WHITELIST_KEY));
+    if (!hasText(whitelist) || whitelist == "null" || whitelist == "undefined") {
+        data.put(CONFIG_WHITELIST_KEY, CONFIG_DEFAULT_MANAGER);
     }
-
-    return normalizeWhitelistText(mainNpc.getStoreddata().get(CONFIG_WHITELIST_KEY));
-}
-
-function syncWhitelistFromConfigurator(mainNpc, configUuid) {
-    if (!hasText(configUuid)) return;
-
-    try {
-        var configNpc = mainNpc.getWorld().getEntity(configUuid);
-        if (configNpc == null) return;
-
-        var whitelist = normalizeWhitelistText(configNpc.getStoreddata().get(CONFIG_WHITELIST_KEY));
-        mainNpc.getStoreddata().put(CONFIG_WHITELIST_KEY, whitelist);
-    } catch (e) {}
 }
 
 function parseWhitelistNames(text) {
@@ -396,10 +273,7 @@ function ensureCycleDefaults(npc) {
 }
 
 function buildCurrentSettings(mainNpc) {
-    var sourceNpc = resolveConfigNpc(mainNpc);
-    if (sourceNpc == null) sourceNpc = mainNpc;
-
-    var data = sourceNpc.getStoreddata();
+    var data = mainNpc.getStoreddata();
     return {
         timer: readStoredOrDefault(data, CONFIG_TIMER_KEY, "00:00:00"),
         interval: readStoredOrDefault(data, CONFIG_INTERVAL_KEY, "00:00:00"),
@@ -409,10 +283,7 @@ function buildCurrentSettings(mainNpc) {
 }
 
 function buildCurrentConfigEntries(mainNpc) {
-    var sourceNpc = resolveConfigNpc(mainNpc);
-    if (sourceNpc == null) sourceNpc = mainNpc;
-
-    var data = sourceNpc.getStoreddata();
+    var data = mainNpc.getStoreddata();
     var count = parseIntSafe(data.get(CONFIG_COUNT_KEY), 0);
     var entries = [];
 
@@ -433,14 +304,14 @@ function buildCurrentConfigEntries(mainNpc) {
 function buildParticipantTicketLore(npc, player) {
     var stats = buildParticipantTicketStats(npc, player);
     var lore = [
-        "ПКМ: правила и статус события.",
-        "Ваш результат: " + formatScore(stats.score) + " / " + stats.pcount,
-        "Целевые покемоны и множитель очков:",
+        "Right click: rules and event status.",
+        "Your result: " + formatScore(stats.score) + " / " + stats.pcount,
+        "Target Pokemon and score multiplier:"
     ];
 
     var entries = buildCurrentConfigEntries(npc);
     if (entries.length <= 0) {
-        lore.push(" - список пока пуст");
+        lore.push(" - no Pokemon configured");
         return lore;
     }
 
@@ -475,7 +346,7 @@ function giveParticipantTicketToPlayer(npc, player) {
 }
 
 function createParticipantTicketItem(npc, player) {
-    var templateItem = createTicketFromConfiguratorTemplate(npc);
+    var templateItem = createTicketFromTemplate(npc);
     if (templateItem != null && !templateItem.isEmpty()) {
         if (!applyParticipantTicketData(templateItem, npc, player)) return null;
         return templateItem;
@@ -486,7 +357,6 @@ function createParticipantTicketItem(npc, player) {
         if (itemType == null) return null;
 
         var mcStack = new PM_MCItemStack(itemType);
-
         var item = PM_NpcAPI.Instance().getIItemStack(mcStack);
         if (item == null || item.isEmpty()) return null;
         item.setStackSize(1);
@@ -497,12 +367,9 @@ function createParticipantTicketItem(npc, player) {
     }
 }
 
-function createTicketFromConfiguratorTemplate(mainNpc) {
-    var configNpc = resolveConfigNpc(mainNpc);
-    if (configNpc == null) return null;
-
+function createTicketFromTemplate(mainNpc) {
     try {
-        var templateStack = configNpc.getTempdata().get(TICKET_TEMPLATE_TEMP_KEY);
+        var templateStack = mainNpc.getTempdata().get(TICKET_TEMPLATE_TEMP_KEY);
         if (templateStack == null || templateStack.isEmpty()) return null;
 
         var copiedStack = templateStack.copy();
@@ -890,6 +757,16 @@ function getCustomTag(item) {
         return customData.copyTag();
     } catch (e) {
         return null;
+    }
+}
+
+function writeHeldTag(player, item, tag) {
+    try {
+        item.getMCItemStack().set(PM_DataComponents.CUSTOM_DATA, PM_CustomData.of(tag));
+        player.updatePlayerInventory();
+        return true;
+    } catch (e) {
+        return false;
     }
 }
 
