@@ -1,0 +1,249 @@
+var ARCEUS_TIMER_ID = 1;
+var ARCEUS_CONFIG_VERSION = 7;
+
+function init(event) {
+    var npc = event.npc;
+
+    migrateConfig(npc);
+    ensurePhaseAttackDelayDefaults(npc);
+
+    putDefault(npc, "arceus_enabled", "1");
+    putDefault(npc, "arceus_timer_ticks", "5");
+    putDefault(npc, "arceus_phase2_threshold", "0.10");
+    putDefault(npc, "arceus_phase3_threshold", "0.10");
+    putDefault(npc, "arceus_phase2_heal_to", "0.72");
+    putDefault(npc, "arceus_phase3_heal_to", "0.45");
+    putDefault(npc, "arceus_transition_ticks", "40");
+    putDefault(npc, "arceus_phase2_regen_interval", "40");
+    putDefault(npc, "arceus_phase3_regen_interval", "20");
+    putDefault(npc, "arceus_phase2_regen_percent", "0.015");
+    putDefault(npc, "arceus_phase3_regen_percent", "0.03");
+    putDefault(npc, "arceus_phase2_damage_mult", "1.20");
+    putDefault(npc, "arceus_phase3_damage_mult", "1.45");
+    putDefault(npc, "arceus_phase3_flat_bonus", "4");
+    putDefault(npc, "arceus_phase3_armor_bypass_bonus", "8.0");
+    putDefault(npc, "arceus_phase1_melee_delay", "24");
+    putDefault(npc, "arceus_phase2_melee_delay", "18");
+    putDefault(npc, "arceus_phase3_melee_delay", "12");
+    putDefault(npc, "arceus_reflect_arrow_speed", "2.2");
+    putDefault(npc, "arceus_reflect_arrow_inaccuracy", "0.2");
+    putDefault(npc, "arceus_custom_death_ticks", "80");
+    putDefault(npc, "arceus_death_timer_ticks", "1");
+    putDefault(npc, "arceus_death_spin_step", "12");
+    putDefault(npc, "arceus_death_explosion_power", "3.5");
+    putDefault(npc, "arceus_death_animation_id", "5");
+    putDefault(npc, "arceus_pinata_speed_min", "0.20");
+    putDefault(npc, "arceus_pinata_speed_max", "0.55");
+    putDefault(npc, "arceus_pinata_vertical_boost", "0.28");
+    putDefault(npc, "arceus_phase2_pinata_item", "cobblemon:rare_candy");
+    putDefault(npc, "arceus_phase2_total_drops", "32");
+    putDefault(npc, "arceus_phase3_total_drops", "12");
+    putDefault(npc, "arceus_stage2_sound", "cobblemon:pokemon.arceus.cry");
+    putDefault(npc, "arceus_stage3_sound", "cobblemon:pokemon.arceus.cry");
+    putDefault(npc, "arceus_death_sound", "cobblemon:pokemon.arceus.cry");
+    putDefault(npc, "arceus_debug_runtime", "0");
+    putDefault(npc, "arceus_debug_interval_ticks", "20");
+
+    resetBossState(npc);
+    npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_timer_ticks", 5), true);
+}
+
+function migrateConfig(npc) {
+    var data = npc.getStoreddata();
+    var version = parseIntSafe(data.get("arceus_config_version"), 0);
+
+    if (version < 3) {
+        data.put("arceus_phase2_threshold", "0.10");
+        data.put("arceus_phase3_threshold", "0.10");
+        data.put("arceus_debug_runtime", "0");
+    }
+
+    if (version < 4) {
+        data.put("arceus_phase2_pinata_item", "cobblemon:rare_candy");
+        data.put("arceus_stage2_sound", "cobblemon:pokemon.arceus.cry");
+        data.put("arceus_stage3_sound", "cobblemon:pokemon.arceus.cry");
+        data.put("arceus_death_sound", "cobblemon:pokemon.arceus.cry");
+    }
+
+    if (version < 5) {
+        data.put("arceus_stage2_sound", "cobblemon:pokemon.arceus.cry");
+        data.put("arceus_stage3_sound", "cobblemon:pokemon.arceus.cry");
+        data.put("arceus_death_sound", "cobblemon:pokemon.arceus.cry");
+    }
+
+    data.put("arceus_config_version", "" + ARCEUS_CONFIG_VERSION);
+}
+
+function resetBossState(npc) {
+    var data = npc.getStoreddata();
+    data.put("arceus_phase", "1");
+    data.put("arceus_transition_ticks_left", "0");
+    data.put("arceus_dying", "0");
+    data.put("arceus_death_ticks_left", "0");
+    data.put("arceus_death_line_stage", "0");
+    data.put("arceus_death_anim_started", "0");
+    data.put("arceus_damage_top_shown", "0");
+    data.put("arceus_rewards_given", "0");
+    data.put("arceus_pulse_ticks", "0");
+    data.put("arceus_dead", "0");
+    data.put("arceus_phase2_drops_given", "0");
+    data.put("arceus_phase3_drops_given", "0");
+    data.put("arceus_dbg_attack_calls", "0");
+    data.put("arceus_dbg_phase3_blast_calls", "0");
+    data.put("arceus_dbg_last_phase", "0");
+    data.put("arceus_dbg_last_attack_damage", "0");
+    data.put("arceus_dbg_last_target_id", "-");
+    data.put("arceus_dbg_last_target_class", "-");
+    data.put("arceus_dbg_last_blast_target_count", "0");
+    data.put("arceus_dbg_last_non_player_hits", "0");
+    data.put("arceus_dbg_runtime_ticks", "0");
+    data.put("arceus_dbg_last_live_target_id", "-");
+    data.put("arceus_dbg_last_live_target_class", "-");
+    clearDamageContributors(data);
+
+    try {
+        npc.setHealth(npc.getMaxHealth());
+    } catch (e) {}
+
+    ensureHideDeadBody(npc);
+    applyPhaseMeleeDelay(npc, 1);
+    ensureBossBarEnabled(npc);
+    applyBossBarColor(npc, "white");
+    restoreVisibleBody(npc);
+    updateNpcClient(npc);
+}
+
+function putDefault(npc, key, value) {
+    if (!npc.getStoreddata().has(key)) {
+        npc.getStoreddata().put(key, value);
+    }
+}
+
+function getCfgInt(npc, key, def) {
+    return parseIntSafe(npc.getStoreddata().get(key), def);
+}
+
+function parseIntSafe(s, def) {
+    try {
+        var value = parseInt("" + s, 10);
+        return isNaN(value) ? def : value;
+    } catch (e) {
+        return def;
+    }
+}
+
+function applyBossBarColor(npc, colorName) {
+    if (colorName == null || colorName == "") return;
+
+    var colorId = mapBossBarColorId(colorName);
+
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossColor) {
+            npc.getDisplay().setBossColor(colorId);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossColor) {
+            npc.display.setBossColor(colorId);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function ensureBossBarEnabled(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossbar) {
+            if (npc.getDisplay().getBossbar && npc.getDisplay().getBossbar() == 1) return;
+            npc.getDisplay().setBossbar(1);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossbar) {
+            npc.display.setBossbar(1);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restoreVisibleBody(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            npc.getDisplay().setVisible(0);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            npc.display.setVisible(0);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function ensureHideDeadBody(npc) {
+    try {
+        npc.getStats().setHideDeadBody(true);
+        return;
+    } catch (e) {}
+}
+
+function mapBossBarColorId(colorName) {
+    var key = ("" + colorName).toLowerCase();
+    if (key == "pink") return 0;
+    if (key == "blue") return 1;
+    if (key == "red") return 2;
+    if (key == "green") return 3;
+    if (key == "yellow") return 4;
+    if (key == "purple") return 5;
+    if (key == "white") return 6;
+    return 6;
+}
+
+function clearDamageContributors(data) {
+    var keys = data.getKeys();
+    if (keys == null) return;
+
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_dmg_") === 0 || key.indexOf("arceus_dmg_name_") === 0) {
+            data.remove(key);
+        }
+    }
+}
+
+function updateNpcClient(npc) {
+    try {
+        npc.updateClient();
+    } catch (e) {}
+}
+
+function ensurePhaseAttackDelayDefaults(npc) {
+    var data = npc.getStoreddata();
+    if (data.has("arceus_phase3_melee_delay")) return;
+
+    var baseDelay = 12;
+    try {
+        baseDelay = npc.getStats().getMelee().getDelay();
+    } catch (e) {}
+
+    if (baseDelay < 1) baseDelay = 12;
+
+    data.put("arceus_phase3_melee_delay", "" + baseDelay);
+    data.put("arceus_phase2_melee_delay", "" + Math.max(1, Math.floor(baseDelay * 1.5)));
+    data.put("arceus_phase1_melee_delay", "" + Math.max(1, Math.floor(baseDelay * 2.0)));
+}
+
+function applyPhaseMeleeDelay(npc, phase) {
+    var key = "arceus_phase1_melee_delay";
+    if (phase == 2) key = "arceus_phase2_melee_delay";
+    if (phase >= 3) key = "arceus_phase3_melee_delay";
+
+    try {
+        npc.getStats().getMelee().setDelay(getCfgInt(npc, key, phase >= 3 ? 12 : (phase == 2 ? 18 : 24)));
+    } catch (e) {}
+}
