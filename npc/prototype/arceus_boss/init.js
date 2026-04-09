@@ -4,6 +4,7 @@ var ARCEUS_CONFIG_VERSION = 7;
 function init(event) {
     var npc = event.npc;
 
+    captureBaseTitle(npc);
     migrateConfig(npc);
     ensurePhaseAttackDelayDefaults(npc);
 
@@ -120,6 +121,7 @@ function resetBossState(npc) {
     applyPhaseMeleeDelay(npc, 1);
     ensureBossBarEnabled(npc);
     applyBossBarColor(npc, "white");
+    restoreNameplate(npc);
     restoreVisibleBody(npc);
     updateNpcClient(npc);
 }
@@ -128,6 +130,29 @@ function putDefault(npc, key, value) {
     if (!npc.getStoreddata().has(key)) {
         npc.getStoreddata().put(key, value);
     }
+}
+
+function captureBaseTitle(npc) {
+    var data = npc.getStoreddata();
+    if (data.has("arceus_base_title")) return;
+
+    var title = "";
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().getTitle) {
+            title = "" + npc.getDisplay().getTitle();
+        }
+    } catch (e) {}
+
+    if ((title == null || title == "" || title == "null")) {
+        try {
+            if (npc.display && npc.display.getTitle) {
+                title = "" + npc.display.getTitle();
+            }
+        } catch (e2) {}
+    }
+
+    if (title == null || title == "null") title = "";
+    data.put("arceus_base_title", title);
 }
 
 function getCfgInt(npc, key, def) {
@@ -191,6 +216,32 @@ function restoreVisibleBody(npc) {
     try {
         if (npc.display) {
             npc.display.setVisible(0);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restoreNameplate(npc) {
+    var title = "" + npc.getStoreddata().get("arceus_base_title");
+    if (title == null || title == "null") title = "";
+
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            var display = npc.getDisplay();
+            if (display.setTitle) display.setTitle(title);
+            if (display.setShowName) display.setShowName(0);
+            if (display.setNameVisible) display.setNameVisible(true);
+            if (display.setShowNameplate) display.setShowNameplate(true);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            if (npc.display.setTitle) npc.display.setTitle(title);
+            if (npc.display.setShowName) npc.display.setShowName(0);
+            if (npc.display.setNameVisible) npc.display.setNameVisible(true);
+            if (npc.display.setShowNameplate) npc.display.setShowNameplate(true);
             return;
         }
     } catch (e2) {}

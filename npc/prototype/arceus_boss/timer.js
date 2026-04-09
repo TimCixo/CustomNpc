@@ -51,6 +51,7 @@ function timer(event) {
     }
 
     if (tickTransition(npc)) return;
+    if (tickForcedDeathStart(npc)) return;
 
     tickRecentAggro(npc);
     tickPhaseRegen(npc);
@@ -152,6 +153,45 @@ function tickPhaseRegen(npc) {
             npc.setHealth(nextHp);
         } catch (e) {}
     }
+}
+
+function tickForcedDeathStart(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_dead") == "1") return false;
+    if (data.get("arceus_dying") == "1") return false;
+    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) return false;
+
+    var phase = parseIntSafe(data.get("arceus_phase"), 1);
+    if (phase < 3) return false;
+
+    var currentHp = readNpcHealth(npc);
+    var deathThreshold = getArceusDeathThresholdHp(npc);
+    if (currentHp > deathThreshold) return false;
+
+    startCustomDeathFromTimer(npc);
+    return true;
+}
+
+function getArceusDeathThresholdHp(npc) {
+    var maxHp = readNpcMaxHealth(npc);
+    if (maxHp <= 0) return 0.5;
+    return 0.5;
+}
+
+function startCustomDeathFromTimer(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_dying") == "1") return;
+
+    data.put("arceus_dying", "1");
+    data.put("arceus_death_ticks_left", "" + getCfgInt(npc, "arceus_custom_death_ticks", 80));
+    data.put("arceus_death_line_stage", "0");
+    data.put("arceus_death_anim_started", "0");
+
+    forceHealthFloor(npc);
+    stopCombatForDeath(npc);
+    restartDeathTimer(npc);
+    playConfiguredDeathSound(npc);
+    safeSay(npc, "§5Аркеус не падает. Он начинает собственную смерть.");
 }
 
 function tickRecentAggro(npc) {
@@ -480,6 +520,12 @@ function playSoundForAllPlayers(npc, soundId, volume, pitch) {
     } catch (e) {}
 }
 
+function playConfiguredDeathSound(npc) {
+    var soundId = "" + npc.getStoreddata().get("arceus_death_sound");
+    if (!hasText(soundId) || soundId == "null") return;
+    playSoundForAllPlayers(npc, soundId, 1.2, 1.0);
+}
+
 function collectDamageEntries(npc) {
     var data = npc.getStoreddata();
     var keys = data.getKeys();
@@ -557,6 +603,7 @@ function maintainDeadNpc(npc) {
     stopCombatForDeath(npc);
     setNoAiState(npc, true);
     disableBossBar(npc);
+    hideNameplate(npc);
     ensureHideDeadBody(npc);
     forceHealthFloor(npc);
 
@@ -593,6 +640,35 @@ function applyPhaseMeleeDelay(npc, phase) {
 function setNoAiState(npc, enabled) {
     try {
         npc.getMCEntity().setNoAi(enabled ? true : false);
+    } catch (e) {}
+}
+
+function hideNameplate(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            var display = npc.getDisplay();
+            if (display.setTitle) display.setTitle("");
+            if (display.setShowName) display.setShowName(1);
+            if (display.setNameVisible) display.setNameVisible(false);
+            if (display.setShowNameplate) display.setShowNameplate(false);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            if (npc.display.setTitle) npc.display.setTitle("");
+            if (npc.display.setShowName) npc.display.setShowName(1);
+            if (npc.display.setNameVisible) npc.display.setNameVisible(false);
+            if (npc.display.setShowNameplate) npc.display.setShowNameplate(false);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restartDeathTimer(npc) {
+    try {
+        npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_death_timer_ticks", 1), true);
     } catch (e) {}
 }
 

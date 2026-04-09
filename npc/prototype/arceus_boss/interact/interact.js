@@ -66,6 +66,7 @@ function resetBoss(npc) {
     restartNormalTimer(npc);
     applyPhaseMeleeDelay(npc, 1);
     applyBossBarColor(npc, "white");
+    restoreNameplate(npc);
     restoreVisibleBody(npc);
     updateNpcClient(npc);
 }
@@ -131,6 +132,32 @@ function restoreVisibleBody(npc) {
     try {
         if (npc.display) {
             npc.display.setVisible(0);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restoreNameplate(npc) {
+    var title = "" + npc.getStoreddata().get("arceus_base_title");
+    if (title == null || title == "null") title = "";
+
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            var display = npc.getDisplay();
+            if (display.setTitle) display.setTitle(title);
+            if (display.setShowName) display.setShowName(0);
+            if (display.setNameVisible) display.setNameVisible(true);
+            if (display.setShowNameplate) display.setShowNameplate(true);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            if (npc.display.setTitle) npc.display.setTitle(title);
+            if (npc.display.setShowName) npc.display.setShowName(0);
+            if (npc.display.setNameVisible) npc.display.setNameVisible(true);
+            if (npc.display.setShowNameplate) npc.display.setShowNameplate(true);
             return;
         }
     } catch (e2) {}

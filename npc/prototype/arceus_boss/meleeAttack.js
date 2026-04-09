@@ -16,11 +16,59 @@ function meleeAttack(event) {
     }
 
     if (phase >= 3) {
+        if (!isPlayerTarget(event.target)) {
+            oneShotNonPlayerTarget(npc, event.target);
+            return;
+        }
+
         damage = damage * getCfgFloat(npc, "arceus_phase3_damage_mult", 1.45)
             + getCfgFloat(npc, "arceus_phase3_flat_bonus", 4.0);
         writeDamage(event, damage);
         applyHalfArmorBypassHit(npc, event.target, damage);
     }
+}
+
+function oneShotNonPlayerTarget(npc, target) {
+    if (target == null) return;
+
+    try {
+        target.damage(1000000, npc);
+    } catch (e) {}
+
+    try {
+        target.setHealth(0);
+        return;
+    } catch (e2) {}
+
+    try {
+        var mcTarget = unwrapMcEntity(target);
+        if (mcTarget != null && mcTarget.kill) {
+            mcTarget.kill();
+        }
+    } catch (e3) {}
+}
+
+function isPlayerTarget(target) {
+    if (target == null) return false;
+
+    try {
+        if (target.getType && target.getType() == 1) return true;
+    } catch (e) {}
+
+    try {
+        var className = "" + target.getClass().getName();
+        if (className.indexOf("PlayerWrapper") >= 0) return true;
+    } catch (e2) {}
+
+    try {
+        var mcTarget = unwrapMcEntity(target);
+        if (mcTarget != null) {
+            var mcClassName = "" + mcTarget.getClass().getName();
+            if (mcClassName.indexOf("player") >= 0 || mcClassName.indexOf("Player") >= 0) return true;
+        }
+    } catch (e3) {}
+
+    return false;
 }
 
 function applyHalfArmorBypassHit(npc, target, baseDamage) {
