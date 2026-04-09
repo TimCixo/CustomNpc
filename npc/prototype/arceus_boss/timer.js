@@ -753,13 +753,46 @@ function buryDeadNpcOnce(npc) {
 }
 
 function applyPhaseMeleeDelay(npc, phase) {
-    var key = "arceus_phase1_melee_delay";
-    if (phase == 2) key = "arceus_phase2_melee_delay";
-    if (phase >= 3) key = "arceus_phase3_melee_delay";
-
     try {
-        npc.getStats().getMelee().setDelay(getCfgInt(npc, key, phase >= 3 ? 12 : (phase == 2 ? 18 : 24)));
+        var data = npc.getStoreddata();
+        var baseDelay = getBaseMeleeDelay(npc, data);
+        var delay = Math.max(1, Math.round(baseDelay * getPhaseMeleeDelayMultiplier(npc, phase)));
+        npc.getStats().getMelee().setDelay(delay);
+        data.put("arceus_applied_melee_phase", "" + phase);
     } catch (e) {}
+}
+
+function getBaseMeleeDelay(npc, data) {
+    try {
+        var value = npc.getStats().getMelee().getDelay();
+        if (value >= 1) {
+            var appliedPhase = parseIntSafe(data.get("arceus_applied_melee_phase"), 0);
+            if (appliedPhase > 0) {
+                var appliedMultiplier = getPhaseMeleeDelayMultiplier(npc, appliedPhase);
+                if (appliedMultiplier > 0) {
+                    return Math.max(1, Math.round(value / appliedMultiplier));
+                }
+            }
+            return value;
+        }
+    } catch (e) {}
+    return 12;
+}
+
+function getPhaseMeleeDelayMultiplier(npc, phase) {
+    var key = "arceus_phase1_melee_delay_mult";
+    var def = 1.0;
+    if (phase == 2) {
+        key = "arceus_phase2_melee_delay_mult";
+        def = 0.7;
+    } else if (phase >= 3) {
+        key = "arceus_phase3_melee_delay_mult";
+        def = 0.5;
+    }
+
+    var value = getCfgFloat(npc, key, def);
+    if (value <= 0) return def;
+    return value;
 }
 
 function setNoAiState(npc, enabled) {

@@ -55,6 +55,7 @@ function resetBoss(npc) {
     data.put("arceus_dbg_runtime_ticks", "0");
     data.put("arceus_dbg_last_live_target_id", "-");
     data.put("arceus_dbg_last_live_target_class", "-");
+    data.put("arceus_applied_melee_phase", "0");
     clearDamageContributors(data);
 
     try {
@@ -88,20 +89,60 @@ function clearDamageContributors(data) {
 }
 
 function applyPhaseMeleeDelay(npc, phase) {
-    var key = "arceus_phase1_melee_delay";
-    if (phase == 2) key = "arceus_phase2_melee_delay";
-    if (phase >= 3) key = "arceus_phase3_melee_delay";
-
     try {
         var data = npc.getStoreddata();
-        var value = parseIntSafe(data.get(key), phase >= 3 ? 12 : (phase == 2 ? 18 : 24));
+        var baseDelay = getBaseMeleeDelay(npc, data);
+        var value = Math.max(1, Math.round(baseDelay * getPhaseMeleeDelayMultiplier(data, phase)));
         npc.getStats().getMelee().setDelay(value);
+        data.put("arceus_applied_melee_phase", "" + phase);
     } catch (e) {}
+}
+
+function getBaseMeleeDelay(npc, data) {
+    try {
+        var value = npc.getStats().getMelee().getDelay();
+        if (value >= 1) {
+            var appliedPhase = parseIntSafe(data.get("arceus_applied_melee_phase"), 0);
+            if (appliedPhase > 0) {
+                var appliedMultiplier = getPhaseMeleeDelayMultiplier(data, appliedPhase);
+                if (appliedMultiplier > 0) {
+                    return Math.max(1, Math.round(value / appliedMultiplier));
+                }
+            }
+            return value;
+        }
+    } catch (e) {}
+    return 12;
+}
+
+function getPhaseMeleeDelayMultiplier(data, phase) {
+    var key = "arceus_phase1_melee_delay_mult";
+    var def = 1.0;
+    if (phase == 2) {
+        key = "arceus_phase2_melee_delay_mult";
+        def = 0.7;
+    } else if (phase >= 3) {
+        key = "arceus_phase3_melee_delay_mult";
+        def = 0.5;
+    }
+
+    var value = parseFloatSafe(data.get(key), def);
+    if (value <= 0) return def;
+    return value;
 }
 
 function parseIntSafe(s, def) {
     try {
         var value = parseInt("" + s, 10);
+        return isNaN(value) ? def : value;
+    } catch (e) {
+        return def;
+    }
+}
+
+function parseFloatSafe(s, def) {
+    try {
+        var value = parseFloat("" + s);
         return isNaN(value) ? def : value;
     } catch (e) {
         return def;

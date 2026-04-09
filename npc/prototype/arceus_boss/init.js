@@ -1,5 +1,5 @@
 var ARCEUS_TIMER_ID = 1;
-var ARCEUS_CONFIG_VERSION = 7;
+var ARCEUS_CONFIG_VERSION = 8;
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 
@@ -26,9 +26,9 @@ function init(event) {
     putDefault(npc, "arceus_phase3_damage_mult", "1.45");
     putDefault(npc, "arceus_phase3_flat_bonus", "4");
     putDefault(npc, "arceus_phase3_armor_bypass_bonus", "8.0");
-    putDefault(npc, "arceus_phase1_melee_delay", "24");
-    putDefault(npc, "arceus_phase2_melee_delay", "18");
-    putDefault(npc, "arceus_phase3_melee_delay", "12");
+    putDefault(npc, "arceus_phase1_melee_delay_mult", "1.0");
+    putDefault(npc, "arceus_phase2_melee_delay_mult", "0.7");
+    putDefault(npc, "arceus_phase3_melee_delay_mult", "0.5");
     putDefault(npc, "arceus_reflect_arrow_speed", "2.2");
     putDefault(npc, "arceus_reflect_arrow_inaccuracy", "0.2");
     putDefault(npc, "arceus_custom_death_ticks", "80");
@@ -76,6 +76,10 @@ function migrateConfig(npc) {
         data.put("arceus_death_sound", "cobblemon:pokemon.arceus.cry");
     }
 
+    if (version < 8) {
+        migrateLegacyPhaseAttackDelays(npc);
+    }
+
     data.put("arceus_config_version", "" + ARCEUS_CONFIG_VERSION);
 }
 
@@ -114,6 +118,7 @@ function resetBossState(npc) {
     data.put("arceus_dbg_runtime_ticks", "0");
     data.put("arceus_dbg_last_live_target_id", "-");
     data.put("arceus_dbg_last_live_target_class", "-");
+    data.put("arceus_applied_melee_phase", "0");
     clearDamageContributors(data);
 
     try {
@@ -166,6 +171,15 @@ function getCfgInt(npc, key, def) {
 function parseIntSafe(s, def) {
     try {
         var value = parseInt("" + s, 10);
+        return isNaN(value) ? def : value;
+    } catch (e) {
+        return def;
+    }
+}
+
+function parseFloatSafe(s, def) {
+    try {
+        var value = parseFloat("" + s);
         return isNaN(value) ? def : value;
     } catch (e) {
         return def;
@@ -300,28 +314,84 @@ function setNoAiState(npc, enabled) {
 
 function ensurePhaseAttackDelayDefaults(npc) {
     var data = npc.getStoreddata();
-    if (data.has("arceus_phase3_melee_delay")) return;
-
-    var baseDelay = 12;
-    try {
-        baseDelay = npc.getStats().getMelee().getDelay();
-    } catch (e) {}
-
-    if (baseDelay < 1) baseDelay = 12;
-
-    data.put("arceus_phase3_melee_delay", "" + baseDelay);
-    data.put("arceus_phase2_melee_delay", "" + Math.max(1, Math.floor(baseDelay * 1.5)));
-    data.put("arceus_phase1_melee_delay", "" + Math.max(1, Math.floor(baseDelay * 2.0)));
+    putDelayMultiplierDefault(data, "arceus_phase1_melee_delay_mult", "1.0");
+    putDelayMultiplierDefault(data, "arceus_phase2_melee_delay_mult", "0.7");
+    putDelayMultiplierDefault(data, "arceus_phase3_melee_delay_mult", "0.5");
 }
 
 function applyPhaseMeleeDelay(npc, phase) {
-    var key = "arceus_phase1_melee_delay";
-    if (phase == 2) key = "arceus_phase2_melee_delay";
-    if (phase >= 3) key = "arceus_phase3_melee_delay";
-
     try {
-        npc.getStats().getMelee().setDelay(getCfgInt(npc, key, phase >= 3 ? 12 : (phase == 2 ? 18 : 24)));
+        var data = npc.getStoreddata();
+        var baseDelay = getBaseMeleeDelay(npc, data);
+        var delay = Math.max(1, Math.round(baseDelay * getPhaseMeleeDelayMultiplier(npc, phase)));
+        npc.getStats().getMelee().setDelay(delay);
+        data.put("arceus_applied_melee_phase", "" + phase);
     } catch (e) {}
+}
+
+function migrateLegacyPhaseAttackDelays(npc) {
+    var data = npc.getStoreddata();
+    if (data.has("arceus_phase1_melee_delay_mult")
+        && data.has("arceus_phase2_melee_delay_mult")
+        && data.has("arceus_phase3_melee_delay_mult")) {
+        return;
+    }
+
+    var baseDelay = getBaseMeleeDelay(npc, data);
+    if (baseDelay < 1) baseDelay = 12;
+
+    var phase1Delay = parseIntSafe(data.get("arceus_phase1_melee_delay"), Math.max(1, Math.round(baseDelay * 1.0)));
+    var phase2Delay = parseIntSafe(data.get("arceus_phase2_melee_delay"), Math.max(1, Math.round(baseDelay * 0.7)));
+    var phase3Delay = parseIntSafe(data.get("arceus_phase3_melee_delay"), Math.max(1, Math.round(baseDelay * 0.5)));
+
+    data.put("arceus_phase1_melee_delay_mult", formatDelayMultiplier(phase1Delay / baseDelay, 1.0));
+    data.put("arceus_phase2_melee_delay_mult", formatDelayMultiplier(phase2Delay / baseDelay, 0.7));
+    data.put("arceus_phase3_melee_delay_mult", formatDelayMultiplier(phase3Delay / baseDelay, 0.5));
+}
+
+function putDelayMultiplierDefault(data, key, value) {
+    if (!data.has(key)) {
+        data.put(key, value);
+    }
+}
+
+function getBaseMeleeDelay(npc, data) {
+    try {
+        var value = npc.getStats().getMelee().getDelay();
+        if (value >= 1) {
+            var appliedPhase = parseIntSafe(data.get("arceus_applied_melee_phase"), 0);
+            if (appliedPhase > 0) {
+                var appliedMultiplier = getPhaseMeleeDelayMultiplier(npc, appliedPhase);
+                if (appliedMultiplier > 0) {
+                    return Math.max(1, Math.round(value / appliedMultiplier));
+                }
+            }
+            return value;
+        }
+    } catch (e) {}
+    return 12;
+}
+
+function getPhaseMeleeDelayMultiplier(npc, phase) {
+    var key = "arceus_phase1_melee_delay_mult";
+    var def = 1.0;
+    if (phase == 2) {
+        key = "arceus_phase2_melee_delay_mult";
+        def = 0.7;
+    } else if (phase >= 3) {
+        key = "arceus_phase3_melee_delay_mult";
+        def = 0.5;
+    }
+
+    var mult = parseFloatSafe(npc.getStoreddata().get(key), def);
+    if (mult <= 0) return def;
+    return mult;
+}
+
+function formatDelayMultiplier(value, def) {
+    if (!(value > 0)) value = def;
+    var rounded = Math.round(value * 1000) / 1000;
+    return "" + rounded;
 }
 
 function announceArceusRespawn(npc) {
