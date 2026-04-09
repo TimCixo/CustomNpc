@@ -321,7 +321,10 @@ function startCustomDeathFromTimer(npc) {
 }
 
 function tickRecentAggro(npc) {
-    var targetEntry = pickHighestRecentDamager(npc);
+    if (!shouldRefreshAggroTarget(npc)) return;
+
+    var players = getOnlinePlayers(npc);
+    var targetEntry = pickHighestRecentDamager(npc, players);
     if (targetEntry == null || targetEntry.player == null) return;
 
     try {
@@ -339,7 +342,7 @@ function tickRecentAggro(npc) {
     } catch (e3) {}
 }
 
-function pickHighestRecentDamager(npc) {
+function pickHighestRecentDamager(npc, players) {
     var data = npc.getStoreddata();
     var keys = data.getKeys();
     if (keys == null || keys.length <= 0) return null;
@@ -366,7 +369,7 @@ function pickHighestRecentDamager(npc) {
         if (parsed.total <= 0) continue;
 
         var name = "" + data.get("arceus_recent_name_" + uuid);
-        var player = resolveAggroPlayer(npc, uuid, name);
+        var player = resolveAggroPlayer(npc, uuid, name, players);
         if (player == null) continue;
 
         if (best == null || parsed.total > best.damage) {
@@ -405,14 +408,7 @@ function parseRecentDamageWindow(raw, cutoff) {
     return { total: total, cleaned: kept.join("|") };
 }
 
-function resolveAggroPlayer(npc, uuid, name) {
-    var players;
-    try {
-        players = npc.getWorld().getAllPlayers();
-    } catch (e) {
-        players = null;
-    }
-
+function resolveAggroPlayer(npc, uuid, name, players) {
     if (players != null) {
         for (var i = 0; i < players.length; i++) {
             if (samePlayerUuid(players[i], uuid)) return players[i];
@@ -475,6 +471,8 @@ function tickPostDeath(npc) {
     }
 
     maintainDeadNpc(npc);
+    data.put("arceus_post_death_stage", "2");
+    stopBossTimer(npc);
 }
 
 function tickDeathSpin(npc) {
@@ -707,9 +705,10 @@ function awardDamageTop(npc) {
     var entries = collectDamageEntries(npc);
     if (entries.length <= 0) return;
     ensureRewardPoolsLoaded(npc);
+    var players = getOnlinePlayers(npc);
 
     for (var i = 0; i < entries.length; i++) {
-        var player = resolveRewardPlayer(npc, entries[i]);
+        var player = resolveRewardPlayer(npc, entries[i], players);
         if (player == null) continue;
 
         var ivs = getRewardIvStringForPlace(i);
@@ -795,6 +794,12 @@ function hideNameplate(npc) {
 function restartDeathTimer(npc) {
     try {
         npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_death_timer_ticks", 1), true);
+    } catch (e) {}
+}
+
+function stopBossTimer(npc) {
+    try {
+        npc.timers.stop(ARCEUS_TIMER_ID);
     } catch (e) {}
 }
 
@@ -1154,15 +1159,8 @@ function getRewardPlayerParty(player) {
     }
 }
 
-function resolveRewardPlayer(npc, entry) {
+function resolveRewardPlayer(npc, entry, players) {
     if (entry == null) return null;
-
-    var players;
-    try {
-        players = npc.getWorld().getAllPlayers();
-    } catch (e) {
-        players = null;
-    }
 
     if (players != null) {
         for (var i = 0; i < players.length; i++) {
@@ -1297,4 +1295,31 @@ function startsWithIgnoreCase(text, prefix) {
     if (text == null || prefix == null) return false;
     if (text.length < prefix.length) return false;
     return text.substring(0, prefix.length).toLowerCase() == prefix.toLowerCase();
+}
+
+function shouldRefreshAggroTarget(npc) {
+    var temp;
+    try {
+        temp = npc.getTempdata();
+    } catch (e) {
+        temp = null;
+    }
+    if (temp == null) return true;
+
+    var now = Reward_System.currentTimeMillis();
+    var nextAt = parseIntSafe(temp.get("arceus_next_aggro_refresh_at"), 0);
+    if (nextAt > now) return false;
+
+    var refreshMs = getCfgInt(npc, "arceus_aggro_refresh_ms", 500);
+    if (refreshMs < 50) refreshMs = 50;
+    temp.put("arceus_next_aggro_refresh_at", "" + (now + refreshMs));
+    return true;
+}
+
+function getOnlinePlayers(npc) {
+    try {
+        return npc.getWorld().getAllPlayers();
+    } catch (e) {
+        return null;
+    }
 }

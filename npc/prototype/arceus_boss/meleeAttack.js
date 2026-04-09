@@ -1,6 +1,7 @@
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 var ArceusBoss_System = Java.type("java.lang.System");
+var ARCEUS_WHOIS_CACHE_MS = 1200;
 
 function meleeAttack(event) {
     var npc = event.npc;
@@ -117,7 +118,7 @@ function readWhoisInfo(npc, target, playerName) {
             var cachedRaw = temp.get(cacheKey);
             if (cachedRaw != null) {
                 var cached = parseWhoisCacheEntry("" + cachedRaw);
-                if (cached != null && now - cached.time <= 400) {
+                if (cached != null && now - cached.time <= ARCEUS_WHOIS_CACHE_MS) {
                     return { ok: true, godModeEnabled: cached.enabled };
                 }
             }

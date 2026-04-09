@@ -17,6 +17,7 @@ function init(event) {
     putDefault(npc, "arceus_phase2_heal_to", "0.72");
     putDefault(npc, "arceus_phase3_heal_to", "0.45");
     putDefault(npc, "arceus_transition_ticks", "40");
+    putDefault(npc, "arceus_aggro_refresh_ms", "500");
     putDefault(npc, "arceus_phase2_regen_interval", "40");
     putDefault(npc, "arceus_phase3_regen_interval", "20");
     putDefault(npc, "arceus_phase2_regen_percent", "0.015");

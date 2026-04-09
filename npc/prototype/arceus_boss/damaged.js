@@ -4,6 +4,7 @@ var ArceusBoss_BuiltInRegistries = Java.type("net.minecraft.core.registries.Buil
 var ArceusBoss_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var ArceusBoss_EntityType = Java.type("net.minecraft.world.entity.EntityType");
 var ArceusBoss_System = Java.type("java.lang.System");
+var ARCEUS_ITEM_TYPE_CACHE = {};
 
 var ARCEUS_PHASE3_GEMS = [
     "cobblemon:flying_gem",
@@ -170,7 +171,7 @@ function spawnScatterItem(npc, itemId, amount) {
     var stackSize = amount == null ? 1 : Math.max(1, Math.floor(amount));
 
     try {
-        var itemType = ArceusBoss_BuiltInRegistries.ITEM.get(ArceusBoss_ResourceLocation.parse(itemId));
+        var itemType = getCachedItemType(itemId);
         if (itemType == null) return;
 
         var stack = new ArceusBoss_MCItemStack(itemType, stackSize);
@@ -540,6 +541,23 @@ function randomSigned(min, max) {
     var high = Math.max(min, max);
     var speed = low + Math.random() * (high - low);
     return Math.random() < 0.5 ? -speed : speed;
+}
+
+function getCachedItemType(itemId) {
+    var key = "" + itemId;
+    if (ARCEUS_ITEM_TYPE_CACHE.hasOwnProperty(key)) {
+        return ARCEUS_ITEM_TYPE_CACHE[key];
+    }
+
+    var itemType = null;
+    try {
+        itemType = ArceusBoss_BuiltInRegistries.ITEM.get(ArceusBoss_ResourceLocation.parse(key));
+    } catch (e) {
+        itemType = null;
+    }
+
+    ARCEUS_ITEM_TYPE_CACHE[key] = itemType;
+    return itemType;
 }
 
 function forceHealthFloor(npc) {
