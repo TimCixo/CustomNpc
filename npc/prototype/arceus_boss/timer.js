@@ -102,12 +102,18 @@ function processDeferredPhaseEffects(npc) {
     if (data.get("arceus_phase_effects_pending") != "1") return;
     data.put("arceus_phase_effects_pending", "0");
 
+    var phase = parseIntSafe(data.get("arceus_phase"), 1);
     var bossBarColor = "" + data.get("arceus_pending_phase_color");
     var soundId = "" + data.get("arceus_pending_phase_sound");
     var line = "" + data.get("arceus_pending_phase_line");
 
     if (hasText(bossBarColor) && bossBarColor != "null") {
         applyBossBarColor(npc, bossBarColor);
+    }
+
+    if (phase >= 2) {
+        spawnPhaseWindChargeBurst(npc);
+        launchNearbyPlayersOnPhaseStart(npc);
     }
 
     if (hasText(soundId) && soundId != "null") {
@@ -119,6 +125,110 @@ function processDeferredPhaseEffects(npc) {
     if (hasText(line) && line != "null") {
         safeSay(npc, line);
     }
+}
+
+function launchNearbyPlayersOnPhaseStart(npc) {
+    var world;
+    try {
+        world = npc.getWorld();
+    } catch (e) {
+        world = null;
+    }
+    if (world == null) return;
+
+    var players;
+    try {
+        players = world.getAllPlayers();
+    } catch (e2) {
+        players = null;
+    }
+    if (players == null || players.length <= 0) return;
+
+    var radius = getCfgFloat(npc, "arceus_phase_transition_launch_radius", 18.0);
+    var horizontal = getCfgFloat(npc, "arceus_phase_transition_launch_push", 1.85);
+    var vertical = getCfgFloat(npc, "arceus_phase_transition_launch_vertical", 1.15);
+    var radiusSq = radius * radius;
+
+    for (var i = 0; i < players.length; i++) {
+        launchPlayerFromNpc(npc, players[i], radiusSq, horizontal, vertical);
+    }
+}
+
+function launchPlayerFromNpc(npc, player, radiusSq, horizontal, vertical) {
+    if (player == null) return;
+
+    var dx = 0;
+    var dz = 0;
+    try {
+        dx = player.getX() - npc.getX();
+        dz = player.getZ() - npc.getZ();
+    } catch (e) {
+        return;
+    }
+
+    var distSq = dx * dx + dz * dz;
+    if (distSq > radiusSq) return;
+
+    if (distSq < 0.0001) {
+        dx = Math.random() - 0.5;
+        dz = Math.random() - 0.5;
+        distSq = dx * dx + dz * dz;
+    }
+
+    var dist = Math.sqrt(distSq);
+    if (dist <= 0) return;
+
+    var vx = (dx / dist) * horizontal;
+    var vz = (dz / dist) * horizontal;
+
+    try {
+        player.setMotionX(vx);
+        player.setMotionY(vertical);
+        player.setMotionZ(vz);
+        return;
+    } catch (e2) {}
+
+    try {
+        player.getMCEntity().setDeltaMovement(vx, vertical, vz);
+        player.getMCEntity().hurtMarked = true;
+        return;
+    } catch (e3) {}
+
+    try {
+        player.getMCEntity().push(vx, vertical, vz);
+        player.getMCEntity().hurtMarked = true;
+    } catch (e4) {}
+}
+
+function spawnPhaseWindChargeBurst(npc) {
+    var world;
+    try {
+        world = npc.getWorld();
+    } catch (e) {
+        world = null;
+    }
+    if (world == null) return;
+
+    var x = npc.getX();
+    var y = npc.getY() + 1.0;
+    var z = npc.getZ();
+
+    try {
+        world.spawnParticle("minecraft:gust", x, y, z, 1.2, 0.5, 1.2, 0.01, 36);
+    } catch (e2) {}
+
+    try {
+        world.spawnParticle("minecraft:gust_emitter_small", x, y, z, 0.2, 0.2, 0.2, 0.01, 4);
+    } catch (e3) {}
+
+    try {
+        world.playSoundAt(x, y, z, "minecraft:entity.wind_charge.wind_burst", 2.0, 0.95);
+        return;
+    } catch (e4) {}
+
+    try {
+        playSoundForAllPlayers(npc, "minecraft:entity.wind_charge.wind_burst", 2.0, 0.95);
+    } catch (e5) {}
 }
 
 function tickPhaseRegen(npc) {
