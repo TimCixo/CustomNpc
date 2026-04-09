@@ -108,6 +108,10 @@ function parseIntSafe(s, def) {
     }
 }
 
+function trimString(s) {
+    return ("" + s).replace(/^\s+|\s+$/g, "");
+}
+
 function restartNormalTimer(npc) {
     try {
         var timerTicks = parseIntSafe(npc.getStoreddata().get("arceus_timer_ticks"), 5);

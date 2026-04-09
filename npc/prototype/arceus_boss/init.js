@@ -1,5 +1,7 @@
 var ARCEUS_TIMER_ID = 1;
 var ARCEUS_CONFIG_VERSION = 7;
+var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
+var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 
 function init(event) {
     var npc = event.npc;
@@ -47,6 +49,7 @@ function init(event) {
 
     resetBossState(npc);
     npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_timer_ticks", 5), true);
+    announceArceusRespawn(npc);
 }
 
 function migrateConfig(npc) {
@@ -318,4 +321,79 @@ function applyPhaseMeleeDelay(npc, phase) {
     try {
         npc.getStats().getMelee().setDelay(getCfgInt(npc, key, phase >= 3 ? 12 : (phase == 2 ? 18 : 24)));
     } catch (e) {}
+}
+
+function announceArceusRespawn(npc) {
+    var players;
+    try {
+        players = npc.getWorld().getAllPlayers();
+    } catch (e) {
+        players = null;
+    }
+    if (players == null || players.length <= 0) return;
+
+    for (var i = 0; i < players.length; i++) {
+        sendRespawnTeleportMessage(npc, players[i]);
+    }
+}
+
+function sendRespawnTeleportMessage(npc, player) {
+    if (player == null) return;
+
+    var playerName = getPlayerNameSafe(player);
+    if (playerName == "") return;
+
+    var json = '[{"text":"Аркеус возродился ","color":"green"},{"text":"[Телепортироваться]","color":"green","bold":true,"clickEvent":{"action":"run_command","value":"/warp arceus_coliseum"},"hoverEvent":{"action":"show_text","contents":{"text":"Телепортироваться к Аркеусу","color":"green"}}}]';
+    runServerCommand(npc, 'tellraw ' + playerName + ' ' + json);
+}
+
+function getPlayerNameSafe(player) {
+    try {
+        var name = "" + player.getName();
+        if (name != null && name != "" && name != "null") return name;
+    } catch (e) {}
+    return "";
+}
+
+function runServerCommand(npc, command) {
+    try {
+        var outputs = new ArceusBoss_ArrayList();
+        var CapturingSource = Java.extend(ArceusBoss_CommandSource, {
+            sendSystemMessage: function(component) {
+                try {
+                    outputs.add(component.getString());
+                } catch (e1) {
+                    outputs.add("" + component);
+                }
+            },
+            acceptsSuccess: function() {
+                return true;
+            },
+            acceptsFailure: function() {
+                return true;
+            },
+            shouldInformAdmins: function() {
+                return false;
+            }
+        });
+
+        var server = npc.getMCEntity().level().getServer();
+        var source = server.createCommandSourceStack()
+            .withSource(new CapturingSource())
+            .withPermission(4);
+
+        server.getCommands().performPrefixedCommand(source, stripLeadingSlash(command));
+    } catch (e) {}
+}
+
+function stripLeadingSlash(command) {
+    var text = trimString(command);
+    if (text.indexOf("/") === 0) {
+        return text.substring(1);
+    }
+    return text;
+}
+
+function trimString(s) {
+    return ("" + s).replace(/^\s+|\s+$/g, "");
 }
