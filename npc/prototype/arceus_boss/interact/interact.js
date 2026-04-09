@@ -80,7 +80,8 @@ function clearDamageContributors(data) {
         if (key.indexOf("arceus_dmg_") === 0
             || key.indexOf("arceus_dmg_name_") === 0
             || key.indexOf("arceus_recent_hits_") === 0
-            || key.indexOf("arceus_recent_name_") === 0) {
+            || key.indexOf("arceus_recent_name_") === 0
+            || key.indexOf("arceus_godmode_disabled_") === 0) {
             data.remove(key);
         }
     }
