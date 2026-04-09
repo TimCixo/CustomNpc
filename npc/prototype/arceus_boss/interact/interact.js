@@ -1,7 +1,21 @@
+var ArceusClock_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
+var ArceusClock_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
+
+var ARCEUS_CLOCK_LINKER_TYPE = "respawn_clock_linker";
+var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
+var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
+
 function interact(event) {
     var npc = event.npc;
     var player = event.player;
     var data = npc.getStoreddata();
+    var item = player.getMainhandItem();
+
+    if (isRespawnClockLinker(item)) {
+        bindClockLinker(npc, player, item);
+        event.setCanceled(true);
+        return;
+    }
 
     if (player.isSneaking()) {
         resetBoss(npc);
@@ -70,6 +84,125 @@ function resetBoss(npc) {
     restoreNameplate(npc);
     restoreVisibleBody(npc);
     updateNpcClient(npc);
+    notifyClockAlive(npc);
+}
+
+function bindClockLinker(npc, player, item) {
+    var tag = getCustomTag(item);
+    if (tag == null || !hasText(readTag(tag, "main_uuid"))) {
+        player.message("§c[Часы] Некорректный линкер.");
+        return;
+    }
+
+    tag.putString("target_uuid", getNpcUuid(npc));
+    tag.putString("target_name", getNpcDisplayName(npc));
+
+    if (!writeHeldTag(player, item, tag)) {
+        player.message("§c[Часы] Не удалось записать Аркеуса в линкер.");
+        return;
+    }
+
+    npc.getStoreddata().put(ARCEUS_CLOCK_MAIN_UUID_KEY, readTag(tag, "main_uuid"));
+    npc.getStoreddata().put(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY, "" + readRespawnDelaySeconds(npc));
+    notifyClockAlive(npc);
+    player.message("§a[Часы] Аркеус привязан к часам.");
+}
+
+function isRespawnClockLinker(item) {
+    var tag = getCustomTag(item);
+    return tag != null && readTag(tag, "linker_type") == ARCEUS_CLOCK_LINKER_TYPE;
+}
+
+function getCustomTag(item) {
+    if (item == null || item.isEmpty()) return null;
+    try {
+        var customData = item.getMCItemStack().get(ArceusClock_DataComponents.CUSTOM_DATA);
+        if (customData == null) return null;
+        return customData.copyTag();
+    } catch (e) {
+        return null;
+    }
+}
+
+function writeHeldTag(player, item, tag) {
+    try {
+        item.getMCItemStack().set(ArceusClock_DataComponents.CUSTOM_DATA, ArceusClock_CustomData.of(tag));
+        player.updatePlayerInventory();
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function readTag(tag, key) {
+    try {
+        return "" + tag.getString(key);
+    } catch (e) {
+        return "";
+    }
+}
+
+function notifyClockAlive(npc) {
+    var mainNpc = resolveClockMain(npc);
+    if (mainNpc == null) return;
+
+    var data = mainNpc.getStoreddata();
+    data.put("respawn_clock_target_uuid", getNpcUuid(npc));
+    data.put("respawn_clock_target_name", getNpcDisplayName(npc));
+    data.put("respawn_clock_target_dead_until_ms", "0");
+    data.put("respawn_clock_target_alive", "1");
+
+    try {
+        mainNpc.getDisplay().setTitle("§aЖив");
+        mainNpc.updateClient();
+    } catch (e) {}
+}
+
+function resolveClockMain(npc) {
+    var mainUuid = trimString(npc.getStoreddata().get(ARCEUS_CLOCK_MAIN_UUID_KEY));
+    if (!hasText(mainUuid)) return null;
+
+    try {
+        return npc.getWorld().getEntity(mainUuid);
+    } catch (e) {
+        return null;
+    }
+}
+
+function readRespawnDelaySeconds(npc) {
+    try {
+        var stats = npc.getStats();
+        if (stats != null && stats.getRespawnTime) {
+            var value = parseInt("" + stats.getRespawnTime(), 10);
+            if (!isNaN(value) && value > 0) return value;
+        }
+    } catch (e) {}
+
+    return parseIntSafe(npc.getStoreddata().get(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY), 300);
+}
+
+function getNpcUuid(npc) {
+    try {
+        return "" + npc.getUUID();
+    } catch (e) {
+        return "";
+    }
+}
+
+function getNpcDisplayName(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().getTitle) {
+            var title = "" + npc.getDisplay().getTitle();
+            if (hasText(title) && title != "null") return title;
+        }
+    } catch (e) {}
+
+    try {
+        var name = "" + npc.getName();
+        if (hasText(name) && name != "null") return name;
+    } catch (e2) {}
+
+    return "Аркеус";
 }
 
 function clearDamageContributors(data) {
@@ -151,6 +284,10 @@ function parseFloatSafe(s, def) {
 
 function trimString(s) {
     return ("" + s).replace(/^\s+|\s+$/g, "");
+}
+
+function hasText(value) {
+    return value != null && trimString(value).length > 0;
 }
 
 function restartNormalTimer(npc) {

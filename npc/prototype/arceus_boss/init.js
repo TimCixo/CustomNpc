@@ -2,6 +2,8 @@ var ARCEUS_TIMER_ID = 1;
 var ARCEUS_CONFIG_VERSION = 8;
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
+var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
+var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
 
 function init(event) {
     var npc = event.npc;
@@ -47,10 +49,13 @@ function init(event) {
     putDefault(npc, "arceus_death_sound", "cobblemon:pokemon.arceus.cry");
     putDefault(npc, "arceus_debug_runtime", "0");
     putDefault(npc, "arceus_debug_interval_ticks", "20");
+    putDefault(npc, ARCEUS_CLOCK_MAIN_UUID_KEY, "");
+    putDefault(npc, ARCEUS_CLOCK_RESPAWN_SECONDS_KEY, "" + readRespawnDelaySeconds(npc));
 
     resetBossState(npc);
     npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_timer_ticks", 5), true);
     announceArceusRespawn(npc);
+    notifyClockAlive(npc);
 }
 
 function migrateConfig(npc) {
@@ -408,6 +413,69 @@ function announceArceusRespawn(npc) {
     }
 }
 
+function notifyClockAlive(npc) {
+    var mainNpc = resolveClockMain(npc);
+    if (mainNpc == null) return;
+
+    var data = mainNpc.getStoreddata();
+    data.put("respawn_clock_target_uuid", getNpcUuid(npc));
+    data.put("respawn_clock_target_name", getNpcDisplayName(npc));
+    data.put("respawn_clock_target_dead_until_ms", "0");
+    data.put("respawn_clock_target_alive", "1");
+
+    try {
+        mainNpc.getDisplay().setTitle("§aЖив");
+        mainNpc.updateClient();
+    } catch (e) {}
+}
+
+function resolveClockMain(npc) {
+    var mainUuid = trimString(npc.getStoreddata().get(ARCEUS_CLOCK_MAIN_UUID_KEY));
+    if (!hasText(mainUuid)) return null;
+
+    try {
+        return npc.getWorld().getEntity(mainUuid);
+    } catch (e) {
+        return null;
+    }
+}
+
+function readRespawnDelaySeconds(npc) {
+    try {
+        var stats = npc.getStats();
+        if (stats != null && stats.getRespawnTime) {
+            var value = parseInt("" + stats.getRespawnTime(), 10);
+            if (!isNaN(value) && value > 0) return value;
+        }
+    } catch (e) {}
+
+    return parseIntSafe(npc.getStoreddata().get(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY), 300);
+}
+
+function getNpcUuid(npc) {
+    try {
+        return "" + npc.getUUID();
+    } catch (e) {
+        return "";
+    }
+}
+
+function getNpcDisplayName(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().getTitle) {
+            var title = "" + npc.getDisplay().getTitle();
+            if (hasText(title) && title != "null") return title;
+        }
+    } catch (e) {}
+
+    try {
+        var name = "" + npc.getName();
+        if (hasText(name) && name != "null") return name;
+    } catch (e2) {}
+
+    return "Аркеус";
+}
+
 function sendRespawnTeleportMessage(npc, player) {
     if (player == null) return;
 
@@ -463,6 +531,10 @@ function stripLeadingSlash(command) {
         return text.substring(1);
     }
     return text;
+}
+
+function hasText(value) {
+    return value != null && trimString(value).length > 0;
 }
 
 function trimString(s) {

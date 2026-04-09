@@ -11,6 +11,8 @@ var ArceusBoss_MobEffectInstance = Java.type("net.minecraft.world.effect.MobEffe
 var ArceusBoss_MobEffects = Java.type("net.minecraft.world.effect.MobEffects");
 var Reward_Cobblemon = Java.type("com.cobblemon.mod.common.Cobblemon");
 var Reward_PlayerExtensionsKt = Java.type("com.cobblemon.mod.common.util.PlayerExtensionsKt");
+var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
+var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
 
 var REWARD_STAT_ORDER = [
     Reward_Stats.HP,
@@ -454,6 +456,7 @@ function tickCustomDeath(npc) {
     data.put("arceus_death_ticks_left", "0");
     data.put("arceus_post_death_stage", "0");
     data.put("arceus_dead_buried", "0");
+    notifyClockDead(npc);
     spawnDeathExplosion(npc);
     safeSay(npc, "§8Аркеус пал.");
     ensureHideDeadBody(npc);
@@ -793,6 +796,72 @@ function getPhaseMeleeDelayMultiplier(npc, phase) {
     var value = getCfgFloat(npc, key, def);
     if (value <= 0) return def;
     return value;
+}
+
+function notifyClockDead(npc) {
+    var mainNpc = resolveClockMain(npc);
+    if (mainNpc == null) return;
+
+    var respawnSeconds = readRespawnDelaySeconds(npc);
+    var deadUntilMs = Reward_System.currentTimeMillis() + (respawnSeconds * 1000);
+    var data = mainNpc.getStoreddata();
+
+    data.put("respawn_clock_target_uuid", getNpcUuid(npc));
+    data.put("respawn_clock_target_name", getNpcDisplayName(npc));
+    data.put("respawn_clock_target_dead_until_ms", "" + deadUntilMs);
+    data.put("respawn_clock_target_alive", "0");
+
+    try {
+        mainNpc.getDisplay().setTitle("§c" + formatDurationMs(respawnSeconds * 1000));
+        mainNpc.updateClient();
+    } catch (e) {}
+}
+
+function resolveClockMain(npc) {
+    var mainUuid = trimString(npc.getStoreddata().get(ARCEUS_CLOCK_MAIN_UUID_KEY));
+    if (!hasText(mainUuid)) return null;
+
+    try {
+        return npc.getWorld().getEntity(mainUuid);
+    } catch (e) {
+        return null;
+    }
+}
+
+function readRespawnDelaySeconds(npc) {
+    try {
+        var stats = npc.getStats();
+        if (stats != null && stats.getRespawnTime) {
+            var value = parseInt("" + stats.getRespawnTime(), 10);
+            if (!isNaN(value) && value > 0) return value;
+        }
+    } catch (e) {}
+
+    return parseIntSafe(npc.getStoreddata().get(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY), 300);
+}
+
+function getNpcUuid(npc) {
+    try {
+        return "" + npc.getUUID();
+    } catch (e) {
+        return "";
+    }
+}
+
+function getNpcDisplayName(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().getTitle) {
+            var title = "" + npc.getDisplay().getTitle();
+            if (hasText(title) && title != "null") return title;
+        }
+    } catch (e) {}
+
+    try {
+        var name = "" + npc.getName();
+        if (hasText(name) && name != "null") return name;
+    } catch (e2) {}
+
+    return "Аркеус";
 }
 
 function setNoAiState(npc, enabled) {
