@@ -16,7 +16,8 @@ var STATUS_ID = 9512;
 var ACTIONS = [
     "Выдать купон обновления заданий",
     "Выдать купон на изучение движения",
-    "Выдать купон на детский сад"
+    "Выдать купон на детский сад",
+    "Выдать похоронный купон"
 ];
 
 var COUPON_ITEM_ID = "minecraft:paper";
@@ -48,6 +49,8 @@ function customGuiScroll(event) {
             item = createMoveTeachCoupon();
         } else if (index == 2) {
             item = createDaycareCoupon();
+        } else if (index == 3) {
+            item = createGraveCoupon();
         } else {
             setStatus(event.gui, "Неизвестное действие.");
             safeUpdate(event.gui);
@@ -70,8 +73,10 @@ function customGuiScroll(event) {
             setStatus(event.gui, "Выдан купон обновления заданий.");
         } else if (index == 1) {
             setStatus(event.gui, "Выдан купон на изучение движения.");
-        } else {
+        } else if (index == 2) {
             setStatus(event.gui, "Выдан купон на детский сад.");
+        } else {
+            setStatus(event.gui, "Выдан похоронный купон.");
         }
         safeUpdate(event.gui);
     } catch (e) {
@@ -99,7 +104,8 @@ function createQuestRefreshCoupon() {
             "Обновляет все задания выбранного NPC.",
             "Чтобы применить, нажми ПКМ по нужному NPC.",
             "§7Одноразовый предмет."
-        ]
+        ],
+        null
     );
 }
 
@@ -111,7 +117,8 @@ function createMoveTeachCoupon() {
             "Позволяет изучить одно движение.",
             "Чтобы применить, нажми ПКМ по нужному NPC.",
             "§7Одноразовый предмет."
-        ]
+        ],
+        null
     );
 }
 
@@ -123,11 +130,25 @@ function createDaycareCoupon() {
             "Позволяет разместить одного покемона в детском саду.",
             "Чтобы применить, нажми ПКМ по нужному NPC.",
             "§7Одноразовый предмет."
-        ]
+        ],
+        null
     );
 }
 
-function createCouponItem(couponType, displayName, loreLines) {
+function createGraveCoupon() {
+    return createCouponItem(
+        "grave_coupon",
+        "§eПохоронный купон",
+        [
+            "Отдай этот купон гробовщику.",
+            "После этого следующая смерть сохранит вещи.",
+            "Забрать их можно будет ПКМ у гробовщика."
+        ],
+        buildGraveCouponTag()
+    );
+}
+
+function createCouponItem(couponType, displayName, loreLines, extraTag) {
     try {
         var itemType = CouponGiver_BuiltInRegistries.ITEM.get(CouponGiver_ResourceLocation.parse(COUPON_ITEM_ID));
         if (itemType == null) return null;
@@ -137,6 +158,9 @@ function createCouponItem(couponType, displayName, loreLines) {
 
         var tag = new CouponGiver_CompoundTag();
         tag.putString("coupon_type", couponType);
+        if (extraTag != null) {
+            tag.merge(extraTag);
+        }
 
         mcStack.set(CouponGiver_DataComponents.CUSTOM_NAME, CouponGiver_Component.literal(displayName));
         mcStack.set(CouponGiver_DataComponents.CUSTOM_DATA, CouponGiver_CustomData.of(tag));
@@ -150,6 +174,10 @@ function createCouponItem(couponType, displayName, loreLines) {
     } catch (e) {
         return null;
     }
+}
+
+function buildGraveCouponTag() {
+    return new CouponGiver_CompoundTag();
 }
 
 function buildLore(lines) {
