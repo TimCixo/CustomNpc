@@ -1,18 +1,16 @@
 var ARCEUS_TIMER_ID = 1;
-var Reward_Optional = Java.type("java.util.Optional");
-var Reward_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
-var Reward_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
 var Reward_PokemonProperties = Java.type("com.cobblemon.mod.common.api.pokemon.PokemonProperties");
 var Reward_IVs = Java.type("com.cobblemon.mod.common.pokemon.IVs");
 var Reward_Stats = Java.type("com.cobblemon.mod.common.api.pokemon.stats.Stats");
-var Reward_CubixCobblemonItems = Java.type("net.im51111n355.cubixcobblemon.common.CubixCobblemonItems");
-var Reward_CubixCobblemonDataComponents = Java.type("net.im51111n355.cubixcobblemon.common.CubixCobblemonDataComponents");
-var Reward_PokemonComponent = Java.type("net.im51111n355.cubixcobblemon.common.item.component.PokemonComponent");
 var Reward_ZipFile = Java.type("java.util.zip.ZipFile");
 var Reward_File = Java.type("java.io.File");
 var Reward_Scanner = Java.type("java.util.Scanner");
 var Reward_URLDecoder = Java.type("java.net.URLDecoder");
 var Reward_System = Java.type("java.lang.System");
+var ArceusBoss_MobEffectInstance = Java.type("net.minecraft.world.effect.MobEffectInstance");
+var ArceusBoss_MobEffects = Java.type("net.minecraft.world.effect.MobEffects");
+var Reward_Cobblemon = Java.type("com.cobblemon.mod.common.Cobblemon");
+var Reward_PlayerExtensionsKt = Java.type("com.cobblemon.mod.common.util.PlayerExtensionsKt");
 
 var REWARD_STAT_ORDER = [
     Reward_Stats.HP,
@@ -248,21 +246,39 @@ function tickPhaseRegen(npc) {
     }
 
     data.put("arceus_pulse_ticks", "0");
+    applyPhaseRegenEffect(npc, phase);
+}
 
-    var regenPercent = phase == 2
-        ? getCfgFloat(npc, "arceus_phase2_regen_percent", 0.015)
-        : getCfgFloat(npc, "arceus_phase3_regen_percent", 0.03);
+function applyPhaseRegenEffect(npc, phase) {
+    var duration = phase == 2
+        ? getCfgInt(npc, "arceus_phase2_regen_effect_duration", 50)
+        : getCfgInt(npc, "arceus_phase3_regen_effect_duration", 60);
+    var amplifier = phase == 2
+        ? getCfgInt(npc, "arceus_phase2_regen_effect_amplifier", 2)
+        : getCfgInt(npc, "arceus_phase3_regen_effect_amplifier", 4);
 
-    var maxHp = readNpcMaxHealth(npc);
-    var currentHp = readNpcHealth(npc);
-    var heal = Math.max(1, Math.floor(maxHp * regenPercent));
-    var nextHp = Math.min(maxHp, currentHp + heal);
+    if (duration <= 0) return;
+    if (amplifier < 0) amplifier = 0;
 
-    if (nextHp > currentHp) {
-        try {
-            npc.setHealth(nextHp);
-        } catch (e) {}
-    }
+    try {
+        npc.getMCEntity().addEffect(new ArceusBoss_MobEffectInstance(
+            ArceusBoss_MobEffects.REGENERATION,
+            duration,
+            amplifier,
+            false,
+            true,
+            true
+        ));
+        return;
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().addEffect(new ArceusBoss_MobEffectInstance(
+            ArceusBoss_MobEffects.REGENERATION,
+            duration,
+            amplifier
+        ));
+    } catch (e2) {}
 }
 
 function tickForcedDeathStart(npc) {
@@ -1052,13 +1068,13 @@ function randomIntInclusive(min, max) {
 function giveRewardPokemon(player, speciesId, ivString) {
     if (player == null || speciesId == null || speciesId == "") return false;
 
-    var reward = createRewardPokemonItem(speciesId, ivString);
+    var reward = createRewardPokemonEntity(speciesId, ivString);
     if (!reward.ok) return false;
 
-    return giveItemToPlayer(player, reward.item);
+    return addRewardPokemonToParty(player, reward.pokemon);
 }
 
-function createRewardPokemonItem(speciesId, ivString) {
+function createRewardPokemonEntity(speciesId, ivString) {
     var props = parsePokemonProperties(speciesId);
     if (props == null || !hasText("" + props.getSpecies())) {
         return { ok: false, reason: "parse properties" };
@@ -1086,23 +1102,7 @@ function createRewardPokemonItem(speciesId, ivString) {
 
     if (pokemon == null) return { ok: false, reason: "pokemon null" };
 
-    try {
-        var mcStack = new Reward_MCItemStack(Reward_CubixCobblemonItems.INSTANCE.getPOKEMON().get());
-        mcStack.set(
-            Reward_CubixCobblemonDataComponents.INSTANCE.getPOKEMON().get(),
-            new Reward_PokemonComponent(Reward_Optional.of(pokemon))
-        );
-
-        if (mcStack == null || mcStack.isEmpty()) return { ok: false, reason: "mcStack empty" };
-
-        var item = Reward_NpcAPI.Instance().getIItemStack(mcStack);
-        if (item == null || item.isEmpty()) return { ok: false, reason: "iitem empty" };
-
-        item.setStackSize(1);
-        return { ok: true, item: item };
-    } catch (e3) {
-        return { ok: false, reason: "build item" };
-    }
+    return { ok: true, pokemon: pokemon };
 }
 
 function buildStatsBlock(statsObject, rawValue, min, max) {
@@ -1129,34 +1129,29 @@ function parsePokemonProperties(speciesId) {
     }
 }
 
-function giveItemToPlayer(player, item) {
-    var given = false;
+function addRewardPokemonToParty(player, pokemon) {
+    var party = getRewardPlayerParty(player);
+    if (party == null || pokemon == null) return false;
 
     try {
-        given = player.giveItem(item);
-    } catch (e) {}
-
-    if (!given) {
-        given = putInFirstEmptySlot(player, item);
+        return party.add(pokemon);
+    } catch (e) {
+        return false;
     }
-
-    return given;
 }
 
-function putInFirstEmptySlot(player, item) {
-    var inv = player.getInventory();
-    if (inv == null) return false;
+function getRewardPlayerParty(player) {
+    if (player == null) return null;
 
-    var size = inv.getSize();
-    for (var i = 0; i < size; i++) {
-        var slot = inv.getSlot(i);
-        if (slot == null || slot.isEmpty()) {
-            inv.setSlot(i, item);
-            return true;
+    try {
+        return Reward_PlayerExtensionsKt.party(player.getMCEntity());
+    } catch (e1) {
+        try {
+            return Reward_Cobblemon.INSTANCE.getStorage().getParty(player.getMCEntity());
+        } catch (e2) {
+            return null;
         }
     }
-
-    return false;
 }
 
 function resolveRewardPlayer(npc, entry) {
