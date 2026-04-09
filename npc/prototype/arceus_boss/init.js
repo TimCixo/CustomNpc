@@ -96,13 +96,11 @@ function resetBossState(npc) {
     data.put("arceus_death_ticks_left", "0");
     data.put("arceus_death_line_stage", "0");
     data.put("arceus_death_anim_started", "0");
+    data.put("arceus_death_finalized", "0");
+    data.put("arceus_death_committing", "0");
     data.put("arceus_damage_top_shown", "0");
     data.put("arceus_rewards_given", "0");
     data.put("arceus_pulse_ticks", "0");
-    data.put("arceus_dead", "0");
-    data.put("arceus_dead_finalized", "0");
-    data.put("arceus_dead_buried", "0");
-    data.put("arceus_post_death_stage", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
     data.put("arceus_phase_effects_pending", "0");

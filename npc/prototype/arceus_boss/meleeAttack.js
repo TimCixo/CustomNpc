@@ -9,7 +9,6 @@ function meleeAttack(event) {
 
     if (data.get("arceus_enabled") != "1") return;
     if (data.get("arceus_dying") == "1") return;
-    if (data.get("arceus_dead") == "1") return;
 
     var phase = parseIntSafe(data.get("arceus_phase"), 1);
     var damage = readDamage(event);

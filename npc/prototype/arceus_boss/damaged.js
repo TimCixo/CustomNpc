@@ -30,13 +30,10 @@ var ARCEUS_PHASE3_GEMS = [
 function damaged(event) {
     var npc = event.npc;
     var data = npc.getStoreddata();
+    var deathCommitting = data.get("arceus_death_committing") == "1";
 
     if (data.get("arceus_enabled") != "1") return;
-    if (data.get("arceus_dead") == "1") {
-        cancelDamage(event);
-        forceHealthFloor(npc);
-        return;
-    }
+    if (deathCommitting) return;
 
     if (data.get("arceus_dying") == "1") {
         cancelDamage(event);
@@ -133,11 +130,14 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
 
 function startCustomDeath(npc) {
     var data = npc.getStoreddata();
+    if (data.get("arceus_dying") == "1") return;
 
     data.put("arceus_dying", "1");
     data.put("arceus_death_ticks_left", "" + getCfgInt(npc, "arceus_custom_death_ticks", 80));
     data.put("arceus_death_line_stage", "0");
     data.put("arceus_death_anim_started", "0");
+    data.put("arceus_death_finalized", "0");
+    data.put("arceus_death_committing", "0");
 
     forceHealthFloor(npc);
     stopCombatForDeath(npc);
