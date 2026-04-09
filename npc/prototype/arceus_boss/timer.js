@@ -12,6 +12,7 @@ var Reward_ZipFile = Java.type("java.util.zip.ZipFile");
 var Reward_File = Java.type("java.io.File");
 var Reward_Scanner = Java.type("java.util.Scanner");
 var Reward_URLDecoder = Java.type("java.net.URLDecoder");
+var Reward_System = Java.type("java.lang.System");
 
 var REWARD_STAT_ORDER = [
     Reward_Stats.HP,
@@ -51,6 +52,7 @@ function timer(event) {
 
     if (tickTransition(npc)) return;
 
+    tickRecentAggro(npc);
     tickPhaseRegen(npc);
 }
 
@@ -149,6 +151,116 @@ function tickPhaseRegen(npc) {
         try {
             npc.setHealth(nextHp);
         } catch (e) {}
+    }
+}
+
+function tickRecentAggro(npc) {
+    var targetEntry = pickHighestRecentDamager(npc);
+    if (targetEntry == null || targetEntry.player == null) return;
+
+    try {
+        var current = npc.getAttackTarget();
+        if (current != null && samePlayerUuid(current, targetEntry.uuid)) return;
+    } catch (e) {}
+
+    try {
+        npc.setAttackTarget(targetEntry.player);
+        return;
+    } catch (e2) {}
+
+    try {
+        npc.getMCEntity().setTarget(targetEntry.player.getMCEntity());
+    } catch (e3) {}
+}
+
+function pickHighestRecentDamager(npc) {
+    var data = npc.getStoreddata();
+    var keys = data.getKeys();
+    if (keys == null || keys.length <= 0) return null;
+
+    var now = Reward_System.currentTimeMillis();
+    var cutoff = now - 5000;
+    var best = null;
+
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_recent_hits_") !== 0) continue;
+
+        var uuid = key.substring("arceus_recent_hits_".length);
+        if (!hasText(uuid)) continue;
+
+        var parsed = parseRecentDamageWindow("" + data.get(key), cutoff);
+        if (parsed.cleaned.length > 0) {
+            data.put(key, parsed.cleaned);
+        } else {
+            data.remove(key);
+            data.remove("arceus_recent_name_" + uuid);
+        }
+
+        if (parsed.total <= 0) continue;
+
+        var name = "" + data.get("arceus_recent_name_" + uuid);
+        var player = resolveAggroPlayer(npc, uuid, name);
+        if (player == null) continue;
+
+        if (best == null || parsed.total > best.damage) {
+            best = { uuid: uuid, name: name, damage: parsed.total, player: player };
+        }
+    }
+
+    return best;
+}
+
+function parseRecentDamageWindow(raw, cutoff) {
+    var text = raw == null || raw == "null" ? "" : ("" + raw);
+    if (text.length <= 0) return { total: 0, cleaned: "" };
+
+    var parts = text.split("|");
+    var kept = [];
+    var total = 0;
+
+    for (var i = 0; i < parts.length; i++) {
+        var token = trimString(parts[i]);
+        if (token.length <= 0) continue;
+
+        var colon = token.indexOf(":");
+        if (colon <= 0) continue;
+
+        var ts = parseIntSafe(token.substring(0, colon), 0);
+        if (ts < cutoff) continue;
+
+        var damage = parseFloatSafe(token.substring(colon + 1), 0);
+        if (damage <= 0) continue;
+
+        kept.push(token);
+        total += damage;
+    }
+
+    return { total: total, cleaned: kept.join("|") };
+}
+
+function resolveAggroPlayer(npc, uuid, name) {
+    var players;
+    try {
+        players = npc.getWorld().getAllPlayers();
+    } catch (e) {
+        players = null;
+    }
+
+    if (players != null) {
+        for (var i = 0; i < players.length; i++) {
+            if (samePlayerUuid(players[i], uuid)) return players[i];
+        }
+
+        for (var j = 0; j < players.length; j++) {
+            if (samePlayerName(players[j], name)) return players[j];
+        }
+    }
+
+    try {
+        return npc.getWorld().getPlayer(name);
+    } catch (e2) {
+        return null;
     }
 }
 

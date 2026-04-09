@@ -3,6 +3,7 @@ var ArceusBoss_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
 var ArceusBoss_BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
 var ArceusBoss_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var ArceusBoss_EntityType = Java.type("net.minecraft.world.entity.EntityType");
+var ArceusBoss_System = Java.type("java.lang.System");
 
 var ARCEUS_PHASE3_GEMS = [
     "cobblemon:flying_gem",
@@ -290,7 +291,9 @@ function recordDamageContribution(event, npc, damage) {
     var total = parseFloatSafe(data.get(damageKey), 0) + damage;
 
     data.put(damageKey, "" + total);
-    data.put(nameKey, getAttackerName(attacker));
+    var attackerName = getAttackerName(attacker);
+    data.put(nameKey, attackerName);
+    appendRecentDamageContribution(data, uuid, attackerName, damage);
 }
 
 function resolveDamageDealer(event, npc) {
@@ -474,6 +477,49 @@ function callZeroArg(target, methodName) {
     return null;
 }
 
+function appendRecentDamageContribution(data, uuid, name, damage) {
+    if (data == null || !hasText(uuid) || damage <= 0) return;
+
+    var now = ArceusBoss_System.currentTimeMillis();
+    var cutoff = now - 5000;
+    var hitsKey = "arceus_recent_hits_" + uuid;
+    var nameKey = "arceus_recent_name_" + uuid;
+    var cleaned = pruneRecentHitString("" + data.get(hitsKey), cutoff);
+    var entry = now + ":" + damage;
+
+    if (cleaned.length > 0) {
+        cleaned += "|" + entry;
+    } else {
+        cleaned = entry;
+    }
+
+    data.put(hitsKey, cleaned);
+    data.put(nameKey, name == null ? uuid : ("" + name));
+}
+
+function pruneRecentHitString(raw, cutoff) {
+    var text = raw == null || raw == "null" ? "" : ("" + raw);
+    if (text.length <= 0) return "";
+
+    var parts = text.split("|");
+    var kept = [];
+
+    for (var i = 0; i < parts.length; i++) {
+        var token = trimString(parts[i]);
+        if (token.length <= 0) continue;
+
+        var colon = token.indexOf(":");
+        if (colon <= 0) continue;
+
+        var ts = parseIntSafe(token.substring(0, colon), 0);
+        if (ts < cutoff) continue;
+
+        kept.push(token);
+    }
+
+    return kept.join("|");
+}
+
 function playConfiguredSound(npc, key) {
     var soundId = "" + npc.getStoreddata().get(key);
     if (soundId == null || soundId == "" || soundId == "null") return;
@@ -535,7 +581,7 @@ function applyPhaseDamageMitigation(event, npc, phase, damage) {
 function reflectProjectileDamageToPlayer(event, npc, reflectDamage) {
     if (reflectDamage <= 0) return;
 
-    var attacker = resolveDamageDealer(event);
+    var attacker = resolveDamageDealer(event, npc);
     if (attacker == null) return;
     if (!isPlayerAttacker(attacker)) return;
 
