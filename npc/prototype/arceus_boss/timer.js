@@ -8,6 +8,10 @@ var Reward_Stats = Java.type("com.cobblemon.mod.common.api.pokemon.stats.Stats")
 var Reward_CubixCobblemonItems = Java.type("net.im51111n355.cubixcobblemon.common.CubixCobblemonItems");
 var Reward_CubixCobblemonDataComponents = Java.type("net.im51111n355.cubixcobblemon.common.CubixCobblemonDataComponents");
 var Reward_PokemonComponent = Java.type("net.im51111n355.cubixcobblemon.common.item.component.PokemonComponent");
+var Reward_ZipFile = Java.type("java.util.zip.ZipFile");
+var Reward_File = Java.type("java.io.File");
+var Reward_Scanner = Java.type("java.util.Scanner");
+var Reward_URLDecoder = Java.type("java.net.URLDecoder");
 
 var REWARD_STAT_ORDER = [
     Reward_Stats.HP,
@@ -18,116 +22,11 @@ var REWARD_STAT_ORDER = [
     Reward_Stats.SPEED
 ];
 
-var LEGENDARY_REWARD_POOL = [
-    "cobblemon:articuno",
-    "cobblemon:zapdos",
-    "cobblemon:moltres",
-    "cobblemon:mewtwo",
-    "cobblemon:mew",
-    "cobblemon:raikou",
-    "cobblemon:entei",
-    "cobblemon:suicune",
-    "cobblemon:lugia",
-    "cobblemon:ho_oh",
-    "cobblemon:celebi",
-    "cobblemon:regirock",
-    "cobblemon:regice",
-    "cobblemon:registeel",
-    "cobblemon:latias",
-    "cobblemon:latios",
-    "cobblemon:kyogre",
-    "cobblemon:groudon",
-    "cobblemon:rayquaza",
-    "cobblemon:jirachi",
-    "cobblemon:deoxys",
-    "cobblemon:uxie",
-    "cobblemon:mesprit",
-    "cobblemon:azelf",
-    "cobblemon:dialga",
-    "cobblemon:palkia",
-    "cobblemon:giratina",
-    "cobblemon:heatran",
-    "cobblemon:regigigas",
-    "cobblemon:cresselia",
-    "cobblemon:darkrai",
-    "cobblemon:shaymin",
-    "cobblemon:arceus",
-    "cobblemon:victini",
-    "cobblemon:reshiram",
-    "cobblemon:zekrom",
-    "cobblemon:kyurem",
-    "cobblemon:xerneas",
-    "cobblemon:yveltal",
-    "cobblemon:zygarde",
-    "cobblemon:solgaleo",
-    "cobblemon:lunala",
-    "cobblemon:necrozma",
-    "cobblemon:zacian",
-    "cobblemon:zamazenta",
-    "cobblemon:eternatus",
-    "cobblemon:koraidon",
-    "cobblemon:miraidon"
-];
-
-var STANDARD_REWARD_POOL = [
-    "cobblemon:venusaur",
-    "cobblemon:charizard",
-    "cobblemon:blastoise",
-    "cobblemon:raichu",
-    "cobblemon:ninetales",
-    "cobblemon:arcanine",
-    "cobblemon:alakazam",
-    "cobblemon:gengar",
-    "cobblemon:lapras",
-    "cobblemon:snorlax",
-    "cobblemon:vaporeon",
-    "cobblemon:jolteon",
-    "cobblemon:flareon",
-    "cobblemon:espeon",
-    "cobblemon:umbreon",
-    "cobblemon:scizor",
-    "cobblemon:heracross",
-    "cobblemon:kingdra",
-    "cobblemon:blaziken",
-    "cobblemon:gardevoir",
-    "cobblemon:aggron",
-    "cobblemon:flygon",
-    "cobblemon:milotic",
-    "cobblemon:absol",
-    "cobblemon:staraptor",
-    "cobblemon:luxray",
-    "cobblemon:roserade",
-    "cobblemon:lucario",
-    "cobblemon:weavile",
-    "cobblemon:togekiss",
-    "cobblemon:electivire",
-    "cobblemon:magmortar",
-    "cobblemon:gliscor",
-    "cobblemon:serperior",
-    "cobblemon:emboar",
-    "cobblemon:samurott",
-    "cobblemon:excadrill",
-    "cobblemon:chandelure",
-    "cobblemon:volcarona",
-    "cobblemon:greninja",
-    "cobblemon:talonflame",
-    "cobblemon:aegislash",
-    "cobblemon:sylveon",
-    "cobblemon:noivern",
-    "cobblemon:decidueye",
-    "cobblemon:incineroar",
-    "cobblemon:primarina",
-    "cobblemon:lycanroc",
-    "cobblemon:mimikyu",
-    "cobblemon:toxtricity",
-    "cobblemon:corviknight",
-    "cobblemon:grimmsnarl",
-    "cobblemon:ceruledge",
-    "cobblemon:armarouge",
-    "cobblemon:meowscarada",
-    "cobblemon:skeledirge",
-    "cobblemon:quaquaval"
-];
+var LEGENDARY_REWARD_POOL = null;
+var MYTHICAL_REWARD_POOL = null;
+var SUPER_RARE_REWARD_POOL = null;
+var NORMAL_REWARD_POOL = null;
+var REWARD_POOLS_ATTEMPTED = false;
 
 function timer(event) {
     if (event.id != ARCEUS_TIMER_ID) return;
@@ -137,6 +36,8 @@ function timer(event) {
 
     if (data.get("arceus_enabled") != "1") return;
     if (data.get("arceus_dead") == "1") return;
+
+    warmRewardPools();
 
     if (data.get("arceus_dying") == "1") {
         tickCustomDeath(npc);
@@ -359,7 +260,7 @@ function collectDamageEntries(npc) {
             name = uuid;
         }
 
-        entries.push({ name: name, damage: damage });
+        entries.push({ uuid: uuid, name: name, damage: damage });
     }
 
     entries.sort(function(a, b) {
@@ -393,21 +294,283 @@ function awardDamageTop(npc) {
 
     var entries = collectDamageEntries(npc);
     if (entries.length <= 0) return;
+    ensureRewardPoolsLoaded(npc);
 
     for (var i = 0; i < entries.length; i++) {
-        var player = npc.getWorld().getPlayer(entries[i].name);
+        var player = resolveRewardPlayer(npc, entries[i]);
         if (player == null) continue;
 
-        if (i == 0) {
-            giveRewardPokemon(player, pickRandomSpecies(LEGENDARY_REWARD_POOL), "31/31/31/31/31/31");
-        } else if (i == 1) {
-            giveRewardPokemon(player, pickRandomSpecies(LEGENDARY_REWARD_POOL), "24/24/24/24/24/24");
-        } else if (i == 2) {
-            giveRewardPokemon(player, pickRandomSpecies(LEGENDARY_REWARD_POOL), "15/15/15/15/15/15");
-        } else {
-            giveRewardPokemon(player, pickRandomSpecies(STANDARD_REWARD_POOL), "24/24/24/24/24/24");
+        var ivs = getRewardIvStringForPlace(i);
+        var species = pickRewardSpeciesForPlace(i);
+        giveRewardPokemon(player, species, ivs);
+    }
+}
+
+function ensureRewardPoolsLoaded(npc) {
+    if (LEGENDARY_REWARD_POOL != null && LEGENDARY_REWARD_POOL.length > 0
+        && MYTHICAL_REWARD_POOL != null && MYTHICAL_REWARD_POOL.length > 0
+        && SUPER_RARE_REWARD_POOL != null && SUPER_RARE_REWARD_POOL.length > 0
+        && NORMAL_REWARD_POOL != null && NORMAL_REWARD_POOL.length > 0) {
+        return;
+    }
+
+    if (REWARD_POOLS_ATTEMPTED) return;
+    REWARD_POOLS_ATTEMPTED = true;
+
+    if (loadRewardPoolsFromCobblemonJar(npc)) return;
+
+    LEGENDARY_REWARD_POOL = [];
+    MYTHICAL_REWARD_POOL = [];
+    SUPER_RARE_REWARD_POOL = [];
+    NORMAL_REWARD_POOL = [];
+}
+
+function warmRewardPools() {
+    if (REWARD_POOLS_ATTEMPTED) return;
+    ensureRewardPoolsLoaded(null);
+}
+
+function loadRewardPoolsFromCobblemonJar(npc) {
+    var zip = null;
+
+    try {
+        var jarFile = resolveCobblemonJarFile();
+        if (jarFile == null) return false;
+        if (!jarFile.exists()) return false;
+        if (!jarFile.isFile()) return false;
+
+        zip = new Reward_ZipFile(jarFile);
+        var entries = zip.entries();
+        var legendarySet = {};
+        var mythicalSet = {};
+        var superRareSet = {};
+        var normalSet = {};
+        var jsonCount = 0;
+        var speciesJsonCount = 0;
+
+        while (entries.hasMoreElements()) {
+            var entry = entries.nextElement();
+            var name = "" + entry.getName();
+            var text = readZipEntryText(zip, entry);
+            if (text == null || text.length <= 0) continue;
+
+            if (name.indexOf("data/cobblemon/spawn_pool_world/") === 0 && name.lastIndexOf(".json") === name.length - 5) {
+                jsonCount++;
+                collectBucketSpecies(text, superRareSet, normalSet);
+                continue;
+            }
+
+            if (name.indexOf("data/cobblemon/species/") === 0 && name.lastIndexOf(".json") === name.length - 5) {
+                speciesJsonCount++;
+                collectSpecialSpecies(text, legendarySet, mythicalSet);
+            }
+        }
+
+        LEGENDARY_REWARD_POOL = setKeysToPrefixedArray(legendarySet);
+        MYTHICAL_REWARD_POOL = setKeysToPrefixedArray(mythicalSet, legendarySet);
+        SUPER_RARE_REWARD_POOL = setKeysToPrefixedArray(superRareSet, legendarySet, mythicalSet);
+        NORMAL_REWARD_POOL = setKeysToPrefixedArray(normalSet, legendarySet, mythicalSet, superRareSet);
+        return LEGENDARY_REWARD_POOL.length > 0
+            && MYTHICAL_REWARD_POOL.length > 0
+            && SUPER_RARE_REWARD_POOL.length > 0
+            && NORMAL_REWARD_POOL.length > 0;
+    } catch (e) {
+        return false;
+    } finally {
+        try {
+            if (zip != null) zip.close();
+        } catch (closeError) {}
+    }
+}
+
+function resolveCobblemonJarFile() {
+    try {
+        var url = Reward_PokemonProperties.class.getProtectionDomain().getCodeSource().getLocation();
+        if (url == null) return null;
+        return new Reward_File(url.toURI());
+    } catch (e) {}
+
+    try {
+        var path = "" + Reward_PokemonProperties.class.getProtectionDomain().getCodeSource().getLocation().getPath();
+        var normalizedPath = normalizeJarLocationToPath(path);
+        if (normalizedPath != null && normalizedPath != "") {
+            return new Reward_File(normalizedPath);
+        }
+    } catch (e2) {}
+
+    try {
+        var external = "" + Reward_PokemonProperties.class.getProtectionDomain().getCodeSource().getLocation().toExternalForm();
+        var normalized = normalizeJarLocationToPath(external);
+        if (normalized != null && normalized != "") {
+            return new Reward_File(normalized);
+        }
+    } catch (e3) {}
+
+    return null;
+}
+
+function normalizeJarLocationToPath(location) {
+    var text = trimString(location);
+    if (text.length <= 0) return null;
+
+    var bang = text.indexOf("!/");
+    if (bang >= 0) text = text.substring(0, bang);
+    if (text.charAt(text.length - 1) == "!") {
+        text = text.substring(0, text.length - 1);
+    }
+
+    while (startsWithIgnoreCase(text, "jar:") || startsWithIgnoreCase(text, "union:")) {
+        var idx = text.indexOf(":");
+        if (idx < 0) break;
+        text = text.substring(idx + 1);
+    }
+
+    if (startsWithIgnoreCase(text, "file:/")) {
+        text = text.substring(5);
+        while (text.length > 0 && text.charAt(0) == "/") {
+            text = text.substring(1);
         }
     }
+
+    try {
+        text = "" + Reward_URLDecoder.decode(text.replace("+", "%2B"), "UTF-8");
+    } catch (e) {}
+
+    var hashSuffix = text.lastIndexOf("#");
+    if (hashSuffix > 0 && text.toLowerCase().lastIndexOf(".jar") < hashSuffix) {
+        text = text.substring(0, hashSuffix);
+    }
+
+    if (startsWithIgnoreCase(text, "/home/") || startsWithIgnoreCase(text, "/srv/") || startsWithIgnoreCase(text, "/opt/")) {
+        return text;
+    }
+    if (text.length >= 2 && text.charAt(1) == ":") return text;
+    return null;
+}
+
+function readZipEntryText(zip, entry) {
+    var stream = null;
+    var scanner = null;
+
+    try {
+        stream = zip.getInputStream(entry);
+        scanner = new Reward_Scanner(stream, "UTF-8").useDelimiter("\\A");
+        return scanner.hasNext() ? "" + scanner.next() : "";
+    } catch (e) {
+        return null;
+    } finally {
+        try {
+            if (scanner != null) scanner.close();
+        } catch (closeScannerError) {}
+        try {
+            if (stream != null) stream.close();
+        } catch (closeStreamError) {}
+    }
+}
+
+function collectBucketSpecies(text, superRareSet, normalSet) {
+    var regex = /"pokemon"\s*:\s*"([^"]+)"[\s\S]*?"bucket"\s*:\s*"([^"]+)"/g;
+    var match;
+
+    while ((match = regex.exec(text)) != null) {
+        var species = extractBucketSpeciesId(match[1]);
+        var bucket = trimString(match[2]);
+        if (species.length <= 0 || bucket.length <= 0) continue;
+
+        if (bucket == "ultra-rare") {
+            superRareSet[species] = true;
+        } else if (bucket == "common" || bucket == "uncommon" || bucket == "rare") {
+            normalSet[species] = true;
+        }
+    }
+}
+
+function collectSpecialSpecies(text, legendarySet, mythicalSet) {
+    var nameMatch = /"name"\s*:\s*"([^"]+)"/.exec(text);
+    if (nameMatch == null || nameMatch.length < 2) return;
+
+    var labelsMatch = /"labels"\s*:\s*\[([\s\S]*?)\]/.exec(text);
+    if (labelsMatch == null || labelsMatch.length < 2) return;
+
+    var labelsText = labelsMatch[1];
+    var species = trimString(nameMatch[1]).toLowerCase();
+    if (species.length <= 0) return;
+
+    if (labelsText.indexOf("\"mythical\"") >= 0) {
+        mythicalSet[species] = true;
+    } else if (labelsText.indexOf("\"legendary\"") >= 0) {
+        legendarySet[species] = true;
+    }
+}
+
+function extractBucketSpeciesId(raw) {
+    var token = trimString(raw).split(" ")[0];
+    token = trimString(token);
+    if (token.length <= 0) return "";
+    return token;
+}
+
+function setKeysToPrefixedArray(setMap, excludeMap1, excludeMap2, excludeMap3) {
+    var out = [];
+
+    for (var key in setMap) {
+        if (!setMap.hasOwnProperty(key)) continue;
+        if (excludeMap1 != null && excludeMap1[key]) continue;
+        if (excludeMap2 != null && excludeMap2[key]) continue;
+        if (excludeMap3 != null && excludeMap3[key]) continue;
+        out.push("cobblemon:" + key);
+    }
+
+    out.sort();
+    return out;
+}
+
+function pickRewardSpeciesForPlace(placeIndex) {
+    var roll = Math.random() * 100;
+
+    if (placeIndex == 0) {
+        if (roll < 80) return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+        return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+    }
+
+    if (placeIndex == 1) {
+        if (roll < 80) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+        return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+    }
+
+    if (placeIndex == 2) {
+        if (roll < 60) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+        if (roll < 85) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+        return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+    }
+
+    if (roll < 80) return pickRandomSpecies(NORMAL_REWARD_POOL);
+    if (roll < 95) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+    if (roll < 98) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+    return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+}
+
+function getRewardIvStringForPlace(placeIndex) {
+    if (placeIndex == 0) return "31/31/31/31/31/31";
+    if (placeIndex == 1) return rollIvRangeString(24, 31);
+    if (placeIndex == 2) return rollIvRangeString(15, 24);
+    return rollIvRangeString(15, 24);
+}
+
+function rollIvRangeString(min, max) {
+    var values = [];
+
+    for (var i = 0; i < 6; i++) {
+        values.push("" + randomIntInclusive(min, max));
+    }
+
+    return values.join("/");
+}
+
+function randomIntInclusive(min, max) {
+    var low = Math.floor(Math.min(min, max));
+    var high = Math.floor(Math.max(min, max));
+    return low + Math.floor(Math.random() * (high - low + 1));
 }
 
 function giveRewardPokemon(player, speciesId, ivString) {
@@ -422,23 +585,30 @@ function giveRewardPokemon(player, speciesId, ivString) {
 function createRewardPokemonItem(speciesId, ivString) {
     var props = parsePokemonProperties(speciesId);
     if (props == null || !hasText("" + props.getSpecies())) {
-        return { ok: false };
+        return { ok: false, reason: "parse properties" };
+    }
+
+    try {
+        props.setLevel(randomIntInclusive(10, 20));
+        props.setShiny(Math.random() < 0.10);
+    } catch (e0) {
+        return { ok: false, reason: "set level/shiny" };
     }
 
     try {
         props.setIvs(buildStatsBlock(new Reward_IVs(), ivString, 0, 31));
     } catch (e) {
-        return { ok: false };
+        return { ok: false, reason: "set ivs" };
     }
 
     var pokemon;
     try {
         pokemon = props.create();
     } catch (e2) {
-        return { ok: false };
+        return { ok: false, reason: "create pokemon" };
     }
 
-    if (pokemon == null) return { ok: false };
+    if (pokemon == null) return { ok: false, reason: "pokemon null" };
 
     try {
         var mcStack = new Reward_MCItemStack(Reward_CubixCobblemonItems.INSTANCE.getPOKEMON().get());
@@ -447,15 +617,15 @@ function createRewardPokemonItem(speciesId, ivString) {
             new Reward_PokemonComponent(Reward_Optional.of(pokemon))
         );
 
-        if (mcStack == null || mcStack.isEmpty()) return { ok: false };
+        if (mcStack == null || mcStack.isEmpty()) return { ok: false, reason: "mcStack empty" };
 
         var item = Reward_NpcAPI.Instance().getIItemStack(mcStack);
-        if (item == null || item.isEmpty()) return { ok: false };
+        if (item == null || item.isEmpty()) return { ok: false, reason: "iitem empty" };
 
         item.setStackSize(1);
         return { ok: true, item: item };
     } catch (e3) {
-        return { ok: false };
+        return { ok: false, reason: "build item" };
     }
 }
 
@@ -509,6 +679,59 @@ function putInFirstEmptySlot(player, item) {
             return true;
         }
     }
+
+    return false;
+}
+
+function resolveRewardPlayer(npc, entry) {
+    if (entry == null) return null;
+
+    var players;
+    try {
+        players = npc.getWorld().getAllPlayers();
+    } catch (e) {
+        players = null;
+    }
+
+    if (players != null) {
+        for (var i = 0; i < players.length; i++) {
+            var player = players[i];
+            if (samePlayerUuid(player, entry.uuid)) return player;
+        }
+
+        for (var j = 0; j < players.length; j++) {
+            var playerByName = players[j];
+            if (samePlayerName(playerByName, entry.name)) return playerByName;
+        }
+    }
+
+    try {
+        return npc.getWorld().getPlayer(entry.name);
+    } catch (e2) {
+        return null;
+    }
+}
+
+function samePlayerUuid(player, uuid) {
+    if (player == null || uuid == null || uuid == "") return false;
+
+    try {
+        return ("" + player.getUUID()) == ("" + uuid);
+    } catch (e) {
+        return false;
+    }
+}
+
+function samePlayerName(player, name) {
+    if (player == null || name == null || name == "") return false;
+
+    try {
+        if (("" + player.getName()) == ("" + name)) return true;
+    } catch (e) {}
+
+    try {
+        if (("" + player.getDisplayName()) == ("" + name)) return true;
+    } catch (e2) {}
 
     return false;
 }
@@ -597,4 +820,10 @@ function clamp(value, min, max) {
     if (value < min) return min;
     if (value > max) return max;
     return value;
+}
+
+function startsWithIgnoreCase(text, prefix) {
+    if (text == null || prefix == null) return false;
+    if (text.length < prefix.length) return false;
+    return text.substring(0, prefix.length).toLowerCase() == prefix.toLowerCase();
 }
