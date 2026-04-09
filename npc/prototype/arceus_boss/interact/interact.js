@@ -32,8 +32,18 @@ function resetBoss(npc) {
     data.put("arceus_rewards_given", "0");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_dead", "0");
+    data.put("arceus_dead_finalized", "0");
+    data.put("arceus_dead_buried", "0");
+    data.put("arceus_post_death_stage", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
+    data.put("arceus_phase_effects_pending", "0");
+    data.put("arceus_phase_start_pending", "0");
+    data.put("arceus_pending_phase_hp", "0");
+    data.put("arceus_pending_phase_id", "1");
+    data.put("arceus_pending_phase_line", "");
+    data.put("arceus_pending_phase_color", "");
+    data.put("arceus_pending_phase_sound", "");
     data.put("arceus_dbg_attack_calls", "0");
     data.put("arceus_dbg_phase3_blast_calls", "0");
     data.put("arceus_dbg_last_phase", "0");
@@ -52,6 +62,7 @@ function resetBoss(npc) {
     } catch (e) {}
 
     ensureHideDeadBody(npc);
+    setNoAiState(npc, false);
     restartNormalTimer(npc);
     applyPhaseMeleeDelay(npc, 1);
     applyBossBarColor(npc, "white");
@@ -157,5 +168,11 @@ function mapBossBarColorId(colorName) {
 function updateNpcClient(npc) {
     try {
         npc.updateClient();
+    } catch (e) {}
+}
+
+function setNoAiState(npc, enabled) {
+    try {
+        npc.getMCEntity().setNoAi(enabled ? true : false);
     } catch (e) {}
 }

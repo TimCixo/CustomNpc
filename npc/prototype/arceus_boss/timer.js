@@ -35,9 +35,14 @@ function timer(event) {
     var data = npc.getStoreddata();
 
     if (data.get("arceus_enabled") != "1") return;
-    if (data.get("arceus_dead") == "1") return;
+    if (data.get("arceus_dead") == "1") {
+        tickPostDeath(npc);
+        return;
+    }
 
     warmRewardPools();
+    processPendingPhaseStart(npc);
+    processDeferredPhaseEffects(npc);
 
     if (data.get("arceus_dying") == "1") {
         tickCustomDeath(npc);
@@ -54,6 +59,7 @@ function tickTransition(npc) {
     var left = parseIntSafe(data.get("arceus_transition_ticks_left"), 0);
 
     if (left <= 0) return false;
+    stopTransitionCombat(npc);
 
     left -= getCfgInt(npc, "arceus_timer_ticks", 5);
     if (left < 0) left = 0;
@@ -69,6 +75,47 @@ function tickTransition(npc) {
     }
 
     return true;
+}
+
+function processPendingPhaseStart(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_phase_start_pending") != "1") return;
+    data.put("arceus_phase_start_pending", "0");
+
+    var targetHp = parseIntSafe(data.get("arceus_pending_phase_hp"), 0);
+    var phase = parseIntSafe(data.get("arceus_pending_phase_id"), 1);
+
+    if (targetHp > 0) {
+        try {
+            npc.setHealth(targetHp);
+        } catch (e) {}
+    }
+
+    applyPhaseMeleeDelay(npc, phase);
+}
+
+function processDeferredPhaseEffects(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_phase_effects_pending") != "1") return;
+    data.put("arceus_phase_effects_pending", "0");
+
+    var bossBarColor = "" + data.get("arceus_pending_phase_color");
+    var soundId = "" + data.get("arceus_pending_phase_sound");
+    var line = "" + data.get("arceus_pending_phase_line");
+
+    if (hasText(bossBarColor) && bossBarColor != "null") {
+        applyBossBarColor(npc, bossBarColor);
+    }
+
+    if (hasText(soundId) && soundId != "null") {
+        playSoundForAllPlayers(npc, soundId, 1.2, 1.0);
+    }
+
+    updateNpcClient(npc);
+
+    if (hasText(line) && line != "null") {
+        safeSay(npc, line);
+    }
 }
 
 function tickPhaseRegen(npc) {
@@ -131,21 +178,25 @@ function tickCustomDeath(npc) {
 
     data.put("arceus_dead", "1");
     data.put("arceus_death_ticks_left", "0");
+    data.put("arceus_post_death_stage", "0");
+    data.put("arceus_dead_buried", "0");
     spawnDeathExplosion(npc);
     safeSay(npc, "§8Аркеус пал.");
-    awardDamageTop(npc);
     ensureHideDeadBody(npc);
-    hideBodyNow(npc);
     updateNpcClient(npc);
+}
 
-    try {
-        npc.kill();
+function tickPostDeath(npc) {
+    var data = npc.getStoreddata();
+    var stage = parseIntSafe(data.get("arceus_post_death_stage"), 0);
+
+    if (stage <= 0) {
+        awardDamageTop(npc);
+        data.put("arceus_post_death_stage", "1");
         return;
-    } catch (e) {}
+    }
 
-    try {
-        npc.setHealth(0);
-    } catch (e2) {}
+    maintainDeadNpc(npc);
 }
 
 function tickDeathSpin(npc) {
@@ -186,11 +237,27 @@ function stopCombatForDeath(npc) {
         npc.getMCEntity().setTarget(null);
     } catch (e2) {}
 
+    stopMotion(npc);
+}
+
+function stopTransitionCombat(npc) {
+    try {
+        npc.setAttackTarget(null);
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().setTarget(null);
+    } catch (e2) {}
+
+    stopMotion(npc);
+}
+
+function stopMotion(npc) {
     try {
         npc.setMoveForward(0);
         npc.setMoveStrafing(0);
         npc.setMoveVertical(0);
-    } catch (e3) {}
+    } catch (e) {}
 }
 
 function spawnDeathExplosion(npc) {
@@ -218,6 +285,54 @@ function ensureHideDeadBody(npc) {
     } catch (e) {}
 }
 
+function disableBossBar(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossbar) {
+            npc.getDisplay().setBossbar(0);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossbar) {
+            npc.display.setBossbar(0);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function applyBossBarColor(npc, colorName) {
+    if (colorName == null || colorName == "") return;
+
+    var colorId = mapBossBarColorId(colorName);
+
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossColor) {
+            npc.getDisplay().setBossColor(colorId);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossColor) {
+            npc.display.setBossColor(colorId);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function mapBossBarColorId(colorName) {
+    var key = ("" + colorName).toLowerCase();
+    if (key == "pink") return 0;
+    if (key == "blue") return 1;
+    if (key == "red") return 2;
+    if (key == "green") return 3;
+    if (key == "yellow") return 4;
+    if (key == "purple") return 5;
+    if (key == "white") return 6;
+    return 6;
+}
+
 function hideBodyNow(npc) {
     try {
         if (npc.getDisplay && npc.getDisplay()) {
@@ -237,6 +352,19 @@ function hideBodyNow(npc) {
 function updateNpcClient(npc) {
     try {
         npc.updateClient();
+    } catch (e) {}
+}
+
+function playSoundForAllPlayers(npc, soundId, volume, pitch) {
+    if (!hasText(soundId) || soundId == "null") return;
+
+    try {
+        var players = npc.getWorld().getAllPlayers();
+        if (players == null) return;
+
+        for (var i = 0; i < players.length; i++) {
+            players[i].playSound(soundId, volume, pitch);
+        }
     } catch (e) {}
 }
 
@@ -304,6 +432,56 @@ function awardDamageTop(npc) {
         var species = pickRewardSpeciesForPlace(i);
         giveRewardPokemon(player, species, ivs);
     }
+}
+
+function maintainDeadNpc(npc) {
+    var data = npc.getStoreddata();
+    var firstFinalize = data.get("arceus_dead_finalized") != "1";
+    if (firstFinalize) {
+        data.put("arceus_dead_finalized", "1");
+    }
+
+    buryDeadNpcOnce(npc);
+    stopCombatForDeath(npc);
+    setNoAiState(npc, true);
+    disableBossBar(npc);
+    ensureHideDeadBody(npc);
+    forceHealthFloor(npc);
+
+    if (firstFinalize) {
+        updateNpcClient(npc);
+    }
+}
+
+function buryDeadNpcOnce(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_dead_buried") == "1") return;
+    data.put("arceus_dead_buried", "1");
+
+    try {
+        npc.setPosition(npc.getX(), npc.getY() - 10, npc.getZ());
+        return;
+    } catch (e) {}
+
+    try {
+        npc.setPos(npc.getX(), npc.getY() - 10, npc.getZ());
+    } catch (e2) {}
+}
+
+function applyPhaseMeleeDelay(npc, phase) {
+    var key = "arceus_phase1_melee_delay";
+    if (phase == 2) key = "arceus_phase2_melee_delay";
+    if (phase >= 3) key = "arceus_phase3_melee_delay";
+
+    try {
+        npc.getStats().getMelee().setDelay(getCfgInt(npc, key, phase >= 3 ? 12 : (phase == 2 ? 18 : 24)));
+    } catch (e) {}
+}
+
+function setNoAiState(npc, enabled) {
+    try {
+        npc.getMCEntity().setNoAi(enabled ? true : false);
+    } catch (e) {}
 }
 
 function ensureRewardPoolsLoaded(npc) {

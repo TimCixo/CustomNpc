@@ -30,7 +30,11 @@ function damaged(event) {
     var data = npc.getStoreddata();
 
     if (data.get("arceus_enabled") != "1") return;
-    if (data.get("arceus_dead") == "1") return;
+    if (data.get("arceus_dead") == "1") {
+        cancelDamage(event);
+        forceHealthFloor(npc);
+        return;
+    }
 
     if (data.get("arceus_dying") == "1") {
         cancelDamage(event);
@@ -119,15 +123,10 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     if (phase == 2) data.put("arceus_phase2_drops_given", "0");
     if (phase == 3) data.put("arceus_phase3_drops_given", "0");
 
-    try {
-        npc.setHealth(targetHp);
-    } catch (e) {}
-
-    applyPhaseMeleeDelay(npc, phase);
-    applyBossBarColor(npc, bossBarColor);
-    playConfiguredSound(npc, soundKey);
-    updateNpcClient(npc);
-    safeSay(npc, line);
+    data.put("arceus_phase_start_pending", "1");
+    data.put("arceus_pending_phase_hp", "" + targetHp);
+    data.put("arceus_pending_phase_id", "" + phase);
+    schedulePhaseEffects(npc, line, bossBarColor, soundKey);
 }
 
 function startCustomDeath(npc) {
@@ -149,8 +148,11 @@ function dropConfiguredItem(npc, itemId, count) {
     if (itemId == null || itemId == "" || itemId == "null") return;
     if (count == null || count <= 0) return;
 
-    for (var i = 0; i < count; i++) {
-        spawnScatterItem(npc, itemId);
+    var left = Math.floor(count);
+    while (left > 0) {
+        var stackSize = left > 64 ? 64 : left;
+        spawnScatterItem(npc, itemId, stackSize);
+        left -= stackSize;
     }
 }
 
@@ -162,14 +164,15 @@ function dropRandomGems(npc, count) {
     }
 }
 
-function spawnScatterItem(npc, itemId) {
+function spawnScatterItem(npc, itemId, amount) {
     if (itemId == null || itemId == "" || itemId == "null") return;
+    var stackSize = amount == null ? 1 : Math.max(1, Math.floor(amount));
 
     try {
         var itemType = ArceusBoss_BuiltInRegistries.ITEM.get(ArceusBoss_ResourceLocation.parse(itemId));
         if (itemType == null) return;
 
-        var stack = new ArceusBoss_MCItemStack(itemType, 1);
+        var stack = new ArceusBoss_MCItemStack(itemType, stackSize);
         if (stack == null || stack.isEmpty()) return;
 
         var level = npc.getMCEntity().level();
@@ -189,6 +192,17 @@ function spawnScatterItem(npc, itemId) {
 
         level.addFreshEntity(drop);
     } catch (e) {}
+}
+
+function schedulePhaseEffects(npc, line, bossBarColor, soundKey) {
+    var data = npc.getStoreddata();
+    data.put("arceus_phase_effects_pending", "1");
+    data.put("arceus_pending_phase_line", line == null ? "" : ("" + line));
+    data.put("arceus_pending_phase_color", bossBarColor == null ? "" : ("" + bossBarColor));
+
+    var soundId = "" + data.get(soundKey);
+    if (soundId == null || soundId == "null") soundId = "";
+    data.put("arceus_pending_phase_sound", soundId);
 }
 
 function pickRandomGemId() {
@@ -264,7 +278,7 @@ function setStageDropsGiven(npc, phase, value) {
 }
 
 function recordDamageContribution(event, npc, damage) {
-    var attacker = resolveDamageDealer(event);
+    var attacker = resolveDamageDealer(event, npc);
     if (attacker == null) return;
 
     var data = npc.getStoreddata();
@@ -279,20 +293,24 @@ function recordDamageContribution(event, npc, damage) {
     data.put(nameKey, getAttackerName(attacker));
 }
 
-function resolveDamageDealer(event) {
+function resolveDamageDealer(event, npc) {
+    var attacker = null;
+
     try {
         if (event.damageSource != null && event.damageSource.getTrueSource() != null) {
-            return event.damageSource.getTrueSource();
+            attacker = event.damageSource.getTrueSource();
         }
     } catch (e) {}
 
-    try {
-        if (event.source != null) {
-            return event.source;
-        }
-    } catch (e2) {}
+    if (attacker == null) {
+        try {
+            if (event.source != null) {
+                attacker = event.source;
+            }
+        } catch (e2) {}
+    }
 
-    return null;
+    return resolveDamageOwner(npc, attacker);
 }
 
 function safeAttackerUuid(attacker) {
@@ -320,6 +338,140 @@ function getAttackerName(attacker) {
     } catch (e3) {}
 
     return "Unknown";
+}
+
+function resolveDamageOwner(npc, attacker) {
+    if (attacker == null) return null;
+    if (isPlayerAttacker(attacker)) return attacker;
+
+    var directOwner = resolveOwnerEntity(attacker);
+    if (directOwner != null) {
+        if (isPlayerAttacker(directOwner)) return directOwner;
+        attacker = directOwner;
+    }
+
+    var ownerUuid = readOwnerUuid(attacker);
+    if (ownerUuid != null && ownerUuid != "") {
+        var ownerPlayer = findPlayerByUuid(npc, ownerUuid);
+        if (ownerPlayer != null) return ownerPlayer;
+    }
+
+    var mcEntity = unwrapMcEntity(attacker);
+    if (mcEntity != null) {
+        var mcOwner = resolveOwnerEntity(mcEntity);
+        if (mcOwner != null) {
+            if (isPlayerAttacker(mcOwner)) return mcOwner;
+
+            var mcOwnerUuid = readOwnerUuid(mcOwner);
+            if (mcOwnerUuid != null && mcOwnerUuid != "") {
+                var ownerByMc = findPlayerByUuid(npc, mcOwnerUuid);
+                if (ownerByMc != null) return ownerByMc;
+            }
+        }
+
+        var nestedOwnerUuid = readOwnerUuid(mcEntity);
+        if (nestedOwnerUuid != null && nestedOwnerUuid != "") {
+            var nestedOwnerPlayer = findPlayerByUuid(npc, nestedOwnerUuid);
+            if (nestedOwnerPlayer != null) return nestedOwnerPlayer;
+        }
+    }
+
+    return attacker;
+}
+
+function resolveOwnerEntity(target) {
+    if (target == null) return null;
+
+    var owner = callZeroArg(target, "getOwner");
+    if (owner != null) return owner;
+
+    owner = callZeroArg(target, "owner");
+    if (owner != null) return owner;
+
+    owner = callZeroArg(target, "getOwnerEntity");
+    if (owner != null) return owner;
+
+    owner = callZeroArg(target, "getPlayerOwner");
+    if (owner != null) return owner;
+
+    owner = callZeroArg(target, "getOwnerPlayer");
+    if (owner != null) return owner;
+
+    return null;
+}
+
+function readOwnerUuid(target) {
+    if (target == null) return "";
+
+    var value = callZeroArg(target, "getOwnerUUID");
+    if (!hasText(normalizeUuidValue(value))) {
+        value = callZeroArg(target, "getOwnerUuid");
+    }
+    if (!hasText(normalizeUuidValue(value))) {
+        value = callZeroArg(target, "getOwnerId");
+    }
+
+    return normalizeUuidValue(value);
+}
+
+function normalizeUuidValue(value) {
+    if (value == null) return "";
+
+    try {
+        if (value.isPresent && value.isPresent()) {
+            value = value.get();
+        }
+    } catch (e) {}
+
+    try {
+        if (value.get && ("" + value.getClass().getName()).indexOf("Optional") >= 0) {
+            value = value.get();
+        }
+    } catch (e2) {}
+
+    try {
+        return trimString("" + value);
+    } catch (e3) {
+        return "";
+    }
+}
+
+function hasText(value) {
+    return value != null && trimString(value).length > 0;
+}
+
+function trimString(s) {
+    return ("" + s).replace(/^\s+|\s+$/g, "");
+}
+
+function findPlayerByUuid(npc, uuid) {
+    if (npc == null || !hasText(uuid)) return null;
+
+    try {
+        var players = npc.getWorld().getAllPlayers();
+        if (players == null) return null;
+
+        for (var i = 0; i < players.length; i++) {
+            var player = players[i];
+            try {
+                if (("" + player.getUUID()) == ("" + uuid)) return player;
+            } catch (e) {}
+        }
+    } catch (e2) {}
+
+    return null;
+}
+
+function callZeroArg(target, methodName) {
+    if (target == null || methodName == null || methodName == "") return null;
+
+    try {
+        if (target[methodName]) {
+            return target[methodName]();
+        }
+    } catch (e) {}
+
+    return null;
 }
 
 function playConfiguredSound(npc, key) {
