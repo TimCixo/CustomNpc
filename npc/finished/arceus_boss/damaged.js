@@ -190,6 +190,14 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     schedulePhaseEffects(npc, line, bossBarColor, soundKey);
 }
 
+function formatDamage(value) {
+    var rounded = Math.floor(value * 10 + 0.5) / 10;
+    if (rounded == Math.floor(rounded)) {
+        return "" + Math.floor(rounded);
+    }
+    return "" + rounded;
+}
+
 function requestCustomDeath(event, npc, source) {
     var data = npc.getStoreddata();
     if (data.get("arceus_dying") == "1") return;
@@ -939,14 +947,6 @@ function getCfgInt(npc, key, def) {
 
 function getCfgFloat(npc, key, def) {
     return parseFloatSafe(npc.getStoreddata().get(key), def);
-}
-
-function formatDamage(value) {
-    var rounded = Math.floor(value * 10 + 0.5) / 10;
-    if (rounded == Math.floor(rounded)) {
-        return "" + Math.floor(rounded);
-    }
-    return "" + rounded;
 }
 
 function recordScriptErrorFromEvent(event, hook, error) {
