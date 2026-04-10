@@ -49,19 +49,20 @@ function damaged(event) {
 function damagedCore(event) {
     var npc = event.npc;
     var data = npc.getStoreddata();
-    var deathCommitting = data.get("arceus_death_committing") == "1";
-    var deathLocked = data.get("arceus_death_lock") == "1";
 
     if (data.get("arceus_enabled") != "1") return;
-    if (deathCommitting) return;
-    if (deathLocked) {
+
+    var state = getArceusState(npc);
+    if (state == "death_commit") return;
+
+    if (state == "phase_transition") {
         cancelDamage(event);
-        forceDeathSafeHealthFloor(npc);
+        forcePhaseTransitionHealthFloor(npc);
         setEntityInvulnerable(npc, true);
         return;
     }
 
-    if (data.get("arceus_dying") == "1") {
+    if (state != "live") {
         cancelDamage(event);
         forceDeathSafeHealthFloor(npc);
         setEntityInvulnerable(npc, true);
@@ -76,18 +77,10 @@ function damagedCore(event) {
     var deathThreshold = getArceusDeathThresholdHp(npc);
 
     if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
+        setArceusState(npc, "phase_transition");
         cancelDamage(event);
         forcePhaseTransitionHealthFloor(npc);
         setEntityInvulnerable(npc, true);
-
-        if (currentPhase >= 3 && incomingDamage > 0 && currentHp <= deathThreshold) {
-            recordDamageContribution(event, npc, incomingDamage);
-            armCustomDeathLock(npc);
-            dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
-            forceDeathSafeHealthFloor(npc);
-            requestCustomDeath(event, npc, "damaged");
-        }
-
         return;
     }
 
@@ -166,6 +159,7 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     var targetHp = Math.max(1, Math.floor(maxHp * healFraction));
 
     data.put("arceus_dying", "0");
+    data.put("arceus_state", "phase_transition");
     data.put("arceus_death_committing", "0");
     data.put("arceus_death_lock", "0");
     data.put("arceus_death_request", "0");
@@ -198,12 +192,52 @@ function formatDamage(value) {
     return "" + rounded;
 }
 
+function getArceusState(npc) {
+    var data = npc.getStoreddata();
+    var state = "" + data.get("arceus_state");
+
+    if (state == "live"
+        || state == "phase_transition"
+        || state == "custom_death_start"
+        || state == "death_announce_top"
+        || state == "death_reward_pokemon"
+        || state == "death_commit") {
+        return state;
+    }
+
+    if (data.get("arceus_death_committing") == "1") return "death_commit";
+    if (data.get("arceus_death_lock") == "1"
+        || data.get("arceus_death_request") == "1"
+        || data.get("arceus_dying") == "1") {
+        return "custom_death_start";
+    }
+    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) return "phase_transition";
+
+    data.put("arceus_state", "live");
+    return "live";
+}
+
+function setArceusState(npc, state) {
+    try {
+        npc.getStoreddata().put("arceus_state", state);
+    } catch (e) {}
+}
+
 function requestCustomDeath(event, npc, source) {
     var data = npc.getStoreddata();
+    var state = getArceusState(npc);
+    if (state == "phase_transition"
+        || state == "death_announce_top"
+        || state == "death_reward_pokemon"
+        || state == "death_commit") {
+        return;
+    }
+    if (parseIntSafe(data.get("arceus_phase"), 1) < 3) return;
     if (data.get("arceus_dying") == "1") return;
     if (data.get("arceus_death_committing") == "1") return;
 
     armCustomDeathLock(npc);
+    data.put("arceus_state", "custom_death_start");
     data.put("arceus_death_request", "1");
     data.put("arceus_death_committing", "0");
     data.put("arceus_transition_ticks_left", "0");

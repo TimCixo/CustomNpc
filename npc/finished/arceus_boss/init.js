@@ -1,6 +1,6 @@
 var ARCEUS_TIMER_ID = 1;
 var ARCEUS_DEATH_TIMER_ID = 2;
-var ARCEUS_CONFIG_VERSION = 10;
+var ARCEUS_CONFIG_VERSION = 11;
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
@@ -39,7 +39,7 @@ function init(event) {
     putDefault(npc, "arceus_custom_death_threshold_min_hp", "20");
     putDefault(npc, "arceus_death_timer_ticks", "1");
     putDefault(npc, "arceus_reward_batch_size", "1");
-    putDefault(npc, "arceus_reward_interval_ticks", "10");
+    putDefault(npc, "arceus_reward_interval_ticks", "20");
     putDefault(npc, "arceus_respawn_visual_reset_ticks", "20");
     putDefault(npc, "arceus_death_spin_step", "12");
     putDefault(npc, "arceus_death_explosion_power", "3.5");
@@ -111,11 +111,20 @@ function migrateConfig(npc) {
         data.put("arceus_reward_interval_ticks", "10");
     }
 
+    if (version < 11) {
+        data.put("arceus_reward_interval_ticks", "20");
+        data.put("arceus_state", "live");
+        data.put("arceus_top_announce_index", "0");
+        data.put("arceus_top_announce_done", "0");
+        data.put("arceus_unexpected_died_state", "-");
+    }
+
     data.put("arceus_config_version", "" + ARCEUS_CONFIG_VERSION);
 }
 
 function resetBossState(npc) {
     var data = npc.getStoreddata();
+    data.put("arceus_state", "live");
     data.put("arceus_phase", "1");
     data.put("arceus_transition_ticks_left", "0");
     data.put("arceus_dying", "0");
@@ -136,6 +145,9 @@ function resetBossState(npc) {
     data.put("arceus_reward_queue_size", "0");
     data.put("arceus_reward_finalize_ticks", "0");
     data.put("arceus_reward_wait_ticks", "0");
+    data.put("arceus_top_announce_index", "0");
+    data.put("arceus_top_announce_done", "0");
+    data.put("arceus_unexpected_died_state", "-");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");

@@ -4,6 +4,15 @@ var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
 
 function died(event) {
     var npc = event.npc;
+    var data = npc.getStoreddata();
+    var state = "" + data.get("arceus_state");
+
+    if (state != "death_commit") {
+        data.put("arceus_unexpected_died_state", hasText(state) && state != "null" ? state : "-");
+        return;
+    }
+
+    data.put("arceus_unexpected_died_state", "-");
     notifyClockDead(npc);
 }
 

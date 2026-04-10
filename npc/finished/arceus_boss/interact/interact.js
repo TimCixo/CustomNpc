@@ -26,7 +26,8 @@ function interact(event) {
     }
 
     player.message(
-        "§7Аркеус §f| стадия: §e" + data.get("arceus_phase")
+        "§7Аркеус §f| state: §e" + data.get("arceus_state")
+        + "§f | стадия: §e" + data.get("arceus_phase")
         + "§f | переход: §e" + data.get("arceus_transition_ticks_left")
         + "§f | смерть: §e" + data.get("arceus_dying")
     );
@@ -44,10 +45,13 @@ function interact(event) {
         + "§f | rewards: §e" + data.get("arceus_rewards_given")
         + "§f | queue: §e" + data.get("arceus_reward_queue_index")
         + "§f/§e" + data.get("arceus_reward_queue_size")
+        + "§f | top: §e" + data.get("arceus_top_announce_index")
+        + "§f/§e" + data.get("arceus_top_announce_done")
     );
     player.message(
         "§7Last error §f| hook: §e" + data.get("arceus_dbg_last_error_hook")
         + "§f | msg: §e" + data.get("arceus_dbg_last_error_message")
+        + "§f | died: §e" + data.get("arceus_unexpected_died_state")
     );
     event.setCanceled(true);
 }
@@ -55,6 +59,7 @@ function interact(event) {
 function resetBoss(npc) {
     var data = npc.getStoreddata();
     data.put("arceus_enabled", "1");
+    data.put("arceus_state", "live");
     data.put("arceus_phase", "1");
     data.put("arceus_transition_ticks_left", "0");
     data.put("arceus_dying", "0");
@@ -75,6 +80,9 @@ function resetBoss(npc) {
     data.put("arceus_reward_queue_size", "0");
     data.put("arceus_reward_finalize_ticks", "0");
     data.put("arceus_reward_wait_ticks", "0");
+    data.put("arceus_top_announce_index", "0");
+    data.put("arceus_top_announce_done", "0");
+    data.put("arceus_unexpected_died_state", "-");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
