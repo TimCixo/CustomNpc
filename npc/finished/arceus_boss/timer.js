@@ -906,8 +906,7 @@ function announceDamageTop(npc) {
 
     safeSay(npc, "§6Топ по урону по Аркеусу:");
 
-    var limit = entries.length < 5 ? entries.length : 5;
-    for (var j = 0; j < limit; j++) {
+    for (var j = 0; j < entries.length; j++) {
         var entry = entries[j];
         safeSay(npc, "§e#" + (j + 1) + " §f" + entry.name + " §7- §c" + formatDamage(entry.damage));
     }
@@ -946,6 +945,7 @@ function ensureRewardSnapshot(npc) {
     data.put("arceus_reward_queue_index", "0");
     data.put("arceus_reward_queue_size", "" + resolved.length);
     data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_reward_wait_ticks", "0");
     data.put("arceus_dbg_damage_entry_count", "" + entries.length);
     data.put("arceus_dbg_resolved_entry_count", "" + resolved.length);
     data.put("arceus_dbg_unresolved_entry_count", "" + unresolvedCount);
@@ -982,6 +982,14 @@ function processRewardQueue(npc) {
         return true;
     }
 
+    var waitTicks = parseIntSafe(data.get("arceus_reward_wait_ticks"), 0);
+    if (waitTicks > 0) {
+        waitTicks -= getRewardTimerStepTicks(npc);
+        if (waitTicks < 0) waitTicks = 0;
+        data.put("arceus_reward_wait_ticks", "" + waitTicks);
+        return false;
+    }
+
     var batchSize = getRewardBatchSize(npc);
     var players = getOnlinePlayers(npc);
     var processed = 0;
@@ -1009,13 +1017,24 @@ function processRewardQueue(npc) {
         return true;
     }
 
+    data.put("arceus_reward_wait_ticks", "" + Math.max(0, getRewardIntervalTicks(npc) - getRewardTimerStepTicks(npc)));
     return false;
 }
 
 function getRewardBatchSize(npc) {
-    var value = getCfgInt(npc, "arceus_reward_batch_size", 1);
+    return 1;
+}
+
+function getRewardIntervalTicks(npc) {
+    var value = getCfgInt(npc, "arceus_reward_interval_ticks", 10);
     if (value < 1) return 1;
-    if (value > 2) return 2;
+    if (value > 100) return 100;
+    return value;
+}
+
+function getRewardTimerStepTicks(npc) {
+    var value = getCfgInt(npc, "arceus_death_timer_ticks", 1);
+    if (value < 1) return 1;
     return value;
 }
 
@@ -1050,6 +1069,7 @@ function resetRewardQueueState(data) {
     data.put("arceus_reward_queue_index", "0");
     data.put("arceus_reward_queue_size", "0");
     data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_reward_wait_ticks", "0");
     data.put("arceus_dbg_damage_entry_count", "0");
     data.put("arceus_dbg_resolved_entry_count", "0");
     data.put("arceus_dbg_unresolved_entry_count", "0");
@@ -1443,6 +1463,8 @@ function processRespawnVisualReset(npc) {
 }
 
 function clearDamageContributors(data) {
+    data.put("arceus_damage_participant_count", "0");
+
     var keys = data.getKeys();
     if (keys == null) return;
 

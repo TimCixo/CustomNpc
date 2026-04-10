@@ -368,33 +368,8 @@ function getStageTotalDrops(npc, phase) {
 }
 
 function getDamageParticipantCount(npc) {
-    var data = npc.getStoreddata();
-    var keys = data.getKeys();
-    if (keys == null || keys.length <= 0) return 1;
-
-    var count = 0;
-    for (var i = 0; i < keys.length; i++) {
-        var key = "" + keys[i];
-        if (key.indexOf("arceus_dmg_") !== 0) continue;
-        if (key.indexOf("arceus_dmg_name_") === 0) continue;
-        if (parseFloatSafe(data.get(key), 0) <= 0) continue;
-        if (!isDamageParticipantPlayer(npc, key.substring("arceus_dmg_".length))) continue;
-        count++;
-    }
-
+    var count = getCfgInt(npc, "arceus_damage_participant_count", 0);
     return count <= 0 ? 1 : count;
-}
-
-function isDamageParticipantPlayer(npc, uuid) {
-    if (!hasText(uuid)) return false;
-    if (findPlayerByUuid(npc, uuid) != null) return true;
-
-    try {
-        var name = "" + npc.getStoreddata().get("arceus_dmg_name_" + uuid);
-        return hasText(name) && npc.getWorld().getPlayer(name) != null;
-    } catch (e) {
-        return false;
-    }
 }
 
 function getStageDropsGiven(npc, phase) {
@@ -417,12 +392,21 @@ function recordDamageContribution(event, npc, damage) {
 
     var damageKey = "arceus_dmg_" + uuid;
     var nameKey = "arceus_dmg_name_" + uuid;
-    var total = parseFloatSafe(data.get(damageKey), 0) + damage;
+    var previous = parseFloatSafe(data.get(damageKey), 0);
+    var total = previous + damage;
 
     data.put(damageKey, "" + total);
     var attackerName = getAttackerName(attacker);
     data.put(nameKey, attackerName);
+    if (previous <= 0 && isPlayerAttacker(attacker)) {
+        incrementDamageParticipantCount(data);
+    }
     appendRecentDamageContribution(data, uuid, attackerName, damage);
+}
+
+function incrementDamageParticipantCount(data) {
+    var count = parseIntSafe(data.get("arceus_damage_participant_count"), 0);
+    data.put("arceus_damage_participant_count", "" + (count + 1));
 }
 
 function resolveDamageDealer(event, npc) {
@@ -824,6 +808,9 @@ function isPlayerAttacker(attacker) {
     try {
         var className = "" + attacker.getClass().getName();
         if (className.indexOf("PlayerWrapper") >= 0) return true;
+        if (className.indexOf("ServerPlayer") >= 0) return true;
+        if (className.indexOf(".player.") >= 0) return true;
+        if (className.indexOf("Player") >= 0) return true;
     } catch (e2) {}
 
     return false;

@@ -1,6 +1,6 @@
 var ARCEUS_TIMER_ID = 1;
 var ARCEUS_DEATH_TIMER_ID = 2;
-var ARCEUS_CONFIG_VERSION = 9;
+var ARCEUS_CONFIG_VERSION = 10;
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
@@ -39,6 +39,7 @@ function init(event) {
     putDefault(npc, "arceus_custom_death_threshold_min_hp", "20");
     putDefault(npc, "arceus_death_timer_ticks", "1");
     putDefault(npc, "arceus_reward_batch_size", "1");
+    putDefault(npc, "arceus_reward_interval_ticks", "10");
     putDefault(npc, "arceus_respawn_visual_reset_ticks", "20");
     putDefault(npc, "arceus_death_spin_step", "12");
     putDefault(npc, "arceus_death_explosion_power", "3.5");
@@ -106,6 +107,10 @@ function migrateConfig(npc) {
         data.put("arceus_phase3_total_drops_max", "12");
     }
 
+    if (version < 10) {
+        data.put("arceus_reward_interval_ticks", "10");
+    }
+
     data.put("arceus_config_version", "" + ARCEUS_CONFIG_VERSION);
 }
 
@@ -130,9 +135,11 @@ function resetBossState(npc) {
     data.put("arceus_reward_queue_index", "0");
     data.put("arceus_reward_queue_size", "0");
     data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_reward_wait_ticks", "0");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
+    data.put("arceus_damage_participant_count", "0");
     data.put("arceus_phase_effects_pending", "0");
     data.put("arceus_phase_start_pending", "0");
     data.put("arceus_pending_phase_hp", "0");
@@ -366,6 +373,8 @@ function mapBossBarColorId(colorName) {
 }
 
 function clearDamageContributors(data) {
+    data.put("arceus_damage_participant_count", "0");
+
     var keys = data.getKeys();
     if (keys == null) return;
 

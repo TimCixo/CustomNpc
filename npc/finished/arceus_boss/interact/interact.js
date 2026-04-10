@@ -74,9 +74,11 @@ function resetBoss(npc) {
     data.put("arceus_reward_queue_index", "0");
     data.put("arceus_reward_queue_size", "0");
     data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_reward_wait_ticks", "0");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
+    data.put("arceus_damage_participant_count", "0");
     data.put("arceus_phase_effects_pending", "0");
     data.put("arceus_phase_start_pending", "0");
     data.put("arceus_pending_phase_hp", "0");
@@ -237,6 +239,8 @@ function getNpcDisplayName(npc) {
 }
 
 function clearDamageContributors(data) {
+    data.put("arceus_damage_participant_count", "0");
+
     var keys = data.getKeys();
     if (keys == null) return;
 
