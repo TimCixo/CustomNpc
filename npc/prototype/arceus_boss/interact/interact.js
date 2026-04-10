@@ -4,6 +4,7 @@ var ArceusClock_CustomData = Java.type("net.minecraft.world.item.component.Custo
 var ARCEUS_CLOCK_LINKER_TYPE = "respawn_clock_linker";
 var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
 var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
+var ARCEUS_DEATH_TIMER_ID = 2;
 
 function interact(event) {
     var npc = event.npc;
@@ -29,6 +30,25 @@ function interact(event) {
         + "§f | переход: §e" + data.get("arceus_transition_ticks_left")
         + "§f | смерть: §e" + data.get("arceus_dying")
     );
+    player.message(
+        "§7Death dbg §f| req: §e" + data.get("arceus_death_request")
+        + "§f | reqSrc: §e" + data.get("arceus_death_request_source")
+        + "§f | src: §e" + data.get("arceus_dbg_death_start_source")
+        + "§f | hp: §e" + data.get("arceus_dbg_death_start_hp")
+        + "§f/§e" + data.get("arceus_dbg_death_threshold_hp")
+    );
+    player.message(
+        "§7Death state §f| lock: §e" + data.get("arceus_death_lock")
+        + "§f | line: §e" + data.get("arceus_death_line_stage")
+        + "§f | fin: §e" + data.get("arceus_death_finalized")
+        + "§f | rewards: §e" + data.get("arceus_rewards_given")
+        + "§f | queue: §e" + data.get("arceus_reward_queue_index")
+        + "§f/§e" + data.get("arceus_reward_queue_size")
+    );
+    player.message(
+        "§7Last error §f| hook: §e" + data.get("arceus_dbg_last_error_hook")
+        + "§f | msg: §e" + data.get("arceus_dbg_last_error_message")
+    );
     event.setCanceled(true);
 }
 
@@ -43,8 +63,17 @@ function resetBoss(npc) {
     data.put("arceus_death_anim_started", "0");
     data.put("arceus_death_finalized", "0");
     data.put("arceus_death_committing", "0");
+    data.put("arceus_death_lock", "0");
+    data.put("arceus_death_request", "0");
+    data.put("arceus_death_request_source", "-");
+    data.put("arceus_death_request_hp", "0");
+    data.put("arceus_death_request_threshold_hp", "0");
     data.put("arceus_damage_top_shown", "0");
     data.put("arceus_rewards_given", "0");
+    data.put("arceus_reward_snapshot_raw", "");
+    data.put("arceus_reward_queue_index", "0");
+    data.put("arceus_reward_queue_size", "0");
+    data.put("arceus_reward_finalize_ticks", "0");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
     data.put("arceus_phase3_drops_given", "0");
@@ -66,6 +95,14 @@ function resetBoss(npc) {
     data.put("arceus_dbg_runtime_ticks", "0");
     data.put("arceus_dbg_last_live_target_id", "-");
     data.put("arceus_dbg_last_live_target_class", "-");
+    data.put("arceus_dbg_damage_entry_count", "0");
+    data.put("arceus_dbg_resolved_entry_count", "0");
+    data.put("arceus_dbg_unresolved_entry_count", "0");
+    data.put("arceus_dbg_death_start_source", "-");
+    data.put("arceus_dbg_death_start_hp", "0");
+    data.put("arceus_dbg_death_threshold_hp", "0");
+    data.put("arceus_dbg_last_error_hook", "-");
+    data.put("arceus_dbg_last_error_message", "-");
     data.put("arceus_applied_melee_phase", "0");
     clearDamageContributors(data);
 
@@ -73,14 +110,11 @@ function resetBoss(npc) {
         npc.setHealth(npc.getMaxHealth());
     } catch (e) {}
 
-    ensureHideDeadBody(npc);
-    setNoAiState(npc, false);
     restartNormalTimer(npc);
+    stopDeathTimer(npc);
     applyPhaseMeleeDelay(npc, 1);
-    applyBossBarColor(npc, "white");
-    restoreNameplate(npc);
-    restoreVisibleBody(npc);
-    updateNpcClient(npc);
+    armRespawnVisualReset(npc);
+    resetLiveVisualState(npc);
     notifyClockAlive(npc);
 }
 
@@ -212,7 +246,8 @@ function clearDamageContributors(data) {
             || key.indexOf("arceus_dmg_name_") === 0
             || key.indexOf("arceus_recent_hits_") === 0
             || key.indexOf("arceus_recent_name_") === 0
-            || key.indexOf("arceus_godmode_disabled_") === 0) {
+            || key.indexOf("arceus_godmode_disabled_") === 0
+            || key.indexOf("arceus_reward_entry_") === 0) {
             data.remove(key);
         }
     }
@@ -294,11 +329,79 @@ function restartNormalTimer(npc) {
     } catch (e) {}
 }
 
+function stopDeathTimer(npc) {
+    try {
+        npc.timers.stop(ARCEUS_DEATH_TIMER_ID);
+    } catch (e) {}
+}
+
 function ensureHideDeadBody(npc) {
     try {
         npc.getStats().setHideDeadBody(true);
         return;
     } catch (e) {}
+}
+
+function armRespawnVisualReset(npc) {
+    var data = npc.getStoreddata();
+    var ticks = parseIntSafe(data.get("arceus_respawn_visual_reset_ticks"), 20);
+    if (ticks < 1) ticks = 1;
+
+    data.put("arceus_respawn_visual_reset_pending", "1");
+    data.put("arceus_respawn_visual_reset_ticks_left", "" + ticks);
+}
+
+function resetLiveVisualState(npc) {
+    ensureHideDeadBody(npc);
+    setNoAiState(npc, false);
+    setEntityInvulnerable(npc, false);
+    clearEntityDamageVisuals(npc);
+    ensureBossBarEnabled(npc);
+    applyBossBarColor(npc, "white");
+    restoreNameplate(npc);
+    restoreVisibleBody(npc);
+    updateNpcClient(npc);
+}
+
+function setEntityInvulnerable(npc, enabled) {
+    try {
+        npc.getMCEntity().setInvulnerable(enabled ? true : false);
+    } catch (e) {}
+}
+
+function clearEntityDamageVisuals(npc) {
+    try {
+        npc.getMCEntity().invulnerableTime = 0;
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().hurtTime = 0;
+    } catch (e2) {}
+
+    try {
+        npc.getMCEntity().hurtDuration = 0;
+    } catch (e3) {}
+
+    try {
+        npc.getMCEntity().deathTime = 0;
+    } catch (e4) {}
+}
+
+function ensureBossBarEnabled(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossbar) {
+            if (npc.getDisplay().getBossbar && npc.getDisplay().getBossbar() == 1) return;
+            npc.getDisplay().setBossbar(1);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossbar) {
+            npc.display.setBossbar(1);
+            return;
+        }
+    } catch (e2) {}
 }
 
 function restoreVisibleBody(npc) {

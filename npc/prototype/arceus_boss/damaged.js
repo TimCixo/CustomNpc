@@ -4,6 +4,7 @@ var ArceusBoss_BuiltInRegistries = Java.type("net.minecraft.core.registries.Buil
 var ArceusBoss_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var ArceusBoss_EntityType = Java.type("net.minecraft.world.entity.EntityType");
 var ArceusBoss_System = Java.type("java.lang.System");
+var ARCEUS_DEATH_TIMER_ID = 2;
 var ARCEUS_ITEM_TYPE_CACHE = {};
 
 var ARCEUS_PHASE3_GEMS = [
@@ -28,21 +29,42 @@ var ARCEUS_PHASE3_GEMS = [
 ];
 
 function damaged(event) {
+    try {
+        damagedCore(event);
+    } catch (e) {
+        recordScriptErrorFromEvent(event, "damaged", e);
+        try {
+            cancelDamage(event);
+        } catch (e0) {}
+
+        try {
+            var npc = event.npc;
+            forcePhaseTransitionHealthFloor(npc);
+            setEntityInvulnerable(npc, true);
+            restartDeathTimer(npc);
+        } catch (e1) {}
+    }
+}
+
+function damagedCore(event) {
     var npc = event.npc;
     var data = npc.getStoreddata();
     var deathCommitting = data.get("arceus_death_committing") == "1";
+    var deathLocked = data.get("arceus_death_lock") == "1";
 
     if (data.get("arceus_enabled") != "1") return;
     if (deathCommitting) return;
-
-    if (data.get("arceus_dying") == "1") {
+    if (deathLocked) {
         cancelDamage(event);
-        forceHealthFloor(npc);
+        forceDeathSafeHealthFloor(npc);
+        setEntityInvulnerable(npc, true);
         return;
     }
 
-    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
+    if (data.get("arceus_dying") == "1") {
         cancelDamage(event);
+        forceDeathSafeHealthFloor(npc);
+        setEntityInvulnerable(npc, true);
         return;
     }
 
@@ -50,13 +72,41 @@ function damaged(event) {
     var currentHp = readNpcHealth(npc);
     var maxHp = readNpcMaxHealth(npc);
     var incomingDamage = readDamage(event);
-    incomingDamage = applyPhaseDamageMitigation(event, npc, currentPhase, incomingDamage);
     var hpAfterHit = currentHp - incomingDamage;
+    var deathThreshold = getArceusDeathThresholdHp(npc);
+
+    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
+        cancelDamage(event);
+        forcePhaseTransitionHealthFloor(npc);
+        setEntityInvulnerable(npc, true);
+
+        if (currentPhase >= 3 && incomingDamage > 0 && currentHp <= deathThreshold) {
+            recordDamageContribution(event, npc, incomingDamage);
+            armCustomDeathLock(npc);
+            dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
+            forceDeathSafeHealthFloor(npc);
+            requestCustomDeath(event, npc, "damaged");
+        }
+
+        return;
+    }
+
+    incomingDamage = applyPhaseDamageMitigation(event, npc, currentPhase, incomingDamage);
+    hpAfterHit = currentHp - incomingDamage;
     var phase2Threshold = maxHp * getCfgFloat(npc, "arceus_phase2_threshold", 0.10);
     var phase3Threshold = maxHp * getCfgFloat(npc, "arceus_phase3_threshold", 0.10);
 
     if (incomingDamage > 0) {
         recordDamageContribution(event, npc, incomingDamage);
+    }
+
+    if (currentPhase >= 3 && currentHp <= deathThreshold) {
+        armCustomDeathLock(npc);
+        cancelDamage(event);
+        forceDeathSafeHealthFloor(npc);
+        dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
+        requestCustomDeath(event, npc, "damaged");
+        return;
     }
 
     if (currentPhase <= 1 && hpAfterHit <= phase2Threshold) {
@@ -74,11 +124,7 @@ function damaged(event) {
 
     if (currentPhase == 2 && hpAfterHit <= phase3Threshold) {
         cancelDamage(event);
-        dropConfiguredItem(
-            npc,
-            "" + data.get("arceus_phase2_pinata_item"),
-            getStageDropCountToThreshold(npc, 2, currentHp, phase3Threshold, maxHp)
-        );
+        var phase2DropCount = getStageDropCountToThreshold(npc, 2, currentHp, phase3Threshold, maxHp);
         enterPhase(
             npc,
             3,
@@ -87,13 +133,16 @@ function damaged(event) {
             "red",
             "arceus_stage3_sound"
         );
+        dropConfiguredItem(npc, "" + data.get("arceus_phase2_pinata_item"), phase2DropCount);
         return;
     }
 
-    if (currentPhase >= 3 && hpAfterHit <= 0.5) {
+    if (currentPhase >= 3 && hpAfterHit <= deathThreshold) {
+        armCustomDeathLock(npc);
         cancelDamage(event);
-        dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, 0.5, maxHp));
-        startCustomDeath(npc);
+        forceDeathSafeHealthFloor(npc);
+        dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
+        requestCustomDeath(event, npc, "damaged");
         return;
     }
 
@@ -116,6 +165,16 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     var maxHp = readNpcMaxHealth(npc);
     var targetHp = Math.max(1, Math.floor(maxHp * healFraction));
 
+    data.put("arceus_dying", "0");
+    data.put("arceus_death_committing", "0");
+    data.put("arceus_death_lock", "0");
+    data.put("arceus_death_request", "0");
+    data.put("arceus_death_request_source", "-");
+    data.put("arceus_death_request_hp", "0");
+    data.put("arceus_death_request_threshold_hp", "0");
+    data.put("arceus_death_finalized", "0");
+    data.put("arceus_death_ticks_left", "0");
+    data.put("arceus_death_line_stage", "0");
     data.put("arceus_phase", "" + phase);
     data.put("arceus_transition_ticks_left", "" + getCfgInt(npc, "arceus_transition_ticks", 40));
     data.put("arceus_pulse_ticks", "0");
@@ -125,25 +184,45 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     data.put("arceus_phase_start_pending", "1");
     data.put("arceus_pending_phase_hp", "" + targetHp);
     data.put("arceus_pending_phase_id", "" + phase);
+    setEntityInvulnerable(npc, true);
+    setNpcHealthSafe(npc, targetHp);
+    forcePhaseTransitionHealthFloor(npc);
     schedulePhaseEffects(npc, line, bossBarColor, soundKey);
 }
 
-function startCustomDeath(npc) {
+function requestCustomDeath(event, npc, source) {
     var data = npc.getStoreddata();
     if (data.get("arceus_dying") == "1") return;
+    if (data.get("arceus_death_committing") == "1") return;
 
-    data.put("arceus_dying", "1");
-    data.put("arceus_death_ticks_left", "" + getCfgInt(npc, "arceus_custom_death_ticks", 80));
-    data.put("arceus_death_line_stage", "0");
-    data.put("arceus_death_anim_started", "0");
-    data.put("arceus_death_finalized", "0");
+    armCustomDeathLock(npc);
+    data.put("arceus_death_request", "1");
     data.put("arceus_death_committing", "0");
-
-    forceHealthFloor(npc);
+    data.put("arceus_transition_ticks_left", "0");
+    data.put("arceus_phase_start_pending", "0");
+    data.put("arceus_phase_effects_pending", "0");
+    cancelDamage(event);
+    setEntityInvulnerable(npc, true);
+    forceDeathSafeHealthFloor(npc);
     stopCombatForDeath(npc);
     restartDeathTimer(npc);
-    playConfiguredSound(npc, "arceus_death_sound");
-    safeSay(npc, "§5Аркеус не падает. Он начинает собственную смерть.");
+
+    var threshold = getArceusDeathThresholdHp(npc);
+    data.put("arceus_death_request_source", source == null ? "damaged" : ("" + source));
+    data.put("arceus_death_request_hp", formatDamage(readNpcHealth(npc)));
+    data.put("arceus_death_request_threshold_hp", formatDamage(threshold));
+}
+
+function armCustomDeathLock(npc) {
+    try {
+        npc.getStoreddata().put("arceus_death_lock", "1");
+    } catch (e) {}
+}
+
+function setEntityInvulnerable(npc, enabled) {
+    try {
+        npc.getMCEntity().setInvulnerable(enabled ? true : false);
+    } catch (e) {}
 }
 
 function dropConfiguredItem(npc, itemId, count) {
@@ -244,7 +323,7 @@ function getStageStartHp(npc, phase, maxHp) {
 
 function getStageEndHp(npc, phase, maxHp) {
     if (phase == 2) return maxHp * getCfgFloat(npc, "arceus_phase3_threshold", 0.10);
-    return 0.5;
+    return getArceusDeathThresholdHp(npc);
 }
 
 function clampHpToStage(hp, stageStartHp, stageEndHp) {
@@ -494,8 +573,25 @@ function appendRecentDamageContribution(data, uuid, name, damage) {
         cleaned = entry;
     }
 
+    cleaned = limitRecentHitTokens(cleaned, 20);
     data.put(hitsKey, cleaned);
     data.put(nameKey, name == null ? uuid : ("" + name));
+}
+
+function limitRecentHitTokens(raw, limit) {
+    var text = raw == null || raw == "null" ? "" : ("" + raw);
+    if (text.length <= 0) return "";
+
+    var parts = text.split("|");
+    var max = parseIntSafe(limit, 20);
+    if (max <= 0 || parts.length <= max) return text;
+
+    var kept = [];
+    for (var i = parts.length - max; i < parts.length; i++) {
+        kept.push(parts[i]);
+    }
+
+    return kept.join("|");
 }
 
 function pruneRecentHitString(raw, cutoff) {
@@ -566,6 +662,64 @@ function forceHealthFloor(npc) {
             npc.setHealth(1);
         }
     } catch (e) {}
+}
+
+function forcePhaseTransitionHealthFloor(npc) {
+    var data = npc.getStoreddata();
+    var floor = parseFloatSafe(data.get("arceus_pending_phase_hp"), 0);
+
+    if (floor <= 0 && (data.get("arceus_death_lock") == "1"
+        || data.get("arceus_death_request") == "1"
+        || data.get("arceus_dying") == "1")) {
+        floor = getArceusDeathThresholdHp(npc);
+    }
+
+    if (floor <= 0) floor = 1;
+
+    try {
+        if (npc.getHealth() < floor) {
+            setNpcHealthSafe(npc, floor);
+        }
+    } catch (e) {}
+}
+
+function forceDeathSafeHealthFloor(npc) {
+    var floor = getArceusDeathThresholdHp(npc);
+    if (floor < 1) floor = 1;
+
+    try {
+        if (npc.getHealth() < floor) {
+            setNpcHealthSafe(npc, floor);
+        }
+    } catch (e) {}
+}
+
+function setNpcHealthSafe(npc, value) {
+    var target = Math.max(1, Math.floor(value));
+
+    try {
+        npc.setHealth(target);
+        return;
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().setHealth(target);
+    } catch (e2) {}
+}
+
+function getArceusDeathThresholdHp(npc) {
+    var maxHp = readNpcMaxHealth(npc);
+    var percent = getCfgFloat(npc, "arceus_custom_death_threshold_percent", 0.02);
+    var minHp = getCfgFloat(npc, "arceus_custom_death_threshold_min_hp", 20);
+
+    if (percent < 0) percent = 0;
+    if (minHp < 1) minHp = 1;
+    if (maxHp <= 0) return minHp;
+
+    var threshold = maxHp * percent;
+    if (threshold < minHp) threshold = minHp;
+    if (threshold < 1) threshold = 1;
+    return threshold;
 }
 
 function readDamage(event) {
@@ -746,6 +900,44 @@ function getCfgFloat(npc, key, def) {
     return parseFloatSafe(npc.getStoreddata().get(key), def);
 }
 
+function formatDamage(value) {
+    var rounded = Math.floor(value * 10 + 0.5) / 10;
+    if (rounded == Math.floor(rounded)) {
+        return "" + Math.floor(rounded);
+    }
+    return "" + rounded;
+}
+
+function recordScriptErrorFromEvent(event, hook, error) {
+    try {
+        if (event != null && event.npc != null) {
+            recordScriptError(event.npc, hook, error);
+        }
+    } catch (e) {}
+}
+
+function recordScriptError(npc, hook, error) {
+    try {
+        var data = npc.getStoreddata();
+        data.put("arceus_dbg_last_error_hook", hook == null ? "-" : ("" + hook));
+        data.put("arceus_dbg_last_error_message", sanitizeErrorMessage(error));
+    } catch (e) {}
+}
+
+function sanitizeErrorMessage(error) {
+    var text = "";
+
+    try {
+        text = "" + error;
+    } catch (e) {
+        text = "unknown";
+    }
+
+    text = text.replace(/\r/g, " ").replace(/\n/g, " ").replace(/\t/g, " ");
+    if (text.length > 180) text = text.substring(0, 180);
+    return text;
+}
+
 function applyBossBarColor(npc, colorName) {
     if (colorName == null || colorName == "") return;
 
@@ -790,7 +982,9 @@ function stopCombatForDeath(npc) {
 
 function restartDeathTimer(npc) {
     try {
-        npc.timers.forceStart(1, getCfgInt(npc, "arceus_death_timer_ticks", 1), true);
+        var ticks = getCfgInt(npc, "arceus_death_timer_ticks", 1);
+        if (ticks < 1) ticks = 1;
+        npc.timers.forceStart(ARCEUS_DEATH_TIMER_ID, ticks, true);
     } catch (e) {}
 }
 

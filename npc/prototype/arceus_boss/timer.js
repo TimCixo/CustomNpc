@@ -1,4 +1,5 @@
 var ARCEUS_TIMER_ID = 1;
+var ARCEUS_DEATH_TIMER_ID = 2;
 var Reward_PokemonProperties = Java.type("com.cobblemon.mod.common.api.pokemon.PokemonProperties");
 var Reward_IVs = Java.type("com.cobblemon.mod.common.pokemon.IVs");
 var Reward_Stats = Java.type("com.cobblemon.mod.common.api.pokemon.stats.Stats");
@@ -29,23 +30,77 @@ var NORMAL_REWARD_POOL = null;
 var REWARD_POOLS_ATTEMPTED = false;
 
 function timer(event) {
-    if (event.id != ARCEUS_TIMER_ID) return;
+    try {
+        timerCore(event);
+    } catch (e) {
+        var timerId = "-";
+        try {
+            timerId = "" + event.id;
+        } catch (e0) {}
 
+        recordScriptErrorFromEvent(event, "timer:" + timerId, e);
+
+        try {
+            var npc = event.npc;
+            var data = npc.getStoreddata();
+            if (data.get("arceus_dying") == "1" || data.get("arceus_death_request") == "1") {
+                restartDeathTimer(npc);
+            }
+        } catch (e1) {}
+    }
+}
+
+function timerCore(event) {
     var npc = event.npc;
     var data = npc.getStoreddata();
+    var isMainTimer = event.id == ARCEUS_TIMER_ID;
+    var isDeathTimer = event.id == ARCEUS_DEATH_TIMER_ID;
+
+    if (!isMainTimer && !isDeathTimer) return;
 
     if (data.get("arceus_enabled") != "1") return;
-    if (isNpcActuallyDead(npc)) {
-        handleCommittedDeath(npc);
+
+    if (isDeathTimer) {
+        if (isNpcActuallyDead(npc)) {
+            handleUnexpectedDeathDuringCustomFlow(npc);
+            return;
+        }
+
+        if (data.get("arceus_death_request") == "1") {
+            beginCustomDeathFromRequest(npc);
+            return;
+        }
+
+        if (data.get("arceus_dying") != "1"
+            && data.get("arceus_death_request") != "1"
+            && data.get("arceus_death_committing") != "1") {
+            stopDeathTimer(npc);
+            return;
+        }
+
+        tickCustomDeath(npc);
         return;
     }
+
+    if (isNpcActuallyDead(npc)) {
+        handleUnexpectedDeathDuringCustomFlow(npc);
+        return;
+    }
+
+    if (data.get("arceus_death_request") == "1") {
+        beginCustomDeathFromRequest(npc);
+        return;
+    }
+
+    normalizeLiveDeathState(npc);
+    processRespawnVisualReset(npc);
 
     warmRewardPools();
     processPendingPhaseStart(npc);
     processDeferredPhaseEffects(npc);
 
     if (data.get("arceus_dying") == "1") {
-        tickCustomDeath(npc);
+        restartDeathTimer(npc);
         return;
     }
 
@@ -61,6 +116,7 @@ function tickTransition(npc) {
     var left = parseIntSafe(data.get("arceus_transition_ticks_left"), 0);
 
     if (left <= 0) return false;
+    setEntityInvulnerable(npc, true);
     stopTransitionCombat(npc);
 
     left -= getCfgInt(npc, "arceus_timer_ticks", 5);
@@ -68,6 +124,8 @@ function tickTransition(npc) {
     data.put("arceus_transition_ticks_left", "" + left);
 
     if (left == 0) {
+        setEntityInvulnerable(npc, false);
+        clearEntityDamageVisuals(npc);
         var phase = parseIntSafe(data.get("arceus_phase"), 1);
         if (phase == 2) {
             safeSay(npc, "§eВторая стадия началась. Аркеус восстанавливает силы в бою.");
@@ -94,6 +152,9 @@ function processPendingPhaseStart(npc) {
     }
 
     applyPhaseMeleeDelay(npc, phase);
+    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
+        setEntityInvulnerable(npc, true);
+    }
 }
 
 function processDeferredPhaseEffects(npc) {
@@ -301,26 +362,108 @@ function tickForcedDeathStart(npc) {
 
 function getArceusDeathThresholdHp(npc) {
     var maxHp = readNpcMaxHealth(npc);
-    if (maxHp <= 0) return 0.5;
-    return 0.5;
+    var percent = getCfgFloat(npc, "arceus_custom_death_threshold_percent", 0.02);
+    var minHp = getCfgFloat(npc, "arceus_custom_death_threshold_min_hp", 20);
+
+    if (percent < 0) percent = 0;
+    if (minHp < 1) minHp = 1;
+    if (maxHp <= 0) return minHp;
+
+    var threshold = maxHp * percent;
+    if (threshold < minHp) threshold = minHp;
+    if (threshold < 1) threshold = 1;
+    return threshold;
+}
+
+function getCustomDeathTicks(npc) {
+    var value = getCfgInt(npc, "arceus_custom_death_ticks", 80);
+    if (value < 40) return 40;
+    return value;
 }
 
 function startCustomDeathFromTimer(npc) {
-    var data = npc.getStoreddata();
-    if (data.get("arceus_dying") == "1") return;
+    armCustomDeathRequest(npc, "timer");
+    beginCustomDeathFromRequest(npc);
+}
 
+function armCustomDeathRequest(npc, source) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_death_committing") == "1") return;
+
+    var threshold = getArceusDeathThresholdHp(npc);
+    data.put("arceus_death_lock", "1");
+    data.put("arceus_death_request", "1");
+    data.put("arceus_death_request_source", source == null ? "timer" : ("" + source));
+    data.put("arceus_death_request_hp", formatDamage(readNpcHealth(npc)));
+    data.put("arceus_death_request_threshold_hp", formatDamage(threshold));
+    data.put("arceus_death_committing", "0");
+    data.put("arceus_transition_ticks_left", "0");
+    data.put("arceus_phase_start_pending", "0");
+    data.put("arceus_phase_effects_pending", "0");
+
+    forceDeathSafeHealthFloor(npc);
+    setEntityInvulnerable(npc, true);
+    stopCombatForDeath(npc);
+    restartDeathTimer(npc);
+}
+
+function beginCustomDeathFromRequest(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_death_committing") == "1") return;
+
+    if (data.get("arceus_dying") == "1") {
+        data.put("arceus_death_request", "0");
+        restartDeathTimer(npc);
+        return;
+    }
+
+    var source = "" + data.get("arceus_death_request_source");
+    if (!hasText(source) || source == "null") source = "timer";
+
+    data.put("arceus_death_lock", "1");
+    markCustomDeathStart(npc, source);
+    applyDeathRequestDebugSnapshot(npc);
+    data.put("arceus_death_request", "0");
     data.put("arceus_dying", "1");
-    data.put("arceus_death_ticks_left", "" + getCfgInt(npc, "arceus_custom_death_ticks", 80));
+    data.put("arceus_death_ticks_left", "" + getCustomDeathTicks(npc));
     data.put("arceus_death_line_stage", "0");
     data.put("arceus_death_anim_started", "0");
     data.put("arceus_death_finalized", "0");
     data.put("arceus_death_committing", "0");
+    data.put("arceus_transition_ticks_left", "0");
+    data.put("arceus_phase_start_pending", "0");
+    data.put("arceus_phase_effects_pending", "0");
+    data.put("arceus_damage_top_shown", "0");
+    data.put("arceus_rewards_given", "0");
+    resetRewardQueueState(data);
 
-    forceHealthFloor(npc);
+    forceDeathSafeHealthFloor(npc);
+    setEntityInvulnerable(npc, true);
     stopCombatForDeath(npc);
     restartDeathTimer(npc);
     playConfiguredDeathSound(npc);
     safeSay(npc, "§5Аркеус не падает. Он начинает собственную смерть.");
+}
+
+function applyDeathRequestDebugSnapshot(npc) {
+    var data = npc.getStoreddata();
+    var hp = "" + data.get("arceus_death_request_hp");
+    var threshold = "" + data.get("arceus_death_request_threshold_hp");
+
+    if (hasText(hp) && hp != "null") {
+        data.put("arceus_dbg_death_start_hp", hp);
+    }
+
+    if (hasText(threshold) && threshold != "null") {
+        data.put("arceus_dbg_death_threshold_hp", threshold);
+    }
+}
+
+function clearDeathRequestState(data) {
+    data.put("arceus_death_request", "0");
+    data.put("arceus_death_request_source", "-");
+    data.put("arceus_death_request_hp", "0");
+    data.put("arceus_death_request_threshold_hp", "0");
 }
 
 function tickRecentAggro(npc) {
@@ -431,19 +574,23 @@ function resolveAggroPlayer(npc, uuid, name, players) {
 
 function tickCustomDeath(npc) {
     var data = npc.getStoreddata();
-    var timerTicks = getCfgInt(npc, "arceus_timer_ticks", 5);
+    var timerTicks = getCfgInt(npc, "arceus_death_timer_ticks", 1);
+    if (timerTicks < 1) timerTicks = 1;
     var left = parseIntSafe(data.get("arceus_death_ticks_left"), 0);
-    var total = getCfgInt(npc, "arceus_custom_death_ticks", 80);
+    var total = getCustomDeathTicks(npc);
     var lineStage = parseIntSafe(data.get("arceus_death_line_stage"), 0);
     var finalized = data.get("arceus_death_finalized") == "1";
 
-    if (!finalized) {
-        forceHealthFloor(npc);
+    if (!finalized || data.get("arceus_rewards_given") != "1") {
+        forceDeathSafeHealthFloor(npc);
+        setEntityInvulnerable(npc, true);
     }
     tickDeathSpin(npc);
 
     if (!finalized && lineStage < 1) {
-        announceDamageTop(npc);
+        try {
+            announceDamageTop(npc);
+        } catch (e0) {}
         data.put("arceus_death_line_stage", "1");
     } else if (!finalized && lineStage < 2 && left <= Math.floor(total / 2)) {
         safeSay(npc, "§5Мир дрожит. Аркеус исчезает по собственной воле.");
@@ -464,15 +611,23 @@ function tickCustomDeath(npc) {
         data.put("arceus_death_line_stage", "2");
         data.put("arceus_death_anim_started", "1");
         data.put("arceus_death_finalized", "1");
-        data.put("arceus_death_committing", "1");
         prepareNpcForDeathCommit(npc);
-        awardDamageTop(npc);
-        spawnDeathExplosion(npc);
-        moveNpcBelowArena(npc);
+        try {
+            spawnDeathExplosion(npc);
+        } catch (e2) {}
+        try {
+            moveNpcBelowArena(npc);
+        } catch (e3) {}
         safeSay(npc, "§8Аркеус пал.");
     }
 
     prepareNpcForDeathCommit(npc);
+    if (!processRewardQueue(npc)) {
+        setEntityInvulnerable(npc, true);
+        return;
+    }
+
+    data.put("arceus_death_committing", "1");
     killNpcForRespawn(npc);
 }
 
@@ -578,6 +733,23 @@ function disableBossBar(npc) {
     } catch (e2) {}
 }
 
+function ensureBossBarEnabled(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossbar) {
+            if (npc.getDisplay().getBossbar && npc.getDisplay().getBossbar() == 1) return;
+            npc.getDisplay().setBossbar(1);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display && npc.display.setBossbar) {
+            npc.display.setBossbar(1);
+            return;
+        }
+    } catch (e2) {}
+}
+
 function applyBossBarColor(npc, colorName) {
     if (colorName == null || colorName == "") return;
 
@@ -621,6 +793,48 @@ function hideBodyNow(npc) {
     try {
         if (npc.display) {
             npc.display.setVisible(1);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restoreVisibleBody(npc) {
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            npc.getDisplay().setVisible(0);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            npc.display.setVisible(0);
+            return;
+        }
+    } catch (e2) {}
+}
+
+function restoreNameplate(npc) {
+    var title = "" + npc.getStoreddata().get("arceus_base_title");
+    if (title == null || title == "null") title = "";
+
+    try {
+        if (npc.getDisplay && npc.getDisplay()) {
+            var display = npc.getDisplay();
+            if (display.setTitle) display.setTitle(title);
+            if (display.setShowName) display.setShowName(0);
+            if (display.setNameVisible) display.setNameVisible(true);
+            if (display.setShowNameplate) display.setShowNameplate(true);
+            return;
+        }
+    } catch (e) {}
+
+    try {
+        if (npc.display) {
+            if (npc.display.setTitle) npc.display.setTitle(title);
+            if (npc.display.setShowName) npc.display.setShowName(0);
+            if (npc.display.setNameVisible) npc.display.setNameVisible(true);
+            if (npc.display.setShowNameplate) npc.display.setShowNameplate(true);
             return;
         }
     } catch (e2) {}
@@ -686,7 +900,8 @@ function announceDamageTop(npc) {
     if (data.get("arceus_damage_top_shown") == "1") return;
     data.put("arceus_damage_top_shown", "1");
 
-    var entries = collectDamageEntries(npc);
+    ensureRewardSnapshot(npc);
+    var entries = getRewardSnapshotEntries(npc);
     if (entries.length <= 0) return;
 
     safeSay(npc, "§6Топ по урону по Аркеусу:");
@@ -699,22 +914,157 @@ function announceDamageTop(npc) {
 }
 
 function awardDamageTop(npc) {
+    processRewardQueue(npc);
+}
+
+function ensureRewardSnapshot(npc) {
     var data = npc.getStoreddata();
-    if (data.get("arceus_rewards_given") == "1") return;
-    data.put("arceus_rewards_given", "1");
+    if (hasText(data.get("arceus_reward_snapshot_raw"))) return;
+
+    clearRewardSnapshotEntries(data);
 
     var entries = collectDamageEntries(npc);
-    if (entries.length <= 0) return;
-    ensureRewardPoolsLoaded(npc);
     var players = getOnlinePlayers(npc);
+    var resolved = [];
+    var unresolvedCount = 0;
 
     for (var i = 0; i < entries.length; i++) {
         var player = resolveRewardPlayer(npc, entries[i], players);
-        if (player == null) continue;
+        if (player == null) {
+            unresolvedCount++;
+            continue;
+        }
 
-        var ivs = getRewardIvStringForPlace(i);
-        var species = pickRewardSpeciesForPlace(i);
-        giveRewardPokemon(player, species, ivs);
+        resolved.push(entries[i]);
+    }
+
+    for (var j = 0; j < resolved.length; j++) {
+        data.put("arceus_reward_entry_" + j, serializeRewardEntry(resolved[j]));
+    }
+
+    data.put("arceus_reward_snapshot_raw", "1");
+    data.put("arceus_reward_queue_index", "0");
+    data.put("arceus_reward_queue_size", "" + resolved.length);
+    data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_dbg_damage_entry_count", "" + entries.length);
+    data.put("arceus_dbg_resolved_entry_count", "" + resolved.length);
+    data.put("arceus_dbg_unresolved_entry_count", "" + unresolvedCount);
+}
+
+function getRewardSnapshotEntries(npc) {
+    ensureRewardSnapshot(npc);
+
+    var data = npc.getStoreddata();
+    var size = parseIntSafe(data.get("arceus_reward_queue_size"), 0);
+    var entries = [];
+
+    for (var i = 0; i < size; i++) {
+        var entry = parseRewardEntry(data.get("arceus_reward_entry_" + i));
+        if (entry != null) entries.push(entry);
+    }
+
+    return entries;
+}
+
+function processRewardQueue(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_rewards_given") == "1") return true;
+
+    ensureRewardSnapshot(npc);
+    ensureRewardPoolsLoaded(npc);
+
+    var size = parseIntSafe(data.get("arceus_reward_queue_size"), 0);
+    var index = parseIntSafe(data.get("arceus_reward_queue_index"), 0);
+
+    if (size <= 0 || index >= size) {
+        data.put("arceus_rewards_given", "1");
+        data.put("arceus_reward_queue_index", "" + size);
+        return true;
+    }
+
+    var batchSize = getRewardBatchSize(npc);
+    var players = getOnlinePlayers(npc);
+    var processed = 0;
+
+    while (index < size && processed < batchSize) {
+        var entry = parseRewardEntry(data.get("arceus_reward_entry_" + index));
+        if (entry != null) {
+            var player = resolveRewardPlayer(npc, entry, players);
+            if (player != null) {
+                var ivs = getRewardIvStringForPlace(index);
+                var species = pickRewardSpeciesForPlace(index);
+                giveRewardPokemon(player, species, ivs);
+            }
+        }
+
+        index++;
+        processed++;
+    }
+
+    data.put("arceus_reward_queue_index", "" + index);
+    data.put("arceus_reward_finalize_ticks", "" + (parseIntSafe(data.get("arceus_reward_finalize_ticks"), 0) + 1));
+
+    if (index >= size) {
+        data.put("arceus_rewards_given", "1");
+        return true;
+    }
+
+    return false;
+}
+
+function getRewardBatchSize(npc) {
+    var value = getCfgInt(npc, "arceus_reward_batch_size", 1);
+    if (value < 1) return 1;
+    if (value > 2) return 2;
+    return value;
+}
+
+function serializeRewardEntry(entry) {
+    if (entry == null) return "";
+    return sanitizeRewardToken(entry.uuid) + "\t"
+        + sanitizeRewardToken(entry.name) + "\t"
+        + formatDamage(entry.damage);
+}
+
+function parseRewardEntry(raw) {
+    var text = raw == null || raw == "null" ? "" : ("" + raw);
+    if (text.length <= 0) return null;
+
+    var parts = text.split("\t");
+    if (parts.length < 3) return null;
+
+    return {
+        uuid: parts[0],
+        name: parts[1],
+        damage: parseFloatSafe(parts[2], 0)
+    };
+}
+
+function sanitizeRewardToken(value) {
+    var text = value == null || value == "null" ? "" : ("" + value);
+    return text.replace(/\t/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
+}
+
+function resetRewardQueueState(data) {
+    data.put("arceus_reward_snapshot_raw", "");
+    data.put("arceus_reward_queue_index", "0");
+    data.put("arceus_reward_queue_size", "0");
+    data.put("arceus_reward_finalize_ticks", "0");
+    data.put("arceus_dbg_damage_entry_count", "0");
+    data.put("arceus_dbg_resolved_entry_count", "0");
+    data.put("arceus_dbg_unresolved_entry_count", "0");
+    clearRewardSnapshotEntries(data);
+}
+
+function clearRewardSnapshotEntries(data) {
+    var keys = data.getKeys();
+    if (keys == null) return;
+
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_reward_entry_") === 0) {
+            data.remove(key);
+        }
     }
 }
 
@@ -763,7 +1113,9 @@ function getPhaseMeleeDelayMultiplier(npc, phase) {
 
 function restartDeathTimer(npc) {
     try {
-        npc.timers.forceStart(ARCEUS_TIMER_ID, getCfgInt(npc, "arceus_death_timer_ticks", 1), true);
+        var ticks = getCfgInt(npc, "arceus_death_timer_ticks", 1);
+        if (ticks < 1) ticks = 1;
+        npc.timers.forceStart(ARCEUS_DEATH_TIMER_ID, ticks, true);
     } catch (e) {}
 }
 
@@ -773,10 +1125,18 @@ function stopBossTimer(npc) {
     } catch (e) {}
 }
 
+function stopDeathTimer(npc) {
+    try {
+        npc.timers.stop(ARCEUS_DEATH_TIMER_ID);
+    } catch (e) {}
+}
+
 function killNpcForRespawn(npc) {
     try {
         npc.getStoreddata().put("arceus_death_committing", "1");
     } catch (e00) {}
+
+    armRespawnVisualReset(npc);
 
     if (damageNpcWithCommand(npc)) return;
 
@@ -838,9 +1198,57 @@ function prepareNpcForDeathCommit(npc) {
         npc.getMCEntity().hurtDuration = 0;
     } catch (e5) {}
 
+}
+
+function setEntityInvulnerable(npc, enabled) {
+    try {
+        npc.getMCEntity().setInvulnerable(enabled ? true : false);
+    } catch (e) {}
+}
+
+function clearEntityDamageVisuals(npc) {
+    try {
+        npc.getMCEntity().invulnerableTime = 0;
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().hurtTime = 0;
+    } catch (e2) {}
+
+    try {
+        npc.getMCEntity().hurtDuration = 0;
+    } catch (e3) {}
+
     try {
         npc.getMCEntity().deathTime = 0;
-    } catch (e6) {}
+    } catch (e4) {}
+}
+
+function setNoAiState(npc, enabled) {
+    try {
+        npc.getMCEntity().setNoAi(enabled ? true : false);
+    } catch (e) {}
+}
+
+function resetLiveVisualState(npc) {
+    ensureHideDeadBody(npc);
+    setNoAiState(npc, false);
+    setEntityInvulnerable(npc, false);
+    clearEntityDamageVisuals(npc);
+    ensureBossBarEnabled(npc);
+    applyBossBarColor(npc, "white");
+    restoreNameplate(npc);
+    restoreVisibleBody(npc);
+    updateNpcClient(npc);
+}
+
+function markCustomDeathStart(npc, source) {
+    var data = npc.getStoreddata();
+    var threshold = getArceusDeathThresholdHp(npc);
+
+    data.put("arceus_dbg_death_start_source", source == null ? "-" : ("" + source));
+    data.put("arceus_dbg_death_start_hp", formatDamage(readNpcHealth(npc)));
+    data.put("arceus_dbg_death_threshold_hp", formatDamage(threshold));
 }
 
 function moveNpcBelowArena(npc) {
@@ -874,7 +1282,8 @@ function damageNpcWithCommand(npc) {
     var command = "execute positioned " + x + " " + y + " " + z
         + " run damage " + selector + " 1000000 minecraft:generic_kill";
 
-    return runServerCommand(npc, command);
+    if (!runServerCommand(npc, command)) return false;
+    return isNpcActuallyDead(npc);
 }
 
 function getNpcEntityTypeId(npc) {
@@ -925,9 +1334,129 @@ function handleCommittedDeath(npc) {
     var data = npc.getStoreddata();
     if (data.get("arceus_death_committing") != "1") return;
 
+    armRespawnVisualReset(npc);
     data.put("arceus_dying", "0");
     data.put("arceus_death_committing", "0");
+    data.put("arceus_death_lock", "0");
+    clearDeathRequestState(data);
+    clearDamageContributors(data);
+    resetRewardQueueState(data);
+    stopDeathTimer(npc);
     stopBossTimer(npc);
+}
+
+function handleUnexpectedDeathDuringCustomFlow(npc) {
+    var data = npc.getStoreddata();
+    var rewardsGiven = data.get("arceus_rewards_given") == "1";
+
+    if (data.get("arceus_death_committing") == "1" && rewardsGiven) {
+        handleCommittedDeath(npc);
+        return;
+    }
+
+    var phase = parseIntSafe(data.get("arceus_phase"), 1);
+    var shouldRecover = data.get("arceus_dying") == "1"
+        || data.get("arceus_death_lock") == "1"
+        || data.get("arceus_death_request") == "1"
+        || data.get("arceus_death_committing") == "1"
+        || (phase >= 3 && !rewardsGiven);
+
+    if (!shouldRecover) {
+        handleCommittedDeath(npc);
+        return;
+    }
+
+    armRespawnVisualReset(npc);
+    data.put("arceus_dying", "1");
+    data.put("arceus_death_lock", "1");
+    data.put("arceus_death_ticks_left", "0");
+    data.put("arceus_death_finalized", "1");
+    markCustomDeathStart(npc, "recovery");
+
+    if (data.get("arceus_damage_top_shown") != "1") {
+        try {
+            announceDamageTop(npc);
+        } catch (e0) {}
+    }
+
+    if (!processRewardQueue(npc)) {
+        restartDeathTimer(npc);
+        return;
+    }
+
+    data.put("arceus_death_committing", "1");
+    handleCommittedDeath(npc);
+}
+
+function normalizeLiveDeathState(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_dying") == "1") return;
+    if (data.get("arceus_death_committing") == "1") return;
+    if (data.get("arceus_death_request") == "1") return;
+
+    if (data.get("arceus_death_lock") == "1") {
+        data.put("arceus_death_lock", "0");
+    }
+
+    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) <= 0) {
+        setEntityInvulnerable(npc, false);
+    }
+}
+
+function armRespawnVisualReset(npc) {
+    var data = npc.getStoreddata();
+    var ticks = getCfgInt(npc, "arceus_respawn_visual_reset_ticks", 20);
+    if (ticks < 1) ticks = 1;
+
+    data.put("arceus_respawn_visual_reset_pending", "1");
+    data.put("arceus_respawn_visual_reset_ticks_left", "" + ticks);
+}
+
+function processRespawnVisualReset(npc) {
+    var data = npc.getStoreddata();
+    if (data.get("arceus_respawn_visual_reset_pending") != "1") return;
+    if (data.get("arceus_dying") == "1") return;
+    if (data.get("arceus_death_committing") == "1") return;
+
+    if (parseIntSafe(data.get("arceus_phase"), 1) != 1
+        || parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
+        data.put("arceus_respawn_visual_reset_pending", "0");
+        data.put("arceus_respawn_visual_reset_ticks_left", "0");
+        return;
+    }
+
+    resetLiveVisualState(npc);
+
+    var left = parseIntSafe(
+        data.get("arceus_respawn_visual_reset_ticks_left"),
+        getCfgInt(npc, "arceus_respawn_visual_reset_ticks", 20)
+    );
+    left -= getCfgInt(npc, "arceus_timer_ticks", 5);
+
+    if (left <= 0) {
+        data.put("arceus_respawn_visual_reset_pending", "0");
+        data.put("arceus_respawn_visual_reset_ticks_left", "0");
+        return;
+    }
+
+    data.put("arceus_respawn_visual_reset_ticks_left", "" + left);
+}
+
+function clearDamageContributors(data) {
+    var keys = data.getKeys();
+    if (keys == null) return;
+
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_dmg_") === 0
+            || key.indexOf("arceus_dmg_name_") === 0
+            || key.indexOf("arceus_recent_hits_") === 0
+            || key.indexOf("arceus_recent_name_") === 0
+            || key.indexOf("arceus_godmode_disabled_") === 0
+            || key.indexOf("arceus_reward_entry_") === 0) {
+            data.remove(key);
+        }
+    }
 }
 
 function ensureRewardPoolsLoaded(npc) {
@@ -1348,6 +1877,17 @@ function forceHealthFloor(npc) {
     } catch (e) {}
 }
 
+function forceDeathSafeHealthFloor(npc) {
+    var floor = getArceusDeathThresholdHp(npc);
+    if (floor < 1) floor = 1;
+
+    try {
+        if (npc.getHealth() < floor) {
+            npc.setHealth(floor);
+        }
+    } catch (e) {}
+}
+
 function readNpcHealth(npc) {
     try {
         return npc.getHealth();
@@ -1368,6 +1908,36 @@ function safeSay(npc, text) {
     try {
         npc.say(text);
     } catch (e) {}
+}
+
+function recordScriptErrorFromEvent(event, hook, error) {
+    try {
+        if (event != null && event.npc != null) {
+            recordScriptError(event.npc, hook, error);
+        }
+    } catch (e) {}
+}
+
+function recordScriptError(npc, hook, error) {
+    try {
+        var data = npc.getStoreddata();
+        data.put("arceus_dbg_last_error_hook", hook == null ? "-" : ("" + hook));
+        data.put("arceus_dbg_last_error_message", sanitizeErrorMessage(error));
+    } catch (e) {}
+}
+
+function sanitizeErrorMessage(error) {
+    var text = "";
+
+    try {
+        text = "" + error;
+    } catch (e) {
+        text = "unknown";
+    }
+
+    text = text.replace(/\r/g, " ").replace(/\n/g, " ").replace(/\t/g, " ");
+    if (text.length > 180) text = text.substring(0, 180);
+    return text;
 }
 
 function getCfgInt(npc, key, def) {
