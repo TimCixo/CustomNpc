@@ -1,6 +1,6 @@
 var ARCEUS_TIMER_ID = 1;
 var ARCEUS_DEATH_TIMER_ID = 2;
-var ARCEUS_CONFIG_VERSION = 8;
+var ARCEUS_CONFIG_VERSION = 9;
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
@@ -47,8 +47,12 @@ function init(event) {
     putDefault(npc, "arceus_pinata_speed_max", "0.55");
     putDefault(npc, "arceus_pinata_vertical_boost", "0.28");
     putDefault(npc, "arceus_phase2_pinata_item", "cobblemon:rare_candy");
-    putDefault(npc, "arceus_phase2_total_drops", "32");
-    putDefault(npc, "arceus_phase3_total_drops", "12");
+    putDefault(npc, "arceus_phase2_total_drops_base", "8");
+    putDefault(npc, "arceus_phase2_total_drops_per_extra_player", "4");
+    putDefault(npc, "arceus_phase2_total_drops_max", "24");
+    putDefault(npc, "arceus_phase3_total_drops_base", "3");
+    putDefault(npc, "arceus_phase3_total_drops_per_extra_player", "2");
+    putDefault(npc, "arceus_phase3_total_drops_max", "12");
     putDefault(npc, "arceus_stage2_sound", "cobblemon:pokemon.arceus.cry");
     putDefault(npc, "arceus_stage3_sound", "cobblemon:pokemon.arceus.cry");
     putDefault(npc, "arceus_death_sound", "cobblemon:pokemon.arceus.cry");
@@ -91,6 +95,15 @@ function migrateConfig(npc) {
 
     if (version < 8) {
         migrateLegacyPhaseAttackDelays(npc);
+    }
+
+    if (version < 9) {
+        data.put("arceus_phase2_total_drops_base", "8");
+        data.put("arceus_phase2_total_drops_per_extra_player", "4");
+        data.put("arceus_phase2_total_drops_max", "24");
+        data.put("arceus_phase3_total_drops_base", "3");
+        data.put("arceus_phase3_total_drops_per_extra_player", "2");
+        data.put("arceus_phase3_total_drops_max", "12");
     }
 
     data.put("arceus_config_version", "" + ARCEUS_CONFIG_VERSION);

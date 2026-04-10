@@ -344,8 +344,49 @@ function getDropsEarnedByHp(stageStartHp, stageEndHp, hpNow, totalDrops) {
 }
 
 function getStageTotalDrops(npc, phase) {
-    if (phase == 2) return getCfgInt(npc, "arceus_phase2_total_drops", 32);
-    return getCfgInt(npc, "arceus_phase3_total_drops", 12);
+    var prefix = phase == 2 ? "arceus_phase2_total_drops" : "arceus_phase3_total_drops";
+    var fallbackBase = phase == 2 ? 8 : 3;
+    var fallbackPerExtra = phase == 2 ? 4 : 2;
+    var fallbackMax = phase == 2 ? 24 : 12;
+    var participants = getDamageParticipantCount(npc);
+    var base = getCfgInt(npc, prefix + "_base", fallbackBase);
+    var perExtra = getCfgInt(npc, prefix + "_per_extra_player", fallbackPerExtra);
+    var max = getCfgInt(npc, prefix + "_max", fallbackMax);
+    var total = base + perExtra * Math.max(0, participants - 1);
+
+    if (max > 0 && total > max) total = max;
+    if (total < 0) total = 0;
+    return total;
+}
+
+function getDamageParticipantCount(npc) {
+    var data = npc.getStoreddata();
+    var keys = data.getKeys();
+    if (keys == null || keys.length <= 0) return 1;
+
+    var count = 0;
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_dmg_") !== 0) continue;
+        if (key.indexOf("arceus_dmg_name_") === 0) continue;
+        if (parseFloatSafe(data.get(key), 0) <= 0) continue;
+        if (!isDamageParticipantPlayer(npc, key.substring("arceus_dmg_".length))) continue;
+        count++;
+    }
+
+    return count <= 0 ? 1 : count;
+}
+
+function isDamageParticipantPlayer(npc, uuid) {
+    if (!hasText(uuid)) return false;
+    if (findPlayerByUuid(npc, uuid) != null) return true;
+
+    try {
+        var name = "" + npc.getStoreddata().get("arceus_dmg_name_" + uuid);
+        return hasText(name) && npc.getWorld().getPlayer(name) != null;
+    } catch (e) {
+        return false;
+    }
 }
 
 function getStageDropsGiven(npc, phase) {

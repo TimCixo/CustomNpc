@@ -1682,32 +1682,33 @@ function pickRewardSpeciesForPlace(placeIndex) {
     var roll = Math.random() * 100;
 
     if (placeIndex == 0) {
-        if (roll < 80) return pickRandomSpecies(LEGENDARY_REWARD_POOL);
-        return pickRandomSpecies(MYTHICAL_REWARD_POOL);
-    }
-
-    if (placeIndex == 1) {
-        if (roll < 80) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
-        return pickRandomSpecies(LEGENDARY_REWARD_POOL);
-    }
-
-    if (placeIndex == 2) {
-        if (roll < 60) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+        if (roll < 50) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
         if (roll < 85) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
         return pickRandomSpecies(LEGENDARY_REWARD_POOL);
     }
 
-    if (roll < 80) return pickRandomSpecies(NORMAL_REWARD_POOL);
-    if (roll < 95) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
-    if (roll < 98) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
-    return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+    if (placeIndex == 1) {
+        if (roll < 70) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+        if (roll < 95) return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+        return pickRandomSpecies(LEGENDARY_REWARD_POOL);
+    }
+
+    if (placeIndex == 2) {
+        if (roll < 70) return pickRandomSpecies(NORMAL_REWARD_POOL);
+        if (roll < 95) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+        return pickRandomSpecies(MYTHICAL_REWARD_POOL);
+    }
+
+    if (roll < 85) return pickRandomSpecies(NORMAL_REWARD_POOL);
+    if (roll < 99) return pickRandomSpecies(SUPER_RARE_REWARD_POOL);
+    return pickRandomSpecies(MYTHICAL_REWARD_POOL);
 }
 
 function getRewardIvStringForPlace(placeIndex) {
-    if (placeIndex == 0) return "31/31/31/31/31/31";
-    if (placeIndex == 1) return rollIvRangeString(24, 31);
+    if (placeIndex == 0) return rollIvRangeString(25, 31);
+    if (placeIndex == 1) return rollIvRangeString(20, 28);
     if (placeIndex == 2) return rollIvRangeString(15, 24);
-    return rollIvRangeString(15, 24);
+    return rollIvRangeString(10, 22);
 }
 
 function rollIvRangeString(min, max) {
