@@ -56,16 +56,20 @@ function damagedCore(event) {
     if (state == "death_commit") return;
 
     if (state == "phase_transition") {
+        writeDamage(event, 0);
         cancelDamage(event);
         forcePhaseTransitionHealthFloor(npc);
         setEntityInvulnerable(npc, true);
+        clearEntityDamageVisuals(npc);
         return;
     }
 
     if (state != "live") {
+        writeDamage(event, 0);
         cancelDamage(event);
         forceDeathSafeHealthFloor(npc);
         setEntityInvulnerable(npc, true);
+        clearEntityDamageVisuals(npc);
         return;
     }
 
@@ -78,9 +82,11 @@ function damagedCore(event) {
 
     if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
         setArceusState(npc, "phase_transition");
+        writeDamage(event, 0);
         cancelDamage(event);
         forcePhaseTransitionHealthFloor(npc);
         setEntityInvulnerable(npc, true);
+        clearEntityDamageVisuals(npc);
         return;
     }
 
@@ -94,8 +100,10 @@ function damagedCore(event) {
     }
 
     if (currentPhase >= 3 && currentHp <= deathThreshold) {
+        writeDamage(event, 0);
         armCustomDeathLock(npc);
         cancelDamage(event);
+        setEntityInvulnerable(npc, true);
         forceDeathSafeHealthFloor(npc);
         dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
         requestCustomDeath(event, npc, "damaged");
@@ -103,7 +111,9 @@ function damagedCore(event) {
     }
 
     if (currentPhase <= 1 && hpAfterHit <= phase2Threshold) {
+        writeDamage(event, 0);
         cancelDamage(event);
+        setEntityInvulnerable(npc, true);
         enterPhase(
             npc,
             2,
@@ -116,7 +126,9 @@ function damagedCore(event) {
     }
 
     if (currentPhase == 2 && hpAfterHit <= phase3Threshold) {
+        writeDamage(event, 0);
         cancelDamage(event);
+        setEntityInvulnerable(npc, true);
         var phase2DropCount = getStageDropCountToThreshold(npc, 2, currentHp, phase3Threshold, maxHp);
         enterPhase(
             npc,
@@ -131,8 +143,10 @@ function damagedCore(event) {
     }
 
     if (currentPhase >= 3 && hpAfterHit <= deathThreshold) {
+        writeDamage(event, 0);
         armCustomDeathLock(npc);
         cancelDamage(event);
+        setEntityInvulnerable(npc, true);
         forceDeathSafeHealthFloor(npc);
         dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
         requestCustomDeath(event, npc, "damaged");
@@ -181,6 +195,7 @@ function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
     setEntityInvulnerable(npc, true);
     setNpcHealthSafe(npc, targetHp);
     forcePhaseTransitionHealthFloor(npc);
+    clearEntityDamageVisuals(npc);
     schedulePhaseEffects(npc, line, bossBarColor, soundKey);
 }
 
@@ -265,6 +280,24 @@ function setEntityInvulnerable(npc, enabled) {
     try {
         npc.getMCEntity().setInvulnerable(enabled ? true : false);
     } catch (e) {}
+}
+
+function clearEntityDamageVisuals(npc) {
+    try {
+        npc.getMCEntity().invulnerableTime = 0;
+    } catch (e) {}
+
+    try {
+        npc.getMCEntity().hurtTime = 0;
+    } catch (e2) {}
+
+    try {
+        npc.getMCEntity().hurtDuration = 0;
+    } catch (e3) {}
+
+    try {
+        npc.getMCEntity().deathTime = 0;
+    } catch (e4) {}
 }
 
 function dropConfiguredItem(npc, itemId, count) {
