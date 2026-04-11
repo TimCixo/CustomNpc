@@ -1,6 +1,6 @@
 ---
 name: customnpcs-custom-item
-description: Build, refactor, and debug custom items for CustomNPCs Unofficial 1.21.1 in this repository. Use when creating scripted items that need a display name, lore for user-facing description, and metadata in CUSTOM_DATA for technical fields such as markers, owner UUIDs, session ids, role ids, or workflow state.
+description: Build, refactor, and debug custom items for CustomNPCs Unofficial 1.21.1 in this repository. Use when creating scripted items that need a display name, lore for user-facing description, metadata in CUSTOM_DATA for technical fields, or runtime item workflows coordinated by tempdata-based controllers.
 ---
 
 # CustomNPCs Custom Item
@@ -8,6 +8,10 @@ description: Build, refactor, and debug custom items for CustomNPCs Unofficial 1
 Use this skill for custom item creation in this repository.
 
 This project targets CustomNPCs Unofficial on Minecraft 1.21.1, where item logic should be built around `MCItemStack` and data components, not older direct NBT helper assumptions.
+
+For runtime controller architecture around item workflows, also read:
+
+- `docs/customnpcs_tempdata_object_notes.md`
 
 ## Item Model
 
@@ -20,7 +24,7 @@ Treat every custom item as three layers:
   - user-facing description or usage notes
   - store in `DataComponents.LORE`
 - metadata
-  - technical fields for scripts
+  - technical durable fields for scripts
   - store in `DataComponents.CUSTOM_DATA`
 
 Do not mix technical metadata into lore unless the user explicitly wants visible debug info.
@@ -33,7 +37,7 @@ Default flow:
    - `BuiltInRegistries.ITEM.get(ResourceLocation.parse(itemId))`
 2. Create `MCItemStack`
 3. Create `CompoundTag`
-4. Put technical fields into the tag
+4. Put technical durable fields into the tag
 5. Set data components:
    - `CUSTOM_DATA`
    - `CUSTOM_NAME`
@@ -55,6 +59,25 @@ Use explicit keys in `CUSTOM_DATA`, for example:
 - `coord_id`
 
 Use string values by default unless there is a strong reason to use another primitive.
+
+## Runtime Workflow Rule
+
+Separate durable item metadata from live workflow logic.
+
+Use:
+
+- `CUSTOM_DATA`
+  - item identity
+  - owner UUIDs
+  - role markers
+  - durable workflow state that belongs to the item itself
+- `tempdata`
+  - live workflow controllers
+  - temporary session objects
+  - runtime validation helpers
+  - orchestration state around an item interaction
+
+Do not try to stuff all runtime orchestration into item metadata if the state only needs to live during the current NPC/player session.
 
 ## Lore Rule
 
@@ -81,7 +104,7 @@ Do not rely on:
 - lore parsing for critical technical state
 - `getItemName()` as a stable item id
 
-For identity and workflow logic, always read `CUSTOM_DATA`.
+For durable identity and workflow logic, always read `CUSTOM_DATA`.
 
 ## Minimal Creation Template
 
@@ -95,7 +118,6 @@ var ItemLore = Java.type("net.minecraft.world.item.component.ItemLore");
 var Component = Java.type("net.minecraft.network.chat.Component");
 var MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
 var CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
-var ArrayList = Java.type("java.util.ArrayList");
 
 function createCustomItem() {
     var itemType = BuiltInRegistries.ITEM.get(ResourceLocation.parse("minecraft:paper"));
@@ -134,8 +156,12 @@ Do not infer workflow state from lore or display name if `CUSTOM_DATA` already e
 
 When items belong to linked NPC workflows, prefer:
 
-- `main` creates and validates the item
-- `sub` writes only its own role-specific metadata into the item
+- `main`
+  - creates and validates the item
+  - may run a runtime controller in `tempdata`
+- `sub`
+  - writes only its own role-specific metadata into the item
+  - may use local runtime helpers in `tempdata`
 
 This keeps ownership clear and avoids ad hoc item mutations.
 
@@ -148,5 +174,6 @@ When a custom item fails, check:
 3. Was the item wrapped through `NpcAPI.Instance().getIItemStack(mcStack)`?
 4. Is the technical check reading `CUSTOM_DATA`, not lore or display name?
 5. Is lore only user-facing text?
+6. Is runtime-only workflow logic incorrectly being persisted into the item instead of handled by a tempdata controller?
 
 If the user asks for implementation, prefer a full ready-to-paste item factory or full script, not partial fragments.

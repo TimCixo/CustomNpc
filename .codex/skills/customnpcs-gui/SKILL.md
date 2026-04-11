@@ -1,6 +1,6 @@
 ---
 name: customnpcs-gui
-description: Build, debug, and refactor scripted CustomNPCs GUI for Minecraft 1.21.1 in this repository. Use this skill when the task involves creating NPC GUI, handling pseudo-buttons, preserving text field values between openings, or avoiding known broken CustomNPCs GUI components in CustomNPCs-Unofficial-NeoForge-1.21.1.20251230.
+description: Build, debug, and refactor scripted CustomNPCs GUI for Minecraft 1.21.1 in this repository. Use this skill when the task involves creating NPC GUI, handling pseudo-buttons, preserving text field values between openings, avoiding known broken GUI components, or structuring GUI session controllers for CustomNPCs Unofficial 1.21.1.
 ---
 
 # CustomNPCs GUI
@@ -9,12 +9,9 @@ Use this skill for scripted GUI work in this repository.
 
 This project targets CustomNPCs Unofficial on Minecraft 1.21.1, where several GUI APIs are present but broken at runtime. Default to the confirmed-safe pattern instead of older button-based examples.
 
-## Use This Skill When
+For runtime object architecture, also read:
 
-- The user wants to create or update a scripted GUI for an NPC.
-- The task needs clickable actions inside GUI.
-- The task needs text fields to survive close and reopen.
-- The task needs debugging for `customGuiScroll`, `customGuiClosed`, or GUI component behavior.
+- `docs/customnpcs_tempdata_object_notes.md`
 
 ## Confirmed Safe Components
 
@@ -48,12 +45,35 @@ If you need the existing helper module, read:
 
 - `modules/gui_scroll_menu.js`
 
+## Data Model
+
+Treat GUI as three layers:
+
+- durable layer
+  - values that must survive close and reopen
+  - keep in `player.getStoreddata()`
+- session runtime layer
+  - live controller object, validators, temporary selection state
+  - keep in `player.getTempdata()` or `npc.getTempdata()` only if the flow really benefits from it
+- view layer
+  - labels, text fields, text areas, scroll components in the GUI itself
+
+Important rule:
+
+- use `storeddata` for values that must survive `customGuiClosed -> next interact`
+- use `tempdata` only for live runtime/session objects during the current GUI flow
+
+Do not reinterpret the new `tempdata` OOP findings as permission to store durable GUI values only in `tempdata`. That was still unreliable for close/reopen persistence in this GUI lifecycle.
+
 ## Recommended Pattern
 
-Treat GUI as two layers:
+Treat GUI as two working layers:
 
-- State layer: `textField` and `textArea`
-- Action layer: `scroll`
+- state layer
+  - `textField`
+  - `textArea`
+- action layer
+  - `scroll`
 
 Use `scroll` as pseudo-buttons.
 
@@ -64,53 +84,56 @@ Workflow:
 3. Add actions through `addScroll(...)`.
 4. In `customGuiScroll(event)`, read the selected action from `scroll.getSelection()[0]`.
 5. Apply GUI-side changes and call `gui.update()`.
-6. In `customGuiClosed(event)`, persist field values to `player.getStoreddata()`.
+6. In `customGuiClosed(event)`, persist durable field values to `player.getStoreddata()`.
 7. When opening again, hydrate fields from `storeddata`.
+
+## Runtime Controller Pattern
+
+If the GUI flow is complex, use a runtime controller object for the current session.
+
+Example responsibilities:
+
+- normalize form input
+- decide available actions
+- compute status/hint text
+- keep transient selection/model state
+
+Keep that controller in `tempdata`, but rebuild it from durable state whenever needed.
+
+Do not let GUI runtime controllers become the only source of truth for values that must survive a close/reopen cycle.
 
 ## Output Template
 
 When the user asks to create a GUI, default to a full ready-to-paste script instead of fragments.
 
-Use this structure unless the repo context requires a narrower change:
+Use this structure unless repo context requires something narrower:
 
-1. Constants:
+1. constants
    - GUI ids
    - component ids
    - storeddata keys
    - action list
-2. `interact(event)`:
+2. `interact(event)`
+   - optionally create/rebuild session controller
    - create the GUI
    - open it
-3. `customGuiScroll(event)`:
+3. `customGuiScroll(event)`
    - validate GUI id and scroll id
    - read `getSelection()[0]`
    - execute action
    - call `gui.update()`
-4. `customGuiClosed(event)`:
+4. `customGuiClosed(event)`
    - read field values
    - persist to `player.getStoreddata()`
-5. `createGui(player)`:
+5. `createGui(player)`
    - build labels, fields, scroll, hint area
    - hydrate from `storeddata`
-6. Small helpers:
-   - `getSelectedIndex(scroll)`
-   - `getText(gui, id)`
-   - `setText(gui, id, text)`
-   - `getSavedValue(player, key, fallback)`
-
-When possible, the generated script should visibly separate:
-
-- layout creation
-- action handling
-- persistence
-- tiny utility helpers
-
-Do not split the first version across multiple files unless the user explicitly wants a reusable module.
+6. small helpers
 
 ## Required Data Rules
 
 - Use `player.getStoreddata()` for values that must survive GUI close and reopen.
-- Do not rely on `player.getTempdata()` for this GUI flow; it did not persist reliably across `customGuiClosed` -> next `interact`.
+- Use `tempdata` only for live GUI/session runtime helpers.
 - Do not store functions or JS objects in `storeddata`.
 
 ## Event Rules
@@ -163,48 +186,6 @@ function customGuiClosed(event) {
 }
 ```
 
-## Default Scaffold Decisions
-
-Unless the user asks for something else, generate GUI with:
-
-- one title label
-- one subtitle label
-- one decorative `addColoredLine(...)`
-- one or two `textField` controls
-- one `scroll` action list
-- one `textArea` or label for status or hint text
-
-Default action semantics:
-
-- first action updates hint text
-- save-like action leaves fields unchanged and just confirms state
-- reset-like action clears fields and updates hint text
-
-Default persistence semantics:
-
-- hydrate fields from `storeddata` in `createGui(player)`
-- save fields in `customGuiClosed(event)`
-- never rely on in-memory JS state between hooks
-
-## When Generating A Full Script
-
-Optimize for repository style:
-
-- plain Nashorn-style JavaScript
-- ASCII by default
-- no speculative API calls
-- no old button-based GUI examples
-- no partial snippets if the user asked for implementation
-
-If a reusable helper already fits, such as `modules/gui_scroll_menu.js`, you may use it. If that would make the script harder to paste into a Script Tab, prefer a self-contained version.
-
-## Implementation Guidance
-
-- If the user asks for code, prefer a full ready-to-paste script.
-- Keep reusable helpers in one place when possible, but remember hook contexts are separate entry points.
-- If a task needs a reusable helper, follow the style of `modules/gui_scroll_menu.js`.
-- If a requested GUI depends on native buttons, item slots, or player inventory, redesign it around `scroll`, labels, and text fields instead of trying to force the broken components.
-
 ## Debugging Checklist
 
 When GUI behavior is wrong, check in this order:
@@ -213,7 +194,8 @@ When GUI behavior is wrong, check in this order:
 2. Is the GUI using only confirmed-safe components?
 3. Is `player.closeGui()` being called before open? Remove it.
 4. Is scroll selection being read from `getSelection()[0]`?
-5. Is state being saved to `storeddata`, not `tempdata`?
-6. Is the code calling `gui.update()` instead of reopening the GUI?
+5. Is durable state being saved to `storeddata`, not only `tempdata`?
+6. If a runtime controller exists, is it being rebuilt or refreshed at the right lifecycle point?
+7. Is the code calling `gui.update()` instead of reopening the GUI?
 
 If the task is about root-cause analysis rather than implementation, read the repo docs before proposing workarounds.

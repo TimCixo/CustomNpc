@@ -1,0 +1,4 @@
+interface:
+  display_name: "CustomNPCs Runtime OOP"
+  short_description: "Runtime OOP for CNPC NPCs"
+  default_prompt: "Use $customnpcs-runtime-oop to design runtime manager, factory, and unit objects in npc.getTempdata()."
