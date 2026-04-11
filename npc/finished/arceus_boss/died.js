@@ -6,8 +6,9 @@ function died(event) {
     var npc = event.npc;
     var data = npc.getStoreddata();
     var state = "" + data.get("arceus_state");
+    var commitConfirmed = data.get("arceus_dbg_death_commit_confirmed") == "1";
 
-    if (state != "death_commit") {
+    if (state != "death_commit" && !commitConfirmed) {
         data.put("arceus_unexpected_died_state", hasText(state) && state != "null" ? state : "-");
         return;
     }

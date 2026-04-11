@@ -147,6 +147,7 @@ function resetBossState(npc) {
     data.put("arceus_reward_wait_ticks", "0");
     data.put("arceus_top_announce_index", "0");
     data.put("arceus_top_announce_done", "0");
+    data.put("arceus_live_snapshot_size", "0");
     data.put("arceus_unexpected_died_state", "-");
     data.put("arceus_pulse_ticks", "0");
     data.put("arceus_phase2_drops_given", "0");
@@ -178,6 +179,11 @@ function resetBossState(npc) {
     data.put("arceus_dbg_death_threshold_hp", "0");
     data.put("arceus_dbg_last_error_hook", "-");
     data.put("arceus_dbg_last_error_message", "-");
+    data.put("arceus_dbg_postkill_top_sent", "0");
+    data.put("arceus_dbg_snapshot_size", "0");
+    data.put("arceus_dbg_reward_cursor", "0");
+    data.put("arceus_dbg_death_commit_attempted", "0");
+    data.put("arceus_dbg_death_commit_confirmed", "0");
     data.put("arceus_applied_melee_phase", "0");
     clearDamageContributors(data);
 
@@ -396,11 +402,19 @@ function clearDamageContributors(data) {
             || key.indexOf("arceus_dmg_name_") === 0
             || key.indexOf("arceus_recent_hits_") === 0
             || key.indexOf("arceus_recent_name_") === 0
+            || key.indexOf("arceus_live_entry_") === 0
             || key.indexOf("arceus_godmode_disabled_") === 0
             || key.indexOf("arceus_reward_entry_") === 0) {
             data.remove(key);
         }
     }
+
+    data.put("arceus_live_snapshot_size", "0");
+    data.put("arceus_dbg_postkill_top_sent", "0");
+    data.put("arceus_dbg_snapshot_size", "0");
+    data.put("arceus_dbg_reward_cursor", "0");
+    data.put("arceus_dbg_death_commit_attempted", "0");
+    data.put("arceus_dbg_death_commit_confirmed", "0");
 }
 
 function updateNpcClient(npc) {

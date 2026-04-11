@@ -104,6 +104,7 @@ function damagedCore(event) {
         armCustomDeathLock(npc);
         cancelDamage(event);
         setEntityInvulnerable(npc, true);
+        setNpcHealthSafe(npc, deathThreshold);
         forceDeathSafeHealthFloor(npc);
         dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
         requestCustomDeath(event, npc, "damaged");
@@ -147,6 +148,7 @@ function damagedCore(event) {
         armCustomDeathLock(npc);
         cancelDamage(event);
         setEntityInvulnerable(npc, true);
+        setNpcHealthSafe(npc, deathThreshold);
         forceDeathSafeHealthFloor(npc);
         dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
         requestCustomDeath(event, npc, "damaged");
@@ -469,6 +471,71 @@ function recordDamageContribution(event, npc, damage) {
         incrementDamageParticipantCount(data);
     }
     appendRecentDamageContribution(data, uuid, attackerName, damage);
+    refreshLiveDamageSnapshot(npc);
+}
+
+function refreshLiveDamageSnapshot(npc) {
+    if (npc == null) return;
+
+    var data = npc.getStoreddata();
+    clearLiveSnapshotEntries(data);
+
+    var entries = collectDamageEntriesForSnapshot(data);
+    for (var i = 0; i < entries.length; i++) {
+        data.put("arceus_live_entry_" + i, serializeLiveSnapshotEntry(entries[i]));
+    }
+
+    data.put("arceus_live_snapshot_size", "" + entries.length);
+    data.put("arceus_dbg_snapshot_size", "" + entries.length);
+}
+
+function collectDamageEntriesForSnapshot(data) {
+    var keys = data.getKeys();
+    if (keys == null || keys.length <= 0) return [];
+
+    var entries = [];
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_dmg_") !== 0) continue;
+        if (key.indexOf("arceus_dmg_name_") === 0) continue;
+
+        var uuid = key.substring("arceus_dmg_".length);
+        var damage = parseFloatSafe(data.get(key), 0);
+        if (damage <= 0) continue;
+
+        var name = "" + data.get("arceus_dmg_name_" + uuid);
+        if (!hasText(name) || name == "null") name = uuid;
+        entries.push({ uuid: uuid, name: name, damage: damage });
+    }
+
+    entries.sort(function(a, b) {
+        return b.damage - a.damage;
+    });
+    return entries;
+}
+
+function clearLiveSnapshotEntries(data) {
+    var keys = data.getKeys();
+    if (keys == null) return;
+
+    for (var i = 0; i < keys.length; i++) {
+        var key = "" + keys[i];
+        if (key.indexOf("arceus_live_entry_") === 0) {
+            data.remove(key);
+        }
+    }
+}
+
+function serializeLiveSnapshotEntry(entry) {
+    if (entry == null) return "";
+    return sanitizeSnapshotToken(entry.uuid) + "\t"
+        + sanitizeSnapshotToken(entry.name) + "\t"
+        + formatDamage(entry.damage);
+}
+
+function sanitizeSnapshotToken(value) {
+    var text = value == null || value == "null" ? "" : ("" + value);
+    return text.replace(/\t/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
 }
 
 function incrementDamageParticipantCount(data) {
