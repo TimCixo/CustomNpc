@@ -1,127 +1,128 @@
 var ArceusBoss_ArrayList = Java.type("java.util.ArrayList");
 var ArceusBoss_CommandSource = Java.type("net.minecraft.commands.CommandSource");
 var ArceusBoss_System = Java.type("java.lang.System");
+
+var ARCEUS_RUNTIME_KEY = "arceus_runtime";
+var ARCEUS_CONFIG_KEY = "arceus_config_json";
+var ARCEUS_LIFECYCLE_KEY = "arceus_lifecycle_json";
+var ARCEUS_CONFIG_VERSION = 12;
 var ARCEUS_WHOIS_CACHE_MS = 1200;
 
 function meleeAttack(event) {
-    var npc = event.npc;
-    var data = npc.getStoreddata();
+    var runtime = ensureArceusRuntime(event.npc);
+    attachCombatSubsystem(runtime);
 
-    if (data.get("arceus_enabled") != "1") return;
-    if (data.get("arceus_dying") == "1") return;
+    try {
+        runtime.combat.onMeleeAttack(event);
+    } catch (e) {
+        markRuntimeError(runtime, "meleeAttack", e);
+    }
+}
 
-    var phase = parseIntSafe(data.get("arceus_phase"), 1);
+function attachCombatSubsystem(runtime) {
+    if (runtime.combat != null && runtime.combat.ready) return;
+
+    runtime.combat = {
+        ready: true,
+        onMeleeAttack: function(event) {
+            meleeAttackCore(event, runtime);
+        }
+    };
+}
+
+function meleeAttackCore(event, runtime) {
+    var phase = runtime.state.phase;
+    var mode = runtime.state.mode;
+    if (!runtime.config.enabled) return;
+    if (mode != "live") return;
+
     var damage = readDamage(event);
-
     if (phase == 2) {
-        damage = damage * getCfgFloat(npc, "arceus_phase2_damage_mult", 1.20);
-        writeDamage(event, damage);
+        writeDamage(event, damage * configFloat(runtime.config.phase2DamageMult, 1.20));
         return;
     }
 
-    if (phase >= 3) {
-        if (!isPlayerTarget(event.target)) {
-            oneShotNonPlayerTarget(npc, event.target);
-            return;
-        }
+    if (phase < 3) return;
 
-        disableGodModeBeforeHit(npc, event.target);
-        damage = damage * getCfgFloat(npc, "arceus_phase3_damage_mult", 1.45)
-            + getCfgFloat(npc, "arceus_phase3_flat_bonus", 4.0);
-        writeDamage(event, damage);
-        applyHalfArmorBypassHit(npc, event.target, damage);
+    if (!isPlayerTarget(event.target)) {
+        oneShotNonPlayerTarget(event.npc, event.target);
+        return;
     }
+
+    disableGodModeBeforeHit(event.npc, event.target, runtime);
+    damage = damage * configFloat(runtime.config.phase3DamageMult, 1.45)
+        + configFloat(runtime.config.phase3FlatBonus, 4.0);
+    writeDamage(event, damage);
+    applyHalfArmorBypassHit(event.npc, event.target, damage, runtime.config);
 }
 
 function oneShotNonPlayerTarget(npc, target) {
     if (target == null) return;
-
     try {
         target.damage(1000000, npc);
     } catch (e) {}
-
     try {
         target.setHealth(0);
         return;
     } catch (e2) {}
-
     try {
         var mcTarget = unwrapMcEntity(target);
-        if (mcTarget != null && mcTarget.kill) {
-            mcTarget.kill();
-        }
+        if (mcTarget != null && mcTarget.kill) mcTarget.kill();
     } catch (e3) {}
 }
 
 function isPlayerTarget(target) {
     if (target == null) return false;
-
     try {
         if (target.getType && target.getType() == 1) return true;
     } catch (e) {}
-
     try {
         var className = "" + target.getClass().getName();
-        if (className.indexOf("PlayerWrapper") >= 0) return true;
+        if (className.indexOf("Player") >= 0) return true;
     } catch (e2) {}
-
     try {
         var mcTarget = unwrapMcEntity(target);
         if (mcTarget != null) {
             var mcClassName = "" + mcTarget.getClass().getName();
-            if (mcClassName.indexOf("player") >= 0 || mcClassName.indexOf("Player") >= 0) return true;
+            if (mcClassName.indexOf("Player") >= 0 || mcClassName.indexOf("player") >= 0) return true;
         }
     } catch (e3) {}
-
     return false;
 }
 
-function disableGodModeBeforeHit(npc, target) {
+function disableGodModeBeforeHit(npc, target, runtime) {
     var playerName = getTargetPlayerName(target);
-    if (playerName == "") return;
-    if (!isGodModeEnabledForTarget(npc, target, playerName)) return;
-
-    var command = "godmode " + playerName + " disable";
-    tryServerCommand(npc, command);
+    if (!hasText(playerName)) return;
+    if (!isGodModeEnabledForTarget(npc, target, playerName, runtime)) return;
+    tryServerCommand(npc, "godmode " + playerName + " disable");
 }
 
 function getTargetPlayerName(target) {
     if (target == null) return "";
-
     try {
         var name = "" + target.getName();
-        if (name != null && name != "" && name != "null") return name;
+        if (hasText(name) && name != "null") return name;
     } catch (e) {}
-
     try {
         var name2 = "" + target.getDisplayName();
-        if (name2 != null && name2 != "" && name2 != "null") return name2;
+        if (hasText(name2) && name2 != "null") return name2;
     } catch (e2) {}
-
     return "";
 }
 
-function isGodModeEnabledForTarget(npc, target, playerName) {
-    var info = readWhoisInfo(npc, target, playerName);
-    if (info == null || !info.ok) return false;
-    return info.godModeEnabled;
+function isGodModeEnabledForTarget(npc, target, playerName, runtime) {
+    var info = readWhoisInfo(npc, target, playerName, runtime);
+    return info != null && info.ok && info.godModeEnabled;
 }
 
-function readWhoisInfo(npc, target, playerName) {
-    var temp = npc.getTempdata();
-    var cacheKey = "arceus_whois_cache_" + getTargetIdentity(target, playerName);
+function readWhoisInfo(npc, target, playerName, runtime) {
+    var cacheKey = getTargetIdentity(target, playerName);
     var now = ArceusBoss_System.currentTimeMillis();
+    var cache = runtime.state.whoisCache;
+    var cached = cache[cacheKey];
 
-    if (temp != null) {
-        try {
-            var cachedRaw = temp.get(cacheKey);
-            if (cachedRaw != null) {
-                var cached = parseWhoisCacheEntry("" + cachedRaw);
-                if (cached != null && now - cached.time <= ARCEUS_WHOIS_CACHE_MS) {
-                    return { ok: true, godModeEnabled: cached.enabled };
-                }
-            }
-        } catch (e) {}
+    if (cached != null && now - cached.time <= ARCEUS_WHOIS_CACHE_MS) {
+        return { ok: true, godModeEnabled: cached.enabled };
     }
 
     var output = tryServerCommand(npc, "whois " + playerName);
@@ -130,34 +131,23 @@ function readWhoisInfo(npc, target, playerName) {
         return { ok: false, godModeEnabled: false };
     }
 
-    if (temp != null) {
-        try {
-            temp.put(cacheKey, now + "|" + (enabled ? "1" : "0"));
-        } catch (e2) {}
-    }
-
+    cache[cacheKey] = { time: now, enabled: enabled };
     return { ok: true, godModeEnabled: enabled };
 }
 
-function parseWhoisCacheEntry(raw) {
-    if (raw == null || raw == "" || raw == "null") return null;
-
-    var text = "" + raw;
-    var sep = text.indexOf("|");
-    if (sep <= 0) return null;
-
-    var time = parseIntSafe(text.substring(0, sep), 0);
-    var enabled = text.substring(sep + 1) == "1";
-    if (time <= 0) return null;
-
-    return { time: time, enabled: enabled };
+function getTargetIdentity(target, playerName) {
+    try {
+        return "" + target.getUUID();
+    } catch (e) {
+        return playerName;
+    }
 }
 
 function parseGodModeFromWhois(output) {
     if (output == null) return null;
 
     var text = ("" + output).toLowerCase();
-    if (trimString(text).length <= 0) return null;
+    if (!hasText(text)) return null;
 
     var exact = /-\s*god mode\s*:\s*(true|false)\b/.exec(text);
     if (exact != null && exact.length >= 2) {
@@ -168,14 +158,8 @@ function parseGodModeFromWhois(output) {
     for (var i = 0; i < lines.length; i++) {
         var line = trimString(lines[i]);
         if (line.indexOf("god") < 0) continue;
-
-        if (line.indexOf("true") >= 0 || line.indexOf("enabled") >= 0 || line.indexOf("on") >= 0 || line.indexOf("yes") >= 0) {
-            return true;
-        }
-
-        if (line.indexOf("false") >= 0 || line.indexOf("disabled") >= 0 || line.indexOf("off") >= 0 || line.indexOf("no") >= 0) {
-            return false;
-        }
+        if (line.indexOf("true") >= 0 || line.indexOf("enabled") >= 0 || line.indexOf("on") >= 0 || line.indexOf("yes") >= 0) return true;
+        if (line.indexOf("false") >= 0 || line.indexOf("disabled") >= 0 || line.indexOf("off") >= 0 || line.indexOf("no") >= 0) return false;
     }
 
     return null;
@@ -192,26 +176,15 @@ function tryServerCommand(npc, command) {
                     outputs.add("" + component);
                 }
             },
-            acceptsSuccess: function() {
-                return true;
-            },
-            acceptsFailure: function() {
-                return true;
-            },
-            shouldInformAdmins: function() {
-                return false;
-            }
+            acceptsSuccess: function() { return true; },
+            acceptsFailure: function() { return true; },
+            shouldInformAdmins: function() { return false; }
         });
 
         var server = npc.getMCEntity().level().getServer();
-        var source = server.createCommandSourceStack()
-            .withSource(new CapturingSource())
-            .withPermission(4);
-
+        var source = server.createCommandSourceStack().withSource(new CapturingSource()).withPermission(4);
         server.getCommands().performPrefixedCommand(source, stripLeadingSlash(command));
-        if (outputs.isEmpty()) {
-            return "";
-        }
+        if (outputs.isEmpty()) return "";
 
         var parts = [];
         for (var i = 0; i < outputs.size(); i++) {
@@ -219,107 +192,187 @@ function tryServerCommand(npc, command) {
         }
         return parts.join("\n");
     } catch (e) {
-        return null;
+        return "";
     }
-}
-
-function getTargetIdentity(target, fallbackName) {
-    if (target == null) return fallbackName == null ? "" : ("" + fallbackName);
-
-    try {
-        var uuid = "" + target.getUUID();
-        if (uuid != null && uuid != "" && uuid != "null") return uuid;
-    } catch (e) {}
-
-    return fallbackName == null ? "" : ("" + fallbackName);
 }
 
 function stripLeadingSlash(command) {
     var text = trimString(command);
-    if (text.indexOf("/") === 0) {
-        return text.substring(1);
-    }
-    return text;
+    return text.indexOf("/") === 0 ? text.substring(1) : text;
 }
 
-function applyHalfArmorBypassHit(npc, target, baseDamage) {
-    if (target == null || baseDamage <= 0) return;
+function applyHalfArmorBypassHit(npc, target, damage, config) {
+    var bypassBonus = configFloat(config.phase3ArmorBypassBonus, 8.0);
+    if (bypassBonus <= 0) return;
 
     var mcTarget = unwrapMcEntity(target);
     if (mcTarget == null) return;
 
-    var armor = getArmorValue(mcTarget);
-    var fullMultiplier = getArmorTakenMultiplier(armor);
-    var halfMultiplier = getArmorTakenMultiplier(armor * 0.5);
-    var bonusDamage = baseDamage * (halfMultiplier - fullMultiplier);
-    if (bonusDamage <= 0) return;
+    try {
+        mcTarget.hurt(npc.getMCEntity().damageSources().mobAttack(npc.getMCEntity()), bypassBonus);
+        return;
+    } catch (e) {}
 
     try {
-        target.damage(bonusDamage, npc);
-    } catch (e) {}
+        target.damage(bypassBonus, npc);
+    } catch (e2) {}
 }
 
 function unwrapMcEntity(entity) {
     if (entity == null) return null;
-
     try {
         if (entity.getMCEntity) return entity.getMCEntity();
     } catch (e) {}
-
     return null;
-}
-
-function getArmorValue(mcEntity) {
-    try {
-        return mcEntity.getArmorValue();
-    } catch (e) {
-        return 0;
-    }
-}
-
-function getArmorTakenMultiplier(armorValue) {
-    var reduction = armorValue * 0.04;
-    if (reduction < 0) reduction = 0;
-    if (reduction > 0.8) reduction = 0.8;
-    return 1.0 - reduction;
 }
 
 function readDamage(event) {
     try {
+        return event.getDamage();
+    } catch (e) {}
+    try {
         return event.damage;
-    } catch (e) {
-        return 0;
-    }
+    } catch (e2) {}
+    return 0;
 }
 
 function writeDamage(event, value) {
     try {
-        event.damage = value;
+        event.setDamage(value);
+        return;
     } catch (e) {}
-}
-
-function getCfgFloat(npc, key, def) {
-    return parseFloatSafe(npc.getStoreddata().get(key), def);
-}
-
-function parseIntSafe(s, def) {
     try {
-        var value = parseInt("" + s, 10);
-        return isNaN(value) ? def : value;
+        event.damage = value;
+    } catch (e2) {}
+}
+
+function ensureArceusRuntime(npc) {
+    var temp = npc.getTempdata();
+    var runtime = null;
+
+    try {
+        runtime = temp.get(ARCEUS_RUNTIME_KEY);
+    } catch (e) {
+        runtime = null;
+    }
+
+    var config = mergeConfig(parseJsonSafe(npc.getStoreddata().get(ARCEUS_CONFIG_KEY)));
+    var state = mergeLifecycle(parseJsonSafe(npc.getStoreddata().get(ARCEUS_LIFECYCLE_KEY)));
+
+    if (runtime == null || runtime.version != ARCEUS_CONFIG_VERSION) {
+        runtime = {
+            version: ARCEUS_CONFIG_VERSION,
+            npc: npc,
+            config: config,
+            state: state,
+            combat: {},
+            phases: {},
+            deathFlow: {},
+            rewards: {},
+            leaderboard: {},
+            visuals: {},
+            clockLink: {},
+            debug: {}
+        };
+        temp.put(ARCEUS_RUNTIME_KEY, runtime);
+        return runtime;
+    }
+
+    runtime.npc = npc;
+    runtime.config = config;
+    runtime.state = state;
+    if (runtime.state.whoisCache == null) runtime.state.whoisCache = {};
+    return runtime;
+}
+
+function markRuntimeError(runtime, hook, error) {
+    if (runtime == null || runtime.state == null) return;
+    if (runtime.state.debug == null) {
+        runtime.state.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+    }
+    runtime.state.debug.lastErrorHook = hook == null ? "-" : ("" + hook);
+    runtime.state.debug.lastErrorMessage = sanitizeErrorMessage(error);
+    runtime.npc.getStoreddata().put(ARCEUS_LIFECYCLE_KEY, JSON.stringify(runtime.state));
+}
+
+function sanitizeErrorMessage(error) {
+    try {
+        var text = trimString("" + error);
+        return text.length > 200 ? text.substring(0, 200) : text;
+    } catch (e) {
+        return "unknown";
+    }
+}
+
+function parseJsonSafe(raw) {
+    if (raw == null || raw == "" || raw == "null") return null;
+    try {
+        return JSON.parse("" + raw);
+    } catch (e) {
+        return null;
+    }
+}
+
+function createDefaultConfig() {
+    return {
+        version: ARCEUS_CONFIG_VERSION,
+        enabled: true,
+        phase2DamageMult: 1.20,
+        phase3DamageMult: 1.45,
+        phase3FlatBonus: 4,
+        phase3ArmorBypassBonus: 8.0
+    };
+}
+
+function mergeConfig(raw) {
+    var base = createDefaultConfig();
+    if (raw == null) return base;
+    for (var key in base) {
+        if (!base.hasOwnProperty(key)) continue;
+        if (raw[key] === undefined || raw[key] === null) continue;
+        base[key] = raw[key];
+    }
+    return base;
+}
+
+function createDefaultLifecycle() {
+    return {
+        mode: "live",
+        phase: 1,
+        whoisCache: {},
+        debug: {
+            lastErrorHook: "-",
+            lastErrorMessage: "-"
+        }
+    };
+}
+
+function mergeLifecycle(raw) {
+    var base = createDefaultLifecycle();
+    if (raw == null) return base;
+    for (var key in base) {
+        if (!base.hasOwnProperty(key)) continue;
+        if (raw[key] === undefined || raw[key] === null) continue;
+        base[key] = raw[key];
+    }
+    if (base.whoisCache == null) base.whoisCache = {};
+    if (base.debug == null) base.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+    return base;
+}
+
+function configFloat(value, def) {
+    try {
+        var parsed = parseFloat("" + value);
+        return isNaN(parsed) ? def : parsed;
     } catch (e) {
         return def;
     }
 }
 
-function parseFloatSafe(s, def) {
-    try {
-        var value = parseFloat("" + s);
-        return isNaN(value) ? def : value;
-    } catch (e) {
-        return def;
-    }
+function hasText(value) {
+    return value != null && trimString(value).length > 0;
 }
 
-function trimString(s) {
-    return ("" + s).replace(/^\s+|\s+$/g, "");
+function trimString(value) {
+    return ("" + value).replace(/^\s+|\s+$/g, "");
 }

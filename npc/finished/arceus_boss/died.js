@@ -1,20 +1,20 @@
 var ArceusBossDied_System = Java.type("java.lang.System");
+
+var ARCEUS_RUNTIME_KEY = "arceus_runtime";
+var ARCEUS_LIFECYCLE_KEY = "arceus_lifecycle_json";
 var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
 var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
 
 function died(event) {
     var npc = event.npc;
-    var data = npc.getStoreddata();
-    var state = "" + data.get("arceus_state");
-    var commitConfirmed = data.get("arceus_dbg_death_commit_confirmed") == "1";
+    var lifecycle = parseJsonSafe(npc.getStoreddata().get(ARCEUS_LIFECYCLE_KEY));
+    if (lifecycle == null || lifecycle.deathCommitted !== true) return;
 
-    if (state != "death_commit" && !commitConfirmed) {
-        data.put("arceus_unexpected_died_state", hasText(state) && state != "null" ? state : "-");
-        return;
-    }
-
-    data.put("arceus_unexpected_died_state", "-");
     notifyClockDead(npc);
+
+    try {
+        npc.getTempdata().remove(ARCEUS_RUNTIME_KEY);
+    } catch (e) {}
 }
 
 function notifyClockDead(npc) {
@@ -31,7 +31,7 @@ function notifyClockDead(npc) {
     data.put("respawn_clock_target_alive", "0");
 
     try {
-        mainNpc.getDisplay().setTitle("§c" + formatDurationMs(respawnSeconds * 1000));
+        mainNpc.getDisplay().setTitle("\u00A7c" + formatDurationMs(respawnSeconds * 1000));
         mainNpc.updateClient();
     } catch (e) {}
 }
@@ -80,7 +80,7 @@ function getNpcDisplayName(npc) {
         if (hasText(name) && name != "null") return name;
     } catch (e2) {}
 
-    return "Аркеус";
+    return "\u0410\u0440\u043A\u0435\u0443\u0441";
 }
 
 function formatDurationMs(ms) {
@@ -93,6 +93,15 @@ function formatDurationMs(ms) {
 
 function pad2(value) {
     return value < 10 ? "0" + value : "" + value;
+}
+
+function parseJsonSafe(raw) {
+    if (raw == null || raw == "" || raw == "null") return null;
+    try {
+        return JSON.parse("" + raw);
+    } catch (e) {
+        return null;
+    }
 }
 
 function parseIntSafe(value, def) {

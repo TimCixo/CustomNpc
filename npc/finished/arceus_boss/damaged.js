@@ -4,7 +4,11 @@ var ArceusBoss_BuiltInRegistries = Java.type("net.minecraft.core.registries.Buil
 var ArceusBoss_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var ArceusBoss_EntityType = Java.type("net.minecraft.world.entity.EntityType");
 var ArceusBoss_System = Java.type("java.lang.System");
-var ARCEUS_DEATH_TIMER_ID = 2;
+
+var ARCEUS_RUNTIME_KEY = "arceus_runtime";
+var ARCEUS_CONFIG_KEY = "arceus_config_json";
+var ARCEUS_LIFECYCLE_KEY = "arceus_lifecycle_json";
+var ARCEUS_CONFIG_VERSION = 12;
 var ARCEUS_ITEM_TYPE_CACHE = {};
 
 var ARCEUS_PHASE3_GEMS = [
@@ -29,378 +33,266 @@ var ARCEUS_PHASE3_GEMS = [
 ];
 
 function damaged(event) {
+    var runtime = ensureArceusRuntime(event.npc);
+    attachCombatSubsystem(runtime);
+
     try {
-        damagedCore(event);
+        runtime.combat.onDamaged(event);
     } catch (e) {
-        recordScriptErrorFromEvent(event, "damaged", e);
+        markRuntimeError(runtime, "damaged", e);
         try {
             cancelDamage(event);
-        } catch (e0) {}
-
-        try {
-            var npc = event.npc;
-            forcePhaseTransitionHealthFloor(npc);
-            setEntityInvulnerable(npc, true);
-            restartDeathTimer(npc);
-        } catch (e1) {}
+        } catch (e2) {}
     }
 }
 
-function damagedCore(event) {
+function attachCombatSubsystem(runtime) {
+    if (runtime.combat != null && runtime.combat.ready) return;
+
+    runtime.combat = {
+        ready: true,
+        onDamaged: function(event) {
+            damagedCore(event, runtime);
+        }
+    };
+}
+
+function damagedCore(event, runtime) {
     var npc = event.npc;
-    var data = npc.getStoreddata();
+    var state = runtime.state;
+    var config = runtime.config;
 
-    if (data.get("arceus_enabled") != "1") return;
+    if (!config.enabled) return;
 
-    var state = getArceusState(npc);
-    if (state == "death_commit") return;
-
-    if (state == "phase_transition") {
-        writeDamage(event, 0);
+    if (state.mode == "phase_transition") {
         cancelDamage(event);
-        forcePhaseTransitionHealthFloor(npc);
         setEntityInvulnerable(npc, true);
+        forcePhaseTransitionHealthFloor(npc, config, state.phase);
         clearEntityDamageVisuals(npc);
         return;
     }
 
-    if (state != "live") {
-        writeDamage(event, 0);
+    if (state.mode != "live") {
         cancelDamage(event);
-        forceDeathSafeHealthFloor(npc);
         setEntityInvulnerable(npc, true);
+        forceDeathSafeHealthFloor(npc, config);
         clearEntityDamageVisuals(npc);
         return;
     }
 
-    var currentPhase = parseIntSafe(data.get("arceus_phase"), 1);
     var currentHp = readNpcHealth(npc);
     var maxHp = readNpcMaxHealth(npc);
     var incomingDamage = readDamage(event);
+    var phase = state.phase;
+    if (incomingDamage <= 0 || maxHp <= 0) return;
+
+    incomingDamage = applyPhaseDamageMitigation(event, npc, phase, incomingDamage, config);
     var hpAfterHit = currentHp - incomingDamage;
-    var deathThreshold = getArceusDeathThresholdHp(npc);
+    var phase2Threshold = maxHp * config.phase2Threshold;
+    var phase3Threshold = maxHp * config.phase3Threshold;
+    var deathThreshold = getArceusDeathThresholdHp(maxHp, config);
 
-    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) {
-        setArceusState(npc, "phase_transition");
-        writeDamage(event, 0);
+    recordDamageContribution(event, npc, incomingDamage, runtime);
+
+    if (phase <= 1 && hpAfterHit <= phase2Threshold) {
         cancelDamage(event);
-        forcePhaseTransitionHealthFloor(npc);
-        setEntityInvulnerable(npc, true);
-        clearEntityDamageVisuals(npc);
-        return;
-    }
-
-    incomingDamage = applyPhaseDamageMitigation(event, npc, currentPhase, incomingDamage);
-    hpAfterHit = currentHp - incomingDamage;
-    var phase2Threshold = maxHp * getCfgFloat(npc, "arceus_phase2_threshold", 0.10);
-    var phase3Threshold = maxHp * getCfgFloat(npc, "arceus_phase3_threshold", 0.10);
-
-    if (incomingDamage > 0) {
-        recordDamageContribution(event, npc, incomingDamage);
-    }
-
-    if (currentPhase >= 3 && currentHp <= deathThreshold) {
-        writeDamage(event, 0);
-        armCustomDeathLock(npc);
-        cancelDamage(event);
-        setEntityInvulnerable(npc, true);
-        setNpcHealthSafe(npc, deathThreshold);
-        forceDeathSafeHealthFloor(npc);
-        dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
-        requestCustomDeath(event, npc, "damaged");
-        return;
-    }
-
-    if (currentPhase <= 1 && hpAfterHit <= phase2Threshold) {
-        writeDamage(event, 0);
-        cancelDamage(event);
-        setEntityInvulnerable(npc, true);
         enterPhase(
             npc,
+            runtime,
             2,
-            getCfgFloat(npc, "arceus_phase2_heal_to", 0.72),
-            "§6Аркеус меняет аспект и входит во вторую стадию!",
+            config.phase2HealTo,
+            "\u00A76\u0410\u0440\u043A\u0435\u0443\u0441 \u043C\u0435\u043D\u044F\u0435\u0442 \u0430\u0441\u043F\u0435\u043A\u0442 \u0438 \u0432\u0445\u043E\u0434\u0438\u0442 \u0432\u043E \u0432\u0442\u043E\u0440\u0443\u044E \u0441\u0442\u0430\u0434\u0438\u044E!",
             "yellow",
-            "arceus_stage2_sound"
+            config.stage2Sound
         );
         return;
     }
 
-    if (currentPhase == 2 && hpAfterHit <= phase3Threshold) {
-        writeDamage(event, 0);
+    if (phase == 2 && hpAfterHit <= phase3Threshold) {
         cancelDamage(event);
-        setEntityInvulnerable(npc, true);
-        var phase2DropCount = getStageDropCountToThreshold(npc, 2, currentHp, phase3Threshold, maxHp);
+        var phase2DropCount = getStageDropCountToThreshold(runtime, 2, currentHp, phase3Threshold, maxHp);
         enterPhase(
             npc,
+            runtime,
             3,
-            getCfgFloat(npc, "arceus_phase3_heal_to", 0.45),
-            "§4Аркеус высвобождает истинную силу. Третья стадия!",
+            config.phase3HealTo,
+            "\u00A74\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u044B\u0441\u0432\u043E\u0431\u043E\u0436\u0434\u0430\u0435\u0442 \u0438\u0441\u0442\u0438\u043D\u043D\u0443\u044E \u0441\u0438\u043B\u0443. \u0422\u0440\u0435\u0442\u044C\u044F \u0441\u0442\u0430\u0434\u0438\u044F!",
             "red",
-            "arceus_stage3_sound"
+            config.stage3Sound
         );
-        dropConfiguredItem(npc, "" + data.get("arceus_phase2_pinata_item"), phase2DropCount);
+        dropConfiguredItem(npc, config.phase2PinataItem, phase2DropCount, config);
         return;
     }
 
-    if (currentPhase >= 3 && hpAfterHit <= deathThreshold) {
-        writeDamage(event, 0);
-        armCustomDeathLock(npc);
+    if (phase >= 3 && hpAfterHit <= deathThreshold) {
         cancelDamage(event);
         setEntityInvulnerable(npc, true);
+        state.mode = "custom_death_start";
+        state.customDeathTicksLeft = config.customDeathTicks;
+        state.leaderboardAnnounced = false;
+        state.rewardsGiven = false;
+        state.rewardCursor = 0;
+        state.deathCommitted = false;
+        state.deathLineStage = 0;
+        state.deathAnimStarted = false;
+        state.deathFinalizeDone = false;
         setNpcHealthSafe(npc, deathThreshold);
-        forceDeathSafeHealthFloor(npc);
-        dropRandomGems(npc, getStageDropCountToThreshold(npc, 3, currentHp, deathThreshold, maxHp));
-        requestCustomDeath(event, npc, "damaged");
+        forceDeathSafeHealthFloor(npc, config);
+        stopCombatForDeath(npc);
+        dropRandomGems(npc, getStageDropCountToThreshold(runtime, 3, currentHp, deathThreshold, maxHp), config);
+        persistRuntimeState(runtime);
         return;
     }
 
-    if (currentPhase == 2) {
+    if (phase == 2) {
         dropConfiguredItem(
             npc,
-            "" + data.get("arceus_phase2_pinata_item"),
-            getStageDropCountForHit(npc, 2, currentHp, hpAfterHit, maxHp)
+            config.phase2PinataItem,
+            getStageDropCountForHit(runtime, 2, currentHp, hpAfterHit, maxHp),
+            config
         );
-        return;
+    } else if (phase >= 3) {
+        dropRandomGems(npc, getStageDropCountForHit(runtime, 3, currentHp, hpAfterHit, maxHp), config);
     }
 
-    if (currentPhase >= 3) {
-        dropRandomGems(npc, getStageDropCountForHit(npc, 3, currentHp, hpAfterHit, maxHp));
-    }
+    persistRuntimeState(runtime);
 }
 
-function enterPhase(npc, phase, healFraction, line, bossBarColor, soundKey) {
-    var data = npc.getStoreddata();
+function enterPhase(npc, runtime, phase, healFraction, line, bossBarColor, soundId) {
+    var state = runtime.state;
+    var config = runtime.config;
     var maxHp = readNpcMaxHealth(npc);
     var targetHp = Math.max(1, Math.floor(maxHp * healFraction));
 
-    data.put("arceus_dying", "0");
-    data.put("arceus_state", "phase_transition");
-    data.put("arceus_death_committing", "0");
-    data.put("arceus_death_lock", "0");
-    data.put("arceus_death_request", "0");
-    data.put("arceus_death_request_source", "-");
-    data.put("arceus_death_request_hp", "0");
-    data.put("arceus_death_request_threshold_hp", "0");
-    data.put("arceus_death_finalized", "0");
-    data.put("arceus_death_ticks_left", "0");
-    data.put("arceus_death_line_stage", "0");
-    data.put("arceus_phase", "" + phase);
-    data.put("arceus_transition_ticks_left", "" + getCfgInt(npc, "arceus_transition_ticks", 40));
-    data.put("arceus_pulse_ticks", "0");
-    if (phase == 2) data.put("arceus_phase2_drops_given", "0");
-    if (phase == 3) data.put("arceus_phase3_drops_given", "0");
+    state.phase = phase;
+    state.mode = "phase_transition";
+    state.transitionTicksLeft = config.transitionTicks;
+    state.pendingPhaseEffect = {
+        phase: phase,
+        line: line,
+        bossBarColor: bossBarColor,
+        soundId: soundId == null ? "" : ("" + soundId)
+    };
+    state.deathCommitted = false;
+    state.customDeathTicksLeft = 0;
+    state.deathLineStage = 0;
+    state.deathAnimStarted = false;
+    state.deathFinalizeDone = false;
+    state.respawnVisualResetTicks = 0;
+    state.stageDrops["" + phase] = 0;
 
-    data.put("arceus_phase_start_pending", "1");
-    data.put("arceus_pending_phase_hp", "" + targetHp);
-    data.put("arceus_pending_phase_id", "" + phase);
     setEntityInvulnerable(npc, true);
     setNpcHealthSafe(npc, targetHp);
-    forcePhaseTransitionHealthFloor(npc);
+    forcePhaseTransitionHealthFloor(npc, config, phase);
     clearEntityDamageVisuals(npc);
-    schedulePhaseEffects(npc, line, bossBarColor, soundKey);
-}
-
-function formatDamage(value) {
-    var rounded = Math.floor(value * 10 + 0.5) / 10;
-    if (rounded == Math.floor(rounded)) {
-        return "" + Math.floor(rounded);
-    }
-    return "" + rounded;
-}
-
-function getArceusState(npc) {
-    var data = npc.getStoreddata();
-    var state = "" + data.get("arceus_state");
-
-    if (state == "live"
-        || state == "phase_transition"
-        || state == "custom_death_start"
-        || state == "death_announce_top"
-        || state == "death_reward_pokemon"
-        || state == "death_commit") {
-        return state;
-    }
-
-    if (data.get("arceus_death_committing") == "1") return "death_commit";
-    if (data.get("arceus_death_lock") == "1"
-        || data.get("arceus_death_request") == "1"
-        || data.get("arceus_dying") == "1") {
-        return "custom_death_start";
-    }
-    if (parseIntSafe(data.get("arceus_transition_ticks_left"), 0) > 0) return "phase_transition";
-
-    data.put("arceus_state", "live");
-    return "live";
-}
-
-function setArceusState(npc, state) {
-    try {
-        npc.getStoreddata().put("arceus_state", state);
-    } catch (e) {}
-}
-
-function requestCustomDeath(event, npc, source) {
-    var data = npc.getStoreddata();
-    var state = getArceusState(npc);
-    if (state == "phase_transition"
-        || state == "death_announce_top"
-        || state == "death_reward_pokemon"
-        || state == "death_commit") {
-        return;
-    }
-    if (parseIntSafe(data.get("arceus_phase"), 1) < 3) return;
-    if (data.get("arceus_dying") == "1") return;
-    if (data.get("arceus_death_committing") == "1") return;
-
-    armCustomDeathLock(npc);
-    data.put("arceus_state", "custom_death_start");
-    data.put("arceus_death_request", "1");
-    data.put("arceus_death_committing", "0");
-    data.put("arceus_transition_ticks_left", "0");
-    data.put("arceus_phase_start_pending", "0");
-    data.put("arceus_phase_effects_pending", "0");
-    cancelDamage(event);
-    setEntityInvulnerable(npc, true);
-    forceDeathSafeHealthFloor(npc);
     stopCombatForDeath(npc);
-    restartDeathTimer(npc);
 
-    var threshold = getArceusDeathThresholdHp(npc);
-    data.put("arceus_death_request_source", source == null ? "damaged" : ("" + source));
-    data.put("arceus_death_request_hp", formatDamage(readNpcHealth(npc)));
-    data.put("arceus_death_request_threshold_hp", formatDamage(threshold));
+    applyPhaseVisuals(npc, runtime);
+    persistRuntimeState(runtime);
 }
 
-function armCustomDeathLock(npc) {
-    try {
-        npc.getStoreddata().put("arceus_death_lock", "1");
-    } catch (e) {}
+function applyPhaseVisuals(npc, runtime) {
+    var effect = runtime.state.pendingPhaseEffect;
+    if (effect == null) return;
+
+    if (hasText(effect.line)) {
+        safeSay(npc, effect.line);
+    }
+
+    applyBossBarColor(npc, effect.bossBarColor);
+    playSoundForAllPlayers(npc, effect.soundId, 1.2, 1.0);
+    applyPhaseMeleeDelay(npc, runtime.config, effect.phase);
+    runtime.state.pendingPhaseEffect = null;
 }
 
-function setEntityInvulnerable(npc, enabled) {
-    try {
-        npc.getMCEntity().setInvulnerable(enabled ? true : false);
-    } catch (e) {}
+function recordDamageContribution(event, npc, damage, runtime) {
+    var attacker = resolveDamageDealer(event, npc);
+    if (attacker == null) return;
+
+    var uuid = safeAttackerUuid(attacker);
+    if (!hasText(uuid)) return;
+
+    var name = getAttackerName(attacker);
+    var current = runtime.state.damageMap[uuid];
+    if (current == null) {
+        current = { uuid: uuid, name: name, damage: 0 };
+        runtime.state.damageMap[uuid] = current;
+    }
+
+    current.name = name;
+    current.damage += damage;
+    runtime.state.liveSnapshot = buildSortedSnapshot(runtime.state.damageMap);
+    appendRecentDamageContribution(runtime.state, uuid, name, damage);
 }
 
-function clearEntityDamageVisuals(npc) {
-    try {
-        npc.getMCEntity().invulnerableTime = 0;
-    } catch (e) {}
+function appendRecentDamageContribution(state, uuid, name, damage) {
+    if (state.recentHits[uuid] == null) {
+        state.recentHits[uuid] = [];
+    }
 
-    try {
-        npc.getMCEntity().hurtTime = 0;
-    } catch (e2) {}
+    var list = state.recentHits[uuid];
+    list.push({
+        time: ArceusBoss_System.currentTimeMillis(),
+        damage: damage,
+        name: name
+    });
 
-    try {
-        npc.getMCEntity().hurtDuration = 0;
-    } catch (e3) {}
-
-    try {
-        npc.getMCEntity().deathTime = 0;
-    } catch (e4) {}
-}
-
-function dropConfiguredItem(npc, itemId, count) {
-    if (itemId == null || itemId == "" || itemId == "null") return;
-    if (count == null || count <= 0) return;
-
-    var left = Math.floor(count);
-    while (left > 0) {
-        var stackSize = left > 64 ? 64 : left;
-        spawnScatterItem(npc, itemId, stackSize);
-        left -= stackSize;
+    if (list.length > 20) {
+        list.splice(0, list.length - 20);
     }
 }
 
-function dropRandomGems(npc, count) {
-    if (count == null || count <= 0) return;
+function buildSortedSnapshot(map) {
+    var out = [];
 
-    for (var i = 0; i < count; i++) {
-        spawnScatterItem(npc, pickRandomGemId());
+    for (var key in map) {
+        if (!map.hasOwnProperty(key)) continue;
+        var entry = map[key];
+        if (entry == null || entry.damage <= 0) continue;
+        out.push({
+            uuid: entry.uuid,
+            name: hasText(entry.name) ? entry.name : entry.uuid,
+            damage: entry.damage
+        });
     }
+
+    out.sort(function(a, b) {
+        return b.damage - a.damage;
+    });
+    return out;
 }
 
-function spawnScatterItem(npc, itemId, amount) {
-    if (itemId == null || itemId == "" || itemId == "null") return;
-    var stackSize = amount == null ? 1 : Math.max(1, Math.floor(amount));
-
-    try {
-        var itemType = getCachedItemType(itemId);
-        if (itemType == null) return;
-
-        var stack = new ArceusBoss_MCItemStack(itemType, stackSize);
-        if (stack == null || stack.isEmpty()) return;
-
-        var level = npc.getMCEntity().level();
-        var drop = new ArceusBoss_ItemEntity(level, npc.getX(), npc.getY() + 1.2, npc.getZ(), stack);
-
-        drop.setDeltaMovement(
-            randomSigned(
-                getCfgFloat(npc, "arceus_pinata_speed_min", 0.20),
-                getCfgFloat(npc, "arceus_pinata_speed_max", 0.55)
-            ),
-            getCfgFloat(npc, "arceus_pinata_vertical_boost", 0.28) + Math.random() * 0.18,
-            randomSigned(
-                getCfgFloat(npc, "arceus_pinata_speed_min", 0.20),
-                getCfgFloat(npc, "arceus_pinata_speed_max", 0.55)
-            )
-        );
-
-        level.addFreshEntity(drop);
-    } catch (e) {}
-}
-
-function schedulePhaseEffects(npc, line, bossBarColor, soundKey) {
-    var data = npc.getStoreddata();
-    data.put("arceus_phase_effects_pending", "1");
-    data.put("arceus_pending_phase_line", line == null ? "" : ("" + line));
-    data.put("arceus_pending_phase_color", bossBarColor == null ? "" : ("" + bossBarColor));
-
-    var soundId = "" + data.get(soundKey);
-    if (soundId == null || soundId == "null") soundId = "";
-    data.put("arceus_pending_phase_sound", soundId);
-}
-
-function pickRandomGemId() {
-    if (ARCEUS_PHASE3_GEMS == null || ARCEUS_PHASE3_GEMS.length <= 0) return null;
-    var index = Math.floor(Math.random() * ARCEUS_PHASE3_GEMS.length);
-    if (index < 0) index = 0;
-    if (index >= ARCEUS_PHASE3_GEMS.length) index = ARCEUS_PHASE3_GEMS.length - 1;
-    return ARCEUS_PHASE3_GEMS[index];
-}
-
-function getStageDropCountForHit(npc, phase, hpBefore, hpAfter, maxHp) {
-    var stageStartHp = getStageStartHp(npc, phase, maxHp);
-    var stageEndHp = getStageEndHp(npc, phase, maxHp);
-    var totalDrops = getStageTotalDrops(npc, phase);
+function getStageDropCountForHit(runtime, phase, hpBefore, hpAfter, maxHp) {
+    var config = runtime.config;
+    var stageStartHp = getStageStartHp(config, phase, maxHp);
+    var stageEndHp = getStageEndHp(config, phase, maxHp);
+    var totalDrops = getStageTotalDrops(runtime, phase);
     if (totalDrops <= 0) return 0;
 
     var before = clampHpToStage(hpBefore, stageStartHp, stageEndHp);
     var after = clampHpToStage(hpAfter, stageStartHp, stageEndHp);
     var shouldHaveDropped = getDropsEarnedByHp(stageStartHp, stageEndHp, after, totalDrops);
-    var alreadyDropped = getStageDropsGiven(npc, phase);
+    var alreadyDropped = getStageDropsGiven(runtime, phase);
     var toDrop = shouldHaveDropped - alreadyDropped;
 
     if (toDrop <= 0) return 0;
 
-    setStageDropsGiven(npc, phase, alreadyDropped + toDrop);
+    setStageDropsGiven(runtime, phase, alreadyDropped + toDrop);
     return toDrop;
 }
 
-function getStageDropCountToThreshold(npc, phase, hpBefore, thresholdHp, maxHp) {
-    return getStageDropCountForHit(npc, phase, hpBefore, thresholdHp, maxHp);
+function getStageDropCountToThreshold(runtime, phase, hpBefore, thresholdHp, maxHp) {
+    return getStageDropCountForHit(runtime, phase, hpBefore, thresholdHp, maxHp);
 }
 
-function getStageStartHp(npc, phase, maxHp) {
-    if (phase == 2) return maxHp * getCfgFloat(npc, "arceus_phase2_heal_to", 0.72);
-    return maxHp * getCfgFloat(npc, "arceus_phase3_heal_to", 0.45);
+function getStageStartHp(config, phase, maxHp) {
+    if (phase == 2) return maxHp * config.phase2HealTo;
+    return maxHp * config.phase3HealTo;
 }
 
-function getStageEndHp(npc, phase, maxHp) {
-    if (phase == 2) return maxHp * getCfgFloat(npc, "arceus_phase3_threshold", 0.10);
-    return getArceusDeathThresholdHp(npc);
+function getStageEndHp(config, phase, maxHp) {
+    if (phase == 2) return maxHp * config.phase3Threshold;
+    return getArceusDeathThresholdHp(maxHp, config);
 }
 
 function clampHpToStage(hp, stageStartHp, stageEndHp) {
@@ -420,495 +312,32 @@ function getDropsEarnedByHp(stageStartHp, stageEndHp, hpNow, totalDrops) {
     return Math.floor(progress * totalDrops);
 }
 
-function getStageTotalDrops(npc, phase) {
-    var prefix = phase == 2 ? "arceus_phase2_total_drops" : "arceus_phase3_total_drops";
-    var fallbackBase = phase == 2 ? 8 : 3;
-    var fallbackPerExtra = phase == 2 ? 4 : 2;
-    var fallbackMax = phase == 2 ? 24 : 12;
-    var participants = getDamageParticipantCount(npc);
-    var base = getCfgInt(npc, prefix + "_base", fallbackBase);
-    var perExtra = getCfgInt(npc, prefix + "_per_extra_player", fallbackPerExtra);
-    var max = getCfgInt(npc, prefix + "_max", fallbackMax);
-    var total = base + perExtra * Math.max(0, participants - 1);
+function getStageTotalDrops(runtime, phase) {
+    var participants = Math.max(1, runtime.state.liveSnapshot.length);
+    var base = phase == 2 ? configInt(runtime.config.phase2TotalDropsBase, 8) : configInt(runtime.config.phase3TotalDropsBase, 3);
+    var perExtra = phase == 2 ? configInt(runtime.config.phase2TotalDropsPerExtraPlayer, 4) : configInt(runtime.config.phase3TotalDropsPerExtraPlayer, 2);
+    var max = phase == 2 ? configInt(runtime.config.phase2TotalDropsMax, 24) : configInt(runtime.config.phase3TotalDropsMax, 12);
+    var total = base + Math.max(0, participants - 1) * perExtra;
 
     if (max > 0 && total > max) total = max;
-    if (total < 0) total = 0;
-    return total;
+    return total < 0 ? 0 : total;
 }
 
-function getDamageParticipantCount(npc) {
-    var count = getCfgInt(npc, "arceus_damage_participant_count", 0);
-    return count <= 0 ? 1 : count;
+function getStageDropsGiven(runtime, phase) {
+    return parseIntSafe(runtime.state.stageDrops["" + phase], 0);
 }
 
-function getStageDropsGiven(npc, phase) {
-    var key = phase == 2 ? "arceus_phase2_drops_given" : "arceus_phase3_drops_given";
-    return getCfgInt(npc, key, 0);
+function setStageDropsGiven(runtime, phase, value) {
+    runtime.state.stageDrops["" + phase] = Math.max(0, parseIntSafe(value, 0));
 }
 
-function setStageDropsGiven(npc, phase, value) {
-    var key = phase == 2 ? "arceus_phase2_drops_given" : "arceus_phase3_drops_given";
-    npc.getStoreddata().put(key, "" + value);
-}
-
-function recordDamageContribution(event, npc, damage) {
-    var attacker = resolveDamageDealer(event, npc);
-    if (attacker == null) return;
-
-    var data = npc.getStoreddata();
-    var uuid = safeAttackerUuid(attacker);
-    if (uuid == null || uuid == "") return;
-
-    var damageKey = "arceus_dmg_" + uuid;
-    var nameKey = "arceus_dmg_name_" + uuid;
-    var previous = parseFloatSafe(data.get(damageKey), 0);
-    var total = previous + damage;
-
-    data.put(damageKey, "" + total);
-    var attackerName = getAttackerName(attacker);
-    data.put(nameKey, attackerName);
-    if (previous <= 0 && isPlayerAttacker(attacker)) {
-        incrementDamageParticipantCount(data);
-    }
-    appendRecentDamageContribution(data, uuid, attackerName, damage);
-    refreshLiveDamageSnapshot(npc);
-}
-
-function refreshLiveDamageSnapshot(npc) {
-    if (npc == null) return;
-
-    var data = npc.getStoreddata();
-    clearLiveSnapshotEntries(data);
-
-    var entries = collectDamageEntriesForSnapshot(data);
-    for (var i = 0; i < entries.length; i++) {
-        data.put("arceus_live_entry_" + i, serializeLiveSnapshotEntry(entries[i]));
-    }
-
-    data.put("arceus_live_snapshot_size", "" + entries.length);
-    data.put("arceus_dbg_snapshot_size", "" + entries.length);
-}
-
-function collectDamageEntriesForSnapshot(data) {
-    var keys = data.getKeys();
-    if (keys == null || keys.length <= 0) return [];
-
-    var entries = [];
-    for (var i = 0; i < keys.length; i++) {
-        var key = "" + keys[i];
-        if (key.indexOf("arceus_dmg_") !== 0) continue;
-        if (key.indexOf("arceus_dmg_name_") === 0) continue;
-
-        var uuid = key.substring("arceus_dmg_".length);
-        var damage = parseFloatSafe(data.get(key), 0);
-        if (damage <= 0) continue;
-
-        var name = "" + data.get("arceus_dmg_name_" + uuid);
-        if (!hasText(name) || name == "null") name = uuid;
-        entries.push({ uuid: uuid, name: name, damage: damage });
-    }
-
-    entries.sort(function(a, b) {
-        return b.damage - a.damage;
-    });
-    return entries;
-}
-
-function clearLiveSnapshotEntries(data) {
-    var keys = data.getKeys();
-    if (keys == null) return;
-
-    for (var i = 0; i < keys.length; i++) {
-        var key = "" + keys[i];
-        if (key.indexOf("arceus_live_entry_") === 0) {
-            data.remove(key);
-        }
-    }
-}
-
-function serializeLiveSnapshotEntry(entry) {
-    if (entry == null) return "";
-    return sanitizeSnapshotToken(entry.uuid) + "\t"
-        + sanitizeSnapshotToken(entry.name) + "\t"
-        + formatDamage(entry.damage);
-}
-
-function sanitizeSnapshotToken(value) {
-    var text = value == null || value == "null" ? "" : ("" + value);
-    return text.replace(/\t/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
-}
-
-function incrementDamageParticipantCount(data) {
-    var count = parseIntSafe(data.get("arceus_damage_participant_count"), 0);
-    data.put("arceus_damage_participant_count", "" + (count + 1));
-}
-
-function resolveDamageDealer(event, npc) {
-    var attacker = null;
-
-    try {
-        if (event.damageSource != null && event.damageSource.getTrueSource() != null) {
-            attacker = event.damageSource.getTrueSource();
-        }
-    } catch (e) {}
-
-    if (attacker == null) {
-        try {
-            if (event.source != null) {
-                attacker = event.source;
-            }
-        } catch (e2) {}
-    }
-
-    return resolveDamageOwner(npc, attacker);
-}
-
-function safeAttackerUuid(attacker) {
-    try {
-        return "" + attacker.getUUID();
-    } catch (e) {
-        return "";
-    }
-}
-
-function getAttackerName(attacker) {
-    try {
-        var name = "" + attacker.getDisplayName();
-        if (name != null && name != "" && name != "null") return name;
-    } catch (e) {}
-
-    try {
-        var name2 = "" + attacker.getName();
-        if (name2 != null && name2 != "" && name2 != "null") return name2;
-    } catch (e2) {}
-
-    try {
-        var name3 = "" + attacker.getEntityName();
-        if (name3 != null && name3 != "" && name3 != "null") return name3;
-    } catch (e3) {}
-
-    return "Unknown";
-}
-
-function resolveDamageOwner(npc, attacker) {
-    if (attacker == null) return null;
-    if (isPlayerAttacker(attacker)) return attacker;
-
-    var directOwner = resolveOwnerEntity(attacker);
-    if (directOwner != null) {
-        if (isPlayerAttacker(directOwner)) return directOwner;
-        attacker = directOwner;
-    }
-
-    var ownerUuid = readOwnerUuid(attacker);
-    if (ownerUuid != null && ownerUuid != "") {
-        var ownerPlayer = findPlayerByUuid(npc, ownerUuid);
-        if (ownerPlayer != null) return ownerPlayer;
-    }
-
-    var mcEntity = unwrapMcEntity(attacker);
-    if (mcEntity != null) {
-        var mcOwner = resolveOwnerEntity(mcEntity);
-        if (mcOwner != null) {
-            if (isPlayerAttacker(mcOwner)) return mcOwner;
-
-            var mcOwnerUuid = readOwnerUuid(mcOwner);
-            if (mcOwnerUuid != null && mcOwnerUuid != "") {
-                var ownerByMc = findPlayerByUuid(npc, mcOwnerUuid);
-                if (ownerByMc != null) return ownerByMc;
-            }
-        }
-
-        var nestedOwnerUuid = readOwnerUuid(mcEntity);
-        if (nestedOwnerUuid != null && nestedOwnerUuid != "") {
-            var nestedOwnerPlayer = findPlayerByUuid(npc, nestedOwnerUuid);
-            if (nestedOwnerPlayer != null) return nestedOwnerPlayer;
-        }
-    }
-
-    return attacker;
-}
-
-function resolveOwnerEntity(target) {
-    if (target == null) return null;
-
-    var owner = callZeroArg(target, "getOwner");
-    if (owner != null) return owner;
-
-    owner = callZeroArg(target, "owner");
-    if (owner != null) return owner;
-
-    owner = callZeroArg(target, "getOwnerEntity");
-    if (owner != null) return owner;
-
-    owner = callZeroArg(target, "getPlayerOwner");
-    if (owner != null) return owner;
-
-    owner = callZeroArg(target, "getOwnerPlayer");
-    if (owner != null) return owner;
-
-    return null;
-}
-
-function readOwnerUuid(target) {
-    if (target == null) return "";
-
-    var value = callZeroArg(target, "getOwnerUUID");
-    if (!hasText(normalizeUuidValue(value))) {
-        value = callZeroArg(target, "getOwnerUuid");
-    }
-    if (!hasText(normalizeUuidValue(value))) {
-        value = callZeroArg(target, "getOwnerId");
-    }
-
-    return normalizeUuidValue(value);
-}
-
-function normalizeUuidValue(value) {
-    if (value == null) return "";
-
-    try {
-        if (value.isPresent && value.isPresent()) {
-            value = value.get();
-        }
-    } catch (e) {}
-
-    try {
-        if (value.get && ("" + value.getClass().getName()).indexOf("Optional") >= 0) {
-            value = value.get();
-        }
-    } catch (e2) {}
-
-    try {
-        return trimString("" + value);
-    } catch (e3) {
-        return "";
-    }
-}
-
-function hasText(value) {
-    return value != null && trimString(value).length > 0;
-}
-
-function trimString(s) {
-    return ("" + s).replace(/^\s+|\s+$/g, "");
-}
-
-function findPlayerByUuid(npc, uuid) {
-    if (npc == null || !hasText(uuid)) return null;
-
-    try {
-        var players = npc.getWorld().getAllPlayers();
-        if (players == null) return null;
-
-        for (var i = 0; i < players.length; i++) {
-            var player = players[i];
-            try {
-                if (("" + player.getUUID()) == ("" + uuid)) return player;
-            } catch (e) {}
-        }
-    } catch (e2) {}
-
-    return null;
-}
-
-function callZeroArg(target, methodName) {
-    if (target == null || methodName == null || methodName == "") return null;
-
-    try {
-        if (target[methodName]) {
-            return target[methodName]();
-        }
-    } catch (e) {}
-
-    return null;
-}
-
-function appendRecentDamageContribution(data, uuid, name, damage) {
-    if (data == null || !hasText(uuid) || damage <= 0) return;
-
-    var now = ArceusBoss_System.currentTimeMillis();
-    var cutoff = now - 5000;
-    var hitsKey = "arceus_recent_hits_" + uuid;
-    var nameKey = "arceus_recent_name_" + uuid;
-    var cleaned = pruneRecentHitString("" + data.get(hitsKey), cutoff);
-    var entry = now + ":" + damage;
-
-    if (cleaned.length > 0) {
-        cleaned += "|" + entry;
-    } else {
-        cleaned = entry;
-    }
-
-    cleaned = limitRecentHitTokens(cleaned, 20);
-    data.put(hitsKey, cleaned);
-    data.put(nameKey, name == null ? uuid : ("" + name));
-}
-
-function limitRecentHitTokens(raw, limit) {
-    var text = raw == null || raw == "null" ? "" : ("" + raw);
-    if (text.length <= 0) return "";
-
-    var parts = text.split("|");
-    var max = parseIntSafe(limit, 20);
-    if (max <= 0 || parts.length <= max) return text;
-
-    var kept = [];
-    for (var i = parts.length - max; i < parts.length; i++) {
-        kept.push(parts[i]);
-    }
-
-    return kept.join("|");
-}
-
-function pruneRecentHitString(raw, cutoff) {
-    var text = raw == null || raw == "null" ? "" : ("" + raw);
-    if (text.length <= 0) return "";
-
-    var parts = text.split("|");
-    var kept = [];
-
-    for (var i = 0; i < parts.length; i++) {
-        var token = trimString(parts[i]);
-        if (token.length <= 0) continue;
-
-        var colon = token.indexOf(":");
-        if (colon <= 0) continue;
-
-        var ts = parseIntSafe(token.substring(0, colon), 0);
-        if (ts < cutoff) continue;
-
-        kept.push(token);
-    }
-
-    return kept.join("|");
-}
-
-function playConfiguredSound(npc, key) {
-    var soundId = "" + npc.getStoreddata().get(key);
-    if (soundId == null || soundId == "" || soundId == "null") return;
-
-    try {
-        var players = npc.getWorld().getAllPlayers();
-        if (players != null) {
-            for (var i = 0; i < players.length; i++) {
-                players[i].playSound(soundId, 1.2, 1.0);
-            }
-        }
-        return;
-    } catch (e) {}
-}
-
-function randomSigned(min, max) {
-    var low = Math.min(min, max);
-    var high = Math.max(min, max);
-    var speed = low + Math.random() * (high - low);
-    return Math.random() < 0.5 ? -speed : speed;
-}
-
-function getCachedItemType(itemId) {
-    var key = "" + itemId;
-    if (ARCEUS_ITEM_TYPE_CACHE.hasOwnProperty(key)) {
-        return ARCEUS_ITEM_TYPE_CACHE[key];
-    }
-
-    var itemType = null;
-    try {
-        itemType = ArceusBoss_BuiltInRegistries.ITEM.get(ArceusBoss_ResourceLocation.parse(key));
-    } catch (e) {
-        itemType = null;
-    }
-
-    ARCEUS_ITEM_TYPE_CACHE[key] = itemType;
-    return itemType;
-}
-
-function forceHealthFloor(npc) {
-    try {
-        if (npc.getHealth() < 1) {
-            npc.setHealth(1);
-        }
-    } catch (e) {}
-}
-
-function forcePhaseTransitionHealthFloor(npc) {
-    var data = npc.getStoreddata();
-    var floor = parseFloatSafe(data.get("arceus_pending_phase_hp"), 0);
-
-    if (floor <= 0 && (data.get("arceus_death_lock") == "1"
-        || data.get("arceus_death_request") == "1"
-        || data.get("arceus_dying") == "1")) {
-        floor = getArceusDeathThresholdHp(npc);
-    }
-
-    if (floor <= 0) floor = 1;
-
-    try {
-        if (npc.getHealth() < floor) {
-            setNpcHealthSafe(npc, floor);
-        }
-    } catch (e) {}
-}
-
-function forceDeathSafeHealthFloor(npc) {
-    var floor = getArceusDeathThresholdHp(npc);
-    if (floor < 1) floor = 1;
-
-    try {
-        if (npc.getHealth() < floor) {
-            setNpcHealthSafe(npc, floor);
-        }
-    } catch (e) {}
-}
-
-function setNpcHealthSafe(npc, value) {
-    var target = Math.max(1, Math.floor(value));
-
-    try {
-        npc.setHealth(target);
-        return;
-    } catch (e) {}
-
-    try {
-        npc.getMCEntity().setHealth(target);
-    } catch (e2) {}
-}
-
-function getArceusDeathThresholdHp(npc) {
-    var maxHp = readNpcMaxHealth(npc);
-    var percent = getCfgFloat(npc, "arceus_custom_death_threshold_percent", 0.02);
-    var minHp = getCfgFloat(npc, "arceus_custom_death_threshold_min_hp", 20);
-
-    if (percent < 0) percent = 0;
-    if (minHp < 1) minHp = 1;
-    if (maxHp <= 0) return minHp;
-
-    var threshold = maxHp * percent;
-    if (threshold < minHp) threshold = minHp;
-    if (threshold < 1) threshold = 1;
-    return threshold;
-}
-
-function readDamage(event) {
-    try {
-        return event.getDamage();
-    } catch (e) {}
-
-    try {
-        return event.damage;
-    } catch (e2) {}
-
-    return 0;
-}
-
-function applyPhaseDamageMitigation(event, npc, phase, damage) {
-    if (damage <= 0) return damage;
-    if (phase < 2) return damage;
+function applyPhaseDamageMitigation(event, npc, phase, damage, config) {
+    if (damage <= 0 || phase < 2) return damage;
 
     try {
         if (event.damageSource != null && event.damageSource.isProjectile()) {
             var reduced = damage * 0.5;
-            reflectProjectileDamageToPlayer(event, npc, damage - reduced);
+            reflectProjectileDamageToPlayer(event, npc, damage - reduced, config);
             writeDamage(event, reduced);
             return reduced;
         }
@@ -917,42 +346,21 @@ function applyPhaseDamageMitigation(event, npc, phase, damage) {
     return damage;
 }
 
-function reflectProjectileDamageToPlayer(event, npc, reflectDamage) {
+function reflectProjectileDamageToPlayer(event, npc, reflectDamage, config) {
     if (reflectDamage <= 0) return;
 
     var attacker = resolveDamageDealer(event, npc);
-    if (attacker == null) return;
-    if (!isPlayerAttacker(attacker)) return;
+    if (attacker == null || !isPlayerAttacker(attacker)) return;
 
     var mcTarget = unwrapMcEntity(attacker);
     if (mcTarget == null) return;
 
     try {
-        shootReflectArrow(npc, mcTarget, reflectDamage);
-        return;
+        shootReflectArrow(npc, mcTarget, reflectDamage, config);
     } catch (e) {}
 }
 
-function isPlayerAttacker(attacker) {
-    try {
-        var type = attacker.getType();
-        if (type == 1) return true;
-    } catch (e) {}
-
-    try {
-        var className = "" + attacker.getClass().getName();
-        if (className.indexOf("PlayerWrapper") >= 0) return true;
-        if (className.indexOf("ServerPlayer") >= 0) return true;
-        if (className.indexOf(".player.") >= 0) return true;
-        if (className.indexOf("Player") >= 0) return true;
-    } catch (e2) {}
-
-    return false;
-}
-
-function shootReflectArrow(npc, mcTarget, damage) {
-    if (mcTarget == null || damage <= 0) return;
-
+function shootReflectArrow(npc, mcTarget, damage, config) {
     var shooter = npc.getMCEntity();
     var level = shooter.level();
     var arrow = ArceusBoss_EntityType.ARROW.create(level);
@@ -967,14 +375,7 @@ function shootReflectArrow(npc, mcTarget, damage) {
     arrow.setPos(shooter.getX(), eyeY, shooter.getZ());
     arrow.setOwner(shooter);
     arrow.setBaseDamage(getHalfArmorAdjustedProjectileDamage(mcTarget, damage));
-    arrow.shoot(
-        dx,
-        dy,
-        dz,
-        getCfgFloat(npc, "arceus_reflect_arrow_speed", 2.2),
-        getCfgFloat(npc, "arceus_reflect_arrow_inaccuracy", 0.2)
-    );
-
+    arrow.shoot(dx, dy, dz, configFloat(config.reflectArrowSpeed, 2.2), configFloat(config.reflectArrowInaccuracy, 0.2));
     level.addFreshEntity(arrow);
 }
 
@@ -982,11 +383,7 @@ function getHalfArmorAdjustedProjectileDamage(mcTarget, baseDamage) {
     var armor = getArmorValue(mcTarget);
     var fullMultiplier = getArmorTakenMultiplier(armor);
     var halfMultiplier = getArmorTakenMultiplier(armor * 0.5);
-
-    if (fullMultiplier <= 0.01) {
-        return baseDamage;
-    }
-
+    if (fullMultiplier <= 0.01) return baseDamage;
     return baseDamage * (halfMultiplier / fullMultiplier);
 }
 
@@ -1005,14 +402,331 @@ function getArmorTakenMultiplier(armorValue) {
     return 1.0 - reduction;
 }
 
+function dropConfiguredItem(npc, itemId, count, config) {
+    if (!hasText(itemId) || count <= 0) return;
+
+    var left = Math.floor(count);
+    while (left > 0) {
+        var stackSize = left > 64 ? 64 : left;
+        spawnScatterItem(npc, itemId, stackSize, config);
+        left -= stackSize;
+    }
+}
+
+function dropRandomGems(npc, count, config) {
+    for (var i = 0; i < count; i++) {
+        spawnScatterItem(npc, pickRandomGemId(), 1, config);
+    }
+}
+
+function spawnScatterItem(npc, itemId, amount, config) {
+    if (!hasText(itemId)) return;
+
+    try {
+        var itemType = getCachedItemType(itemId);
+        if (itemType == null) return;
+
+        var stack = new ArceusBoss_MCItemStack(itemType, Math.max(1, Math.floor(amount)));
+        if (stack == null || stack.isEmpty()) return;
+
+        var level = npc.getMCEntity().level();
+        var drop = new ArceusBoss_ItemEntity(level, npc.getX(), npc.getY() + 1.2, npc.getZ(), stack);
+        drop.setDeltaMovement(
+            randomSigned(config.pinataSpeedMin, config.pinataSpeedMax),
+            config.pinataVerticalBoost + Math.random() * 0.18,
+            randomSigned(config.pinataSpeedMin, config.pinataSpeedMax)
+        );
+        level.addFreshEntity(drop);
+    } catch (e) {}
+}
+
+function getCachedItemType(itemId) {
+    var cached = ARCEUS_ITEM_TYPE_CACHE[itemId];
+    if (cached !== undefined) return cached;
+
+    var item = null;
+    try {
+        item = ArceusBoss_BuiltInRegistries.ITEM.get(ArceusBoss_ResourceLocation.parse(itemId));
+    } catch (e) {
+        item = null;
+    }
+
+    ARCEUS_ITEM_TYPE_CACHE[itemId] = item;
+    return item;
+}
+
+function pickRandomGemId() {
+    var index = Math.floor(Math.random() * ARCEUS_PHASE3_GEMS.length);
+    if (index < 0) index = 0;
+    if (index >= ARCEUS_PHASE3_GEMS.length) index = ARCEUS_PHASE3_GEMS.length - 1;
+    return ARCEUS_PHASE3_GEMS[index];
+}
+
+function randomSigned(min, max) {
+    var low = Math.min(min, max);
+    var high = Math.max(min, max);
+    var speed = low + Math.random() * (high - low);
+    return Math.random() < 0.5 ? -speed : speed;
+}
+
+function resolveDamageDealer(event, npc) {
+    var attacker = null;
+
+    try {
+        if (event.damageSource != null && event.damageSource.getTrueSource() != null) {
+            attacker = event.damageSource.getTrueSource();
+        }
+    } catch (e) {}
+
+    if (attacker == null) {
+        try {
+            if (event.source != null) attacker = event.source;
+        } catch (e2) {}
+    }
+
+    return resolveDamageOwner(npc, attacker);
+}
+
+function resolveDamageOwner(npc, attacker) {
+    if (attacker == null) return null;
+    if (isPlayerAttacker(attacker)) return attacker;
+
+    var directOwner = resolveOwnerEntity(attacker);
+    if (directOwner != null) {
+        if (isPlayerAttacker(directOwner)) return directOwner;
+        attacker = directOwner;
+    }
+
+    var ownerUuid = readOwnerUuid(attacker);
+    if (hasText(ownerUuid)) {
+        var ownerPlayer = findPlayerByUuid(npc, ownerUuid);
+        if (ownerPlayer != null) return ownerPlayer;
+    }
+
+    var mcEntity = unwrapMcEntity(attacker);
+    if (mcEntity != null) {
+        var mcOwner = resolveOwnerEntity(mcEntity);
+        if (mcOwner != null && isPlayerAttacker(mcOwner)) return mcOwner;
+    }
+
+    return attacker;
+}
+
+function resolveOwnerEntity(target) {
+    if (target == null) return null;
+    return callZeroArg(target, "getOwner")
+        || callZeroArg(target, "owner")
+        || callZeroArg(target, "getOwnerEntity")
+        || callZeroArg(target, "getPlayerOwner")
+        || callZeroArg(target, "getOwnerPlayer");
+}
+
+function readOwnerUuid(target) {
+    if (target == null) return "";
+    return normalizeUuidValue(callZeroArg(target, "getOwnerUUID"))
+        || normalizeUuidValue(callZeroArg(target, "getOwnerUuid"))
+        || normalizeUuidValue(callZeroArg(target, "getOwnerId"));
+}
+
+function normalizeUuidValue(value) {
+    if (value == null) return "";
+    try {
+        if (value.isPresent && value.isPresent()) value = value.get();
+    } catch (e) {}
+    try {
+        return trimString("" + value);
+    } catch (e2) {
+        return "";
+    }
+}
+
+function callZeroArg(target, methodName) {
+    if (target == null || !methodName) return null;
+    try {
+        if (target[methodName]) return target[methodName]();
+    } catch (e) {}
+    return null;
+}
+
+function findPlayerByUuid(npc, uuid) {
+    try {
+        var players = npc.getWorld().getAllPlayers();
+        if (players == null) return null;
+        for (var i = 0; i < players.length; i++) {
+            if (("" + players[i].getUUID()) == ("" + uuid)) return players[i];
+        }
+    } catch (e) {}
+    return null;
+}
+
+function safeAttackerUuid(attacker) {
+    try {
+        return "" + attacker.getUUID();
+    } catch (e) {
+        return "";
+    }
+}
+
+function getAttackerName(attacker) {
+    try {
+        var name = "" + attacker.getDisplayName();
+        if (hasText(name) && name != "null") return name;
+    } catch (e) {}
+    try {
+        var name2 = "" + attacker.getName();
+        if (hasText(name2) && name2 != "null") return name2;
+    } catch (e2) {}
+    return "Unknown";
+}
+
+function isPlayerAttacker(attacker) {
+    try {
+        if (attacker.getType && attacker.getType() == 1) return true;
+    } catch (e) {}
+    try {
+        var className = "" + attacker.getClass().getName();
+        if (className.indexOf("Player") >= 0) return true;
+    } catch (e2) {}
+    return false;
+}
+
 function unwrapMcEntity(entity) {
     if (entity == null) return null;
-
     try {
         if (entity.getMCEntity) return entity.getMCEntity();
     } catch (e) {}
-
     return null;
+}
+
+function applyPhaseMeleeDelay(npc, config, phase) {
+    try {
+        var melee = npc.getStats().getMelee();
+        var currentDelay = melee.getDelay();
+        var baseDelay = currentDelay >= 1 ? currentDelay : 12;
+        var multiplier = 1.0;
+        if (phase == 2) multiplier = config.phase2MeleeDelayMult;
+        if (phase >= 3) multiplier = config.phase3MeleeDelayMult;
+        melee.setDelay(Math.max(1, Math.round(baseDelay * multiplier)));
+    } catch (e) {}
+}
+
+function playSoundForAllPlayers(npc, soundId, volume, pitch) {
+    if (!hasText(soundId)) return;
+    try {
+        var players = npc.getWorld().getAllPlayers();
+        if (players == null) return;
+        for (var i = 0; i < players.length; i++) {
+            players[i].playSound(soundId, volume, pitch);
+        }
+    } catch (e) {}
+}
+
+function safeSay(npc, line) {
+    if (!hasText(line)) return;
+    try {
+        npc.say(line);
+    } catch (e) {
+        try {
+            broadcastBossMessage(npc, line);
+        } catch (e2) {}
+    }
+}
+
+function broadcastBossMessage(npc, message) {
+    if (!hasText(message)) return;
+    try {
+        var players = npc.getWorld().getAllPlayers();
+        if (players == null) return;
+        for (var i = 0; i < players.length; i++) {
+            players[i].message(message);
+        }
+    } catch (e) {}
+}
+
+function forcePhaseTransitionHealthFloor(npc, config, phase) {
+    var maxHp = readNpcMaxHealth(npc);
+    var healFraction = phase >= 3 ? config.phase3HealTo : config.phase2HealTo;
+    setNpcHealthSafe(npc, Math.max(1, Math.floor(maxHp * healFraction)));
+}
+
+function forceDeathSafeHealthFloor(npc, config) {
+    var maxHp = readNpcMaxHealth(npc);
+    setNpcHealthSafe(npc, getArceusDeathThresholdHp(maxHp, config));
+}
+
+function getArceusDeathThresholdHp(maxHp, config) {
+    var threshold = maxHp * config.customDeathThresholdPercent;
+    if (threshold < config.customDeathThresholdMinHp) {
+        threshold = config.customDeathThresholdMinHp;
+    }
+    return threshold < 1 ? 1 : threshold;
+}
+
+function stopCombatForDeath(npc) {
+    try {
+        npc.setAttackTarget(null);
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setTarget(null);
+    } catch (e2) {}
+    try {
+        npc.setMoveForward(0);
+        npc.setMoveStrafing(0);
+        npc.setMoveVertical(0);
+    } catch (e3) {}
+}
+
+function setNpcHealthSafe(npc, value) {
+    var target = Math.max(1, Math.floor(value));
+    try {
+        npc.setHealth(target);
+        return;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setHealth(target);
+    } catch (e2) {}
+}
+
+function setEntityInvulnerable(npc, enabled) {
+    try {
+        npc.getMCEntity().setInvulnerable(enabled ? true : false);
+    } catch (e) {}
+}
+
+function clearEntityDamageVisuals(npc) {
+    try {
+        npc.getMCEntity().invulnerableTime = 0;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().hurtTime = 0;
+    } catch (e2) {}
+    try {
+        npc.getMCEntity().hurtDuration = 0;
+    } catch (e3) {}
+    try {
+        npc.getMCEntity().deathTime = 0;
+    } catch (e4) {}
+}
+
+function applyBossBarColor(npc, colorName) {
+    var colorId = 0;
+    if (colorName == "yellow") colorId = 4;
+    if (colorName == "red") colorId = 2;
+    try {
+        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossColor) {
+            npc.getDisplay().setBossColor(colorId);
+        }
+    } catch (e) {}
+}
+
+function readDamage(event) {
+    try {
+        return event.getDamage();
+    } catch (e) {}
+    try {
+        return event.damage;
+    } catch (e2) {}
+    return 0;
 }
 
 function writeDamage(event, value) {
@@ -1020,7 +734,6 @@ function writeDamage(event, value) {
         event.setDamage(value);
         return;
     } catch (e) {}
-
     try {
         event.damage = value;
     } catch (e2) {}
@@ -1030,21 +743,14 @@ function cancelDamage(event) {
     try {
         event.setCanceled(true);
     } catch (e) {}
-
-    try {
-        event.setDamage(0);
-    } catch (e2) {}
-
-    try {
-        event.damage = 0;
-    } catch (e3) {}
+    writeDamage(event, 0);
 }
 
 function readNpcHealth(npc) {
     try {
         return npc.getHealth();
     } catch (e) {
-        return 1;
+        return 0;
     }
 }
 
@@ -1052,173 +758,204 @@ function readNpcMaxHealth(npc) {
     try {
         return npc.getMaxHealth();
     } catch (e) {
-        return 1;
+        return 0;
     }
 }
 
-function safeSay(npc, text) {
+function ensureArceusRuntime(npc) {
+    var temp = npc.getTempdata();
+    var runtime = null;
+
     try {
-        npc.say(text);
-    } catch (e) {}
+        runtime = temp.get(ARCEUS_RUNTIME_KEY);
+    } catch (e) {
+        runtime = null;
+    }
+
+    var config = mergeConfig(parseJsonSafe(npc.getStoreddata().get(ARCEUS_CONFIG_KEY)));
+    var state = mergeLifecycle(parseJsonSafe(npc.getStoreddata().get(ARCEUS_LIFECYCLE_KEY)));
+
+    if (runtime == null || runtime.version != ARCEUS_CONFIG_VERSION) {
+        runtime = {
+            version: ARCEUS_CONFIG_VERSION,
+            npc: npc,
+            config: config,
+            state: state,
+            combat: {},
+            phases: {},
+            deathFlow: {},
+            rewards: {},
+            leaderboard: {},
+            visuals: {},
+            clockLink: {},
+            debug: {}
+        };
+        temp.put(ARCEUS_RUNTIME_KEY, runtime);
+        return runtime;
+    }
+
+    runtime.npc = npc;
+    runtime.config = config;
+    runtime.state = state;
+    if (runtime.state.whoisCache == null) runtime.state.whoisCache = {};
+    return runtime;
 }
 
-function getCfgInt(npc, key, def) {
-    return parseIntSafe(npc.getStoreddata().get(key), def);
+function persistRuntimeState(runtime) {
+    runtime.npc.getStoreddata().put(ARCEUS_LIFECYCLE_KEY, JSON.stringify(runtime.state));
 }
 
-function getCfgFloat(npc, key, def) {
-    return parseFloatSafe(npc.getStoreddata().get(key), def);
-}
-
-function recordScriptErrorFromEvent(event, hook, error) {
-    try {
-        if (event != null && event.npc != null) {
-            recordScriptError(event.npc, hook, error);
-        }
-    } catch (e) {}
-}
-
-function recordScriptError(npc, hook, error) {
-    try {
-        var data = npc.getStoreddata();
-        data.put("arceus_dbg_last_error_hook", hook == null ? "-" : ("" + hook));
-        data.put("arceus_dbg_last_error_message", sanitizeErrorMessage(error));
-    } catch (e) {}
+function markRuntimeError(runtime, hook, error) {
+    if (runtime == null || runtime.state == null) return;
+    if (runtime.state.debug == null) {
+        runtime.state.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+    }
+    runtime.state.debug.lastErrorHook = hook == null ? "-" : ("" + hook);
+    runtime.state.debug.lastErrorMessage = sanitizeErrorMessage(error);
+    persistRuntimeState(runtime);
 }
 
 function sanitizeErrorMessage(error) {
-    var text = "";
-
     try {
-        text = "" + error;
+        var text = trimString("" + error);
+        return text.length > 200 ? text.substring(0, 200) : text;
     } catch (e) {
-        text = "unknown";
+        return "unknown";
     }
-
-    text = text.replace(/\r/g, " ").replace(/\n/g, " ").replace(/\t/g, " ");
-    if (text.length > 180) text = text.substring(0, 180);
-    return text;
 }
 
-function applyBossBarColor(npc, colorName) {
-    if (colorName == null || colorName == "") return;
-
-    var colorId = mapBossBarColorId(colorName);
-
+function parseJsonSafe(raw) {
+    if (raw == null || raw == "" || raw == "null") return null;
     try {
-        if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().setBossColor) {
-            npc.getDisplay().setBossColor(colorId);
-            return;
-        }
-    } catch (e) {}
-
-    try {
-        if (npc.display && npc.display.setBossColor) {
-            npc.display.setBossColor(colorId);
-            return;
-        }
-    } catch (e2) {}
-}
-
-function updateNpcClient(npc) {
-    try {
-        npc.updateClient();
-    } catch (e) {}
-}
-
-function stopCombatForDeath(npc) {
-    try {
-        npc.setAttackTarget(null);
-    } catch (e) {}
-
-    try {
-        npc.getMCEntity().setTarget(null);
-    } catch (e2) {}
-
-    try {
-        npc.setMoveForward(0);
-        npc.setMoveStrafing(0);
-        npc.setMoveVertical(0);
-    } catch (e3) {}
-}
-
-function restartDeathTimer(npc) {
-    try {
-        var ticks = getCfgInt(npc, "arceus_death_timer_ticks", 1);
-        if (ticks < 1) ticks = 1;
-        npc.timers.forceStart(ARCEUS_DEATH_TIMER_ID, ticks, true);
-    } catch (e) {}
-}
-
-function applyPhaseMeleeDelay(npc, phase) {
-    try {
-        var data = npc.getStoreddata();
-        var baseDelay = getBaseMeleeDelay(npc, data);
-        var delay = Math.max(1, Math.round(baseDelay * getPhaseMeleeDelayMultiplier(npc, phase)));
-        npc.getStats().getMelee().setDelay(delay);
-        data.put("arceus_applied_melee_phase", "" + phase);
-    } catch (e) {}
-}
-
-function getBaseMeleeDelay(npc, data) {
-    try {
-        var value = npc.getStats().getMelee().getDelay();
-        if (value >= 1) {
-            var appliedPhase = parseIntSafe(data.get("arceus_applied_melee_phase"), 0);
-            if (appliedPhase > 0) {
-                var appliedMultiplier = getPhaseMeleeDelayMultiplier(npc, appliedPhase);
-                if (appliedMultiplier > 0) {
-                    return Math.max(1, Math.round(value / appliedMultiplier));
-                }
-            }
-            return value;
-        }
-    } catch (e) {}
-    return 12;
-}
-
-function getPhaseMeleeDelayMultiplier(npc, phase) {
-    var key = "arceus_phase1_melee_delay_mult";
-    var def = 1.0;
-    if (phase == 2) {
-        key = "arceus_phase2_melee_delay_mult";
-        def = 0.7;
-    } else if (phase >= 3) {
-        key = "arceus_phase3_melee_delay_mult";
-        def = 0.5;
+        return JSON.parse("" + raw);
+    } catch (e) {
+        return null;
     }
-
-    var value = getCfgFloat(npc, key, def);
-    if (value <= 0) return def;
-    return value;
 }
 
-function mapBossBarColorId(colorName) {
-    var key = ("" + colorName).toLowerCase();
-    if (key == "pink") return 0;
-    if (key == "blue") return 1;
-    if (key == "red") return 2;
-    if (key == "green") return 3;
-    if (key == "yellow") return 4;
-    if (key == "purple") return 5;
-    if (key == "white") return 6;
-    return 6;
+function createDefaultConfig() {
+    return {
+        version: ARCEUS_CONFIG_VERSION,
+        enabled: true,
+        phase2Threshold: 0.10,
+        phase3Threshold: 0.10,
+        phase2HealTo: 0.72,
+        phase3HealTo: 0.45,
+        transitionTicks: 40,
+        phase2DamageMult: 1.20,
+        phase3DamageMult: 1.45,
+        phase3FlatBonus: 4,
+        phase3ArmorBypassBonus: 8.0,
+        phase2MeleeDelayMult: 0.7,
+        phase3MeleeDelayMult: 0.5,
+        reflectArrowSpeed: 2.2,
+        reflectArrowInaccuracy: 0.2,
+        customDeathTicks: 80,
+        customDeathThresholdPercent: 0.02,
+        customDeathThresholdMinHp: 20,
+        pinataSpeedMin: 0.20,
+        pinataSpeedMax: 0.55,
+        pinataVerticalBoost: 0.28,
+        phase2PinataItem: "cobblemon:rare_candy",
+        phase2TotalDropsBase: 8,
+        phase2TotalDropsPerExtraPlayer: 4,
+        phase2TotalDropsMax: 24,
+        phase3TotalDropsBase: 3,
+        phase3TotalDropsPerExtraPlayer: 2,
+        phase3TotalDropsMax: 12,
+        stage2Sound: "cobblemon:pokemon.arceus.cry",
+        stage3Sound: "cobblemon:pokemon.arceus.cry"
+    };
 }
 
-function parseIntSafe(s, def) {
+function mergeConfig(raw) {
+    var base = createDefaultConfig();
+    if (raw == null) return base;
+    for (var key in base) {
+        if (!base.hasOwnProperty(key)) continue;
+        if (raw[key] === undefined || raw[key] === null) continue;
+        base[key] = raw[key];
+    }
+    return base;
+}
+
+function createDefaultLifecycle() {
+    return {
+        mode: "live",
+        phase: 1,
+        transitionTicksLeft: 0,
+        customDeathTicksLeft: 0,
+        damageMap: {},
+        liveSnapshot: [],
+        frozenSnapshot: [],
+        rewardCursor: 0,
+        leaderboardAnnounced: false,
+        rewardsGiven: false,
+        deathCommitted: false,
+        pendingPhaseEffect: null,
+        respawnVisualResetTicks: 0,
+        nextAggroRefreshAt: 0,
+        stageDrops: { "2": 0, "3": 0 },
+        recentHits: {},
+        deathLineStage: 0,
+        deathAnimStarted: false,
+        deathFinalizeDone: false,
+        whoisCache: {},
+        debug: {
+            lastErrorHook: "-",
+            lastErrorMessage: "-"
+        }
+    };
+}
+
+function mergeLifecycle(raw) {
+    var base = createDefaultLifecycle();
+    if (raw == null) return base;
+    for (var key in base) {
+        if (!base.hasOwnProperty(key)) continue;
+        if (raw[key] === undefined || raw[key] === null) continue;
+        base[key] = raw[key];
+    }
+    if (base.damageMap == null) base.damageMap = {};
+    if (base.liveSnapshot == null) base.liveSnapshot = [];
+    if (base.frozenSnapshot == null) base.frozenSnapshot = [];
+    if (base.stageDrops == null) base.stageDrops = { "2": 0, "3": 0 };
+    if (base.recentHits == null) base.recentHits = {};
+    if (base.whoisCache == null) base.whoisCache = {};
+    if (base.debug == null) base.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+    return base;
+}
+
+function parseIntSafe(value, def) {
     try {
-        var value = parseInt("" + s, 10);
-        return isNaN(value) ? def : value;
+        var parsed = parseInt("" + value, 10);
+        return isNaN(parsed) ? def : parsed;
     } catch (e) {
         return def;
     }
 }
 
-function parseFloatSafe(s, def) {
+function configInt(value, def) {
+    return parseIntSafe(value, def);
+}
+
+function configFloat(value, def) {
+    return parseFloatSafe(value, def);
+}
+
+function parseFloatSafe(value, def) {
     try {
-        var value = parseFloat("" + s);
-        return isNaN(value) ? def : value;
+        var parsed = parseFloat("" + value);
+        return isNaN(parsed) ? def : parsed;
     } catch (e) {
         return def;
     }
+}
+
+function hasText(value) {
+    return value != null && trimString(value).length > 0;
+}
+
+function trimString(value) {
+    return ("" + value).replace(/^\s+|\s+$/g, "");
 }
