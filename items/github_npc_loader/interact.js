@@ -62,6 +62,20 @@ var GIT_LOADER_SUPPORTED_FILES = {
     "meleeAttack.js": "meleeAttack"
 };
 
+var GIT_LOADER_HOOK_FILE_NAMES = {
+    "init": "init.js",
+    "interact": "interact.js",
+    "timer": "timer.js",
+    "attack": "attack.js",
+    "target": "target.js",
+    "damaged": "damaged.js",
+    "died": "died.js",
+    "kills": "kills.js",
+    "killed": "killed.js",
+    "collide": "collide.js",
+    "meleeAttack": "meleeAttack.js"
+};
+
 var GIT_LOADER_HOOK_ORDER = [
     "init",
     "interact",
@@ -1079,4 +1093,196 @@ function getNpcUuid(npc) {
     } catch (e) {
         return "";
     }
+}
+
+function loadGithubPackage(url) {
+    var parsed = parseGithubTarget(url);
+    var repoInfo = fetchJson("https://api.github.com/repos/" + parsed.owner + "/" + parsed.repo);
+    var ref = hasText(parsed.ref) ? parsed.ref : trimString(repoInfo.default_branch);
+    if (!hasText(ref)) ref = "main";
+
+    var files = [];
+    collectGithubFiles(parsed.owner, parsed.repo, parsed.path, ref, normalizeSlashes(parsed.path), files);
+
+    var selection = selectHookFiles(files);
+    var supported = selection.supportedFiles;
+    var ignored = selection.ignoredFiles;
+
+    var bundle = buildScriptBundle(url, supported);
+    if (!hasText(bundle)) throw "Папка не содержит поддерживаемых hook-файлов.";
+    if (bundle.length > GIT_LOADER_MAX_SCRIPT_CHARS) {
+        throw "Собранный набор скриптов слишком большой для одной вкладки NPC.";
+    }
+
+    return {
+        sourceUrl: url,
+        owner: parsed.owner,
+        repo: parsed.repo,
+        ref: ref,
+        rootPath: parsed.path,
+        files: files,
+        supportedFiles: supported,
+        supportedHooks: extractHooks(supported),
+        ignoredFiles: ignored,
+        layoutMode: selection.layoutMode,
+        selectedPaths: selection.selectedPaths,
+        bundleScript: bundle,
+        loadedAt: "" + GitLoader_System.currentTimeMillis()
+    };
+}
+
+function selectHookFiles(files) {
+    var grouped = groupFilesByHook(files);
+    var supported = [];
+    var ignored = [];
+    var selectedPaths = [];
+    var selectedLookup = {};
+    var layoutMode = "empty";
+
+    for (var i = 0; i < GIT_LOADER_HOOK_ORDER.length; i++) {
+        var hook = GIT_LOADER_HOOK_ORDER[i];
+        var group = grouped[hook];
+        if (group == null || group.length == 0) continue;
+
+        var selected = selectBestHookCandidate(hook, group);
+        if (selected == null) continue;
+
+        selected.hook = hook;
+        supported.push(selected);
+        selectedLookup[selected.relativePath] = true;
+        selectedPaths.push(selected.relativePath);
+
+        var mode = detectLayoutMode(selected.relativePath, hook);
+        if (layoutRank(mode) < layoutRank(layoutMode)) {
+            layoutMode = mode;
+        }
+    }
+
+    for (var j = 0; j < files.length; j++) {
+        if (!selectedLookup[files[j].relativePath]) {
+            ignored.push(files[j].relativePath);
+        }
+    }
+
+    return {
+        supportedFiles: supported,
+        ignoredFiles: ignored,
+        selectedPaths: selectedPaths,
+        layoutMode: layoutMode
+    };
+}
+
+function groupFilesByHook(files) {
+    var grouped = {};
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        var hook = detectHook(file.relativePath);
+        file.hook = hook;
+        if (!hasText(hook)) continue;
+
+        if (grouped[hook] == null) grouped[hook] = [];
+        grouped[hook].push(file);
+    }
+    return grouped;
+}
+
+function selectBestHookCandidate(hook, files) {
+    var ranked = [];
+
+    for (var i = 0; i < files.length; i++) {
+        ranked.push({
+            file: files[i],
+            rank: hookPathRank(hook, files[i].relativePath)
+        });
+    }
+
+    ranked.sort(function(a, b) {
+        if (a.rank != b.rank) return a.rank - b.rank;
+
+        var aPath = normalizeSlashes(a.file.relativePath);
+        var bPath = normalizeSlashes(b.file.relativePath);
+        if (aPath < bPath) return -1;
+        if (aPath > bPath) return 1;
+        return 0;
+    });
+
+    if (ranked.length > 1) {
+        var duplicates = [];
+        for (var j = 0; j < ranked.length; j++) {
+            duplicates.push(ranked[j].file.relativePath);
+        }
+        throw "Найдено несколько файлов для hook `" + hook + "`: " + duplicates.join(" | ") + ". Оставь один файл на один hook.";
+    }
+
+    return ranked.length > 0 ? ranked[0].file : null;
+}
+
+function hookPathRank(hook, relativePath) {
+    var clean = normalizeSlashes(relativePath);
+    var fileName = getHookFileName(hook);
+
+    if (clean == "hooks/" + fileName) return 0;
+    if (clean == fileName) return 1;
+    if (clean == hook + "/" + fileName) return 2;
+    return 10;
+}
+
+function getHookFileName(hook) {
+    return GIT_LOADER_HOOK_FILE_NAMES[hook] == null ? (hook + ".js") : GIT_LOADER_HOOK_FILE_NAMES[hook];
+}
+
+function detectLayoutMode(relativePath, hook) {
+    var clean = normalizeSlashes(relativePath);
+    var fileName = getHookFileName(hook);
+
+    if (clean == "hooks/" + fileName) return "hooks";
+    if (clean == fileName) return "flat";
+    if (clean == hook + "/" + fileName) return "legacy_nested";
+    return "legacy_other";
+}
+
+function layoutRank(mode) {
+    if (mode == "hooks") return 0;
+    if (mode == "flat") return 1;
+    if (mode == "legacy_nested") return 2;
+    if (mode == "legacy_other") return 3;
+    return 99;
+}
+
+function buildPackageSummaryText(pkg) {
+    if (pkg == null) return buildEmptySummary();
+
+    var lines = [];
+    lines.push("Репозиторий: " + pkg.owner + "/" + pkg.repo);
+    lines.push("Ветка: " + pkg.ref);
+    lines.push("Папка: " + (hasText(pkg.rootPath) ? pkg.rootPath : "/"));
+    lines.push("Layout: " + describeLayoutMode(pkg.layoutMode));
+    lines.push("Найдено JS-файлов: " + pkg.files.length);
+    lines.push("Поддерживаемых hook-скриптов: " + pkg.supportedFiles.length);
+    lines.push("Hooks: " + joinHookNames(pkg.supportedHooks));
+    if (pkg.selectedPaths != null && pkg.selectedPaths.length > 0) {
+        lines.push("Выбранные файлы: " + pkg.selectedPaths.join(", "));
+    }
+    lines.push("Порядок в NPC: " + GIT_LOADER_HOOK_ORDER.join(" -> "));
+    lines.push("Игнорировано файлов: " + pkg.ignoredFiles.length);
+    lines.push("Применение: ПКМ по NPC этим предметом");
+    return lines.join("\n");
+}
+
+function buildEmptySummary() {
+    return [
+        "Код ещё не загружен.",
+        "URL должен указывать на папку одного NPC-пакета в GitHub.",
+        "Рекомендуемый layout: hooks/<hook>.js",
+        "Совместимость: <hook>.js и <hook>/<hook>.js",
+        "Порядок в NPC: " + GIT_LOADER_HOOK_ORDER.join(" -> ")
+    ].join("\n");
+}
+
+function describeLayoutMode(layoutMode) {
+    if (layoutMode == "hooks") return "hooks/<hook>.js";
+    if (layoutMode == "flat") return "<hook>.js";
+    if (layoutMode == "legacy_nested") return "<hook>/<hook>.js";
+    if (layoutMode == "legacy_other") return "legacy nested";
+    return "not detected";
 }

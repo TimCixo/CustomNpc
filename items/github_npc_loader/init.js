@@ -98,3 +98,44 @@ function readTag(tag, key) {
 function hasText(value) {
     return value != null && ("" + value).replace(/^\s+|\s+$/g, "").length > 0;
 }
+
+function init(event) {
+    var item = event.item;
+    if (item == null || item.isEmpty()) return;
+
+    var mcStack = item.getMCItemStack();
+    if (mcStack == null || mcStack.isEmpty()) return;
+
+    var tag = readOrCreateTag(mcStack);
+    tag.putString("item_type", GIT_LOADER_ITEM_TYPE);
+    if (!hasText(readTag(tag, GIT_LOADER_SESSION_KEY))) {
+        tag.putString(GIT_LOADER_SESSION_KEY, "" + GitLoaderInit_UUID.randomUUID());
+    }
+    if (!hasText(readTag(tag, GIT_LOADER_LAST_URL_KEY))) {
+        tag.putString(GIT_LOADER_LAST_URL_KEY, "");
+    }
+    if (!hasText(readTag(tag, GIT_LOADER_BUNDLE_KEY))) {
+        tag.putString(GIT_LOADER_BUNDLE_KEY, "");
+    }
+    if (!hasText(readTag(tag, GIT_LOADER_HOOKS_KEY))) {
+        tag.putString(GIT_LOADER_HOOKS_KEY, "");
+    }
+    if (!hasText(readTag(tag, GIT_LOADER_SUMMARY_KEY))) {
+        tag.putString(GIT_LOADER_SUMMARY_KEY, "");
+    }
+
+    mcStack.set(GitLoaderInit_DataComponents.CUSTOM_DATA, GitLoaderInit_CustomData.of(tag));
+    mcStack.set(GitLoaderInit_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
+    mcStack.set(GitLoaderInit_DataComponents.CUSTOM_NAME, GitLoaderInit_Component.literal(GIT_LOADER_ITEM_NAME));
+    mcStack.set(GitLoaderInit_DataComponents.LORE, new GitLoaderInit_ItemLore(buildLore([
+        "ПКМ по воздуху открывает загрузчик GitHub.",
+        "URL должен вести на папку одного NPC-пакета.",
+        "Рекомендуемый layout: hooks/<hook>.js",
+        "ПКМ по NPC записывает hooks в порядке вкладок NPC."
+    ])));
+    applyLegacyItemPresentation(item, GIT_LOADER_ITEM_NAME);
+
+    try {
+        if (item.setDurabilityShow != null) item.setDurabilityShow(false);
+    } catch (e) {}
+}
