@@ -37,6 +37,8 @@ var GIT_LOADER_LAST_STORED_BUNDLE_KEY = "github_npc_loader_last_bundle";
 var GIT_LOADER_LAST_STORED_HOOKS_KEY = "github_npc_loader_last_hooks";
 var GIT_LOADER_LAST_STORED_SUMMARY_KEY = "github_npc_loader_last_summary";
 var GIT_LOADER_LAST_STORED_PACKAGE_KEY = "github_npc_loader_last_package";
+var GIT_LOADER_NPC_SHARED_MANIFEST_KEY = "github_npc_loader_shared_manifest";
+var GIT_LOADER_NPC_SHARED_PREFIX = "github_npc_loader_shared_";
 var GIT_LOADER_MAX_SCRIPT_CHARS = 65000;
 var GIT_LOADER_HTTP_RETRIES = 4;
 var GIT_LOADER_HTTP_RETRY_DELAY_MS = 350;
@@ -129,22 +131,34 @@ function customGuiScroll(event) {
             return;
         }
 
-        var selected = getSelectedIndex(scroll);
-        if (selected == 0) {
+        var selectedIndex = getSelectedIndex(scroll);
+        var selected = normalizeActionSelection(selectedIndex);
+        if (selected == "load") {
             handleLoadAction(player, gui, sessionId);
-        } else if (selected == 1) {
+        } else if (selected == "summary") {
             setSummary(gui, getCachedSummary(player, sessionId, null));
             setStatus(gui, "Сводка обновлена.");
-        } else if (selected == 2) {
+        } else if (selected == "clear") {
             clearCachedPackage(player, sessionId);
             clearLoadedFieldsOnHeldItem(player, sessionId);
             setSummary(gui, buildEmptySummary());
             setStatus(gui, "Кэш кода очищен.");
             player.message("GitHub Loader: кэш кода очищен.");
+        } else {
+            setStatus(gui, "Не удалось определить действие. Индекс: " + selectedIndex);
+            player.message("GitHub Loader: неизвестный индекс scroll: " + selectedIndex);
         }
 
         safeUpdate(gui);
-    } catch (e) {}
+    } catch (e) {
+        try {
+            setStatus(event.gui, "Ошибка GUI: " + shortError(e));
+            safeUpdate(event.gui);
+        } catch (ignored) {}
+        try {
+            event.player.message("GitHub Loader: ошибка GUI. " + shortError(e));
+        } catch (ignored2) {}
+    }
 }
 
 function customGuiClosed(event) {
@@ -359,6 +373,7 @@ function applyPackageToNpc(pkg, npc) {
             return { ok: false, message: "NBT NPC недоступен." };
         }
 
+        writeSharedFilesToNpc(npc, pkg);
         nbt.mcSetTag("Scripts", buildScriptsMcTag(pkg));
         nbt.setBoolean("ScriptEnabled", true);
         nbt.putString("ScriptLanguage", "ECMAScript");
@@ -374,24 +389,36 @@ function applyPackageToNpc(pkg, npc) {
 
 function buildScriptsMcTag(pkg) {
     var scriptsTag = new GitLoader_MCListTag();
+    var fileMap = {};
 
-    if (pkg != null && pkg.supportedFiles != null && pkg.supportedFiles.length > 0) {
+    if (pkg != null && pkg.supportedFiles != null) {
         for (var i = 0; i < pkg.supportedFiles.length; i++) {
-            scriptsTag.add(createRootScriptEntry(pkg.supportedFiles[i]));
+            var file = pkg.supportedFiles[i];
+            if (file == null || !hasText(file.hook)) continue;
+            fileMap[file.hook] = file;
         }
-        return scriptsTag;
     }
 
-    scriptsTag.add(createRootScriptEntry({
-        hook: "bundle",
-        relativePath: "bundle.js",
-        body: pkg == null ? "" : pkg.bundleScript
-    }));
+    for (var j = 0; j < GIT_LOADER_HOOK_ORDER.length; j++) {
+        var hook = GIT_LOADER_HOOK_ORDER[j];
+        var hookFile = fileMap[hook];
+
+        if (hookFile == null) {
+            scriptsTag.add(createRootScriptEntry(pkg, {
+                hook: hook,
+                relativePath: "",
+                body: ""
+            }));
+        } else {
+            scriptsTag.add(createRootScriptEntry(pkg, hookFile));
+        }
+    }
+
     return scriptsTag;
 }
 
-function createRootScriptEntry(file) {
-    var script = file == null || file.body == null ? "" : ("" + file.body);
+function createRootScriptEntry(pkg, file) {
+    var script = buildHookScriptWithSharedBootstrap(pkg, file);
     var rootTag = new GitLoader_MCCompoundTag();
     rootTag.putString("Script", script);
     rootTag.put("Console", new GitLoader_MCListTag());
@@ -399,6 +426,128 @@ function createRootScriptEntry(file) {
     rootTag.putString("GitHubHook", file != null && file.hook != null ? "" + file.hook : "");
     rootTag.putString("GitHubPath", file != null && file.relativePath != null ? "" + file.relativePath : "");
     return rootTag;
+}
+
+function buildHookScriptWithSharedBootstrap(pkg, file) {
+    var script = file == null || file.body == null ? "" : ("" + file.body);
+    if (!hasText(script)) return "";
+    if (pkg == null || pkg.sharedFiles == null || pkg.sharedFiles.length == 0) return script;
+    if (!hasText(file.hook)) return script;
+
+    return [
+        buildSharedBootstrapScript(file.hook),
+        "",
+        trimTrailingWhitespace(script)
+    ].join("\n");
+}
+
+function buildSharedBootstrapScript(hook) {
+    var safeHook = hasText(hook) ? ("" + hook) : "";
+    safeHook = safeHook.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+
+    return [
+        "var __gitLoaderSharedLoaded = false;",
+        "function __gitLoaderHasStoredValue(value) {",
+        "    var text = (\"\" + value).replace(/^\\s+|\\s+$/g, \"\");",
+        "    return text.length > 0 && text != \"null\" && text != \"undefined\";",
+        "}",
+        "function __gitLoaderResolveNpc(event) {",
+        "    if (event == null) return null;",
+        "    try { if (event.npc != null) return event.npc; } catch (e1) {}",
+        "    try { if (event.target != null && event.target.getStoreddata != null) return event.target; } catch (e2) {}",
+        "    return null;",
+        "}",
+        "function __gitLoaderLoadShared(event) {",
+        "    if (__gitLoaderSharedLoaded) return;",
+        "    var npc = __gitLoaderResolveNpc(event);",
+        "    if (npc == null) return;",
+        "    var data = npc.getStoreddata();",
+        "    if (data == null) return;",
+        "    var manifestText = \"\" + data.get(\"" + GIT_LOADER_NPC_SHARED_MANIFEST_KEY + "\");",
+        "    if (!__gitLoaderHasStoredValue(manifestText)) {",
+        "        __gitLoaderSharedLoaded = true;",
+        "        return;",
+        "    }",
+        "    var manifest = null;",
+        "    try { manifest = JSON.parse(manifestText); } catch (e3) { throw \"GitHub Loader shared manifest parse error: \" + e3; }",
+        "    if (manifest == null || manifest.length == null) {",
+        "        __gitLoaderSharedLoaded = true;",
+        "        return;",
+        "    }",
+        "    var __GitLoaderShared_Base64 = Java.type(\"java.util.Base64\");",
+        "    var __GitLoaderShared_StandardCharsets = Java.type(\"java.nio.charset.StandardCharsets\");",
+        "    for (var i = 0; i < manifest.length; i++) {",
+        "        var entry = manifest[i];",
+        "        if (entry == null || !__gitLoaderHasStoredValue(entry.key)) continue;",
+        "        var encoded = \"\" + data.get(entry.key);",
+        "        if (!__gitLoaderHasStoredValue(encoded)) continue;",
+        "        var bytes = __GitLoaderShared_Base64.getDecoder().decode(encoded);",
+        "        var sharedScript = \"\" + new java.lang.String(bytes, __GitLoaderShared_StandardCharsets.UTF_8);",
+        "        eval(sharedScript + \"\\n\");",
+        "    }",
+        "    __gitLoaderSharedLoaded = true;",
+        "}",
+        "function __gitLoaderWrapHook(name) {",
+        "    var original = this[name];",
+        "    if (typeof original != \"function\") return;",
+        "    this[name] = function(event) {",
+        "        __gitLoaderLoadShared(event);",
+        "        return original.apply(this, arguments);",
+        "    };",
+        "}",
+        "__gitLoaderWrapHook(\"" + safeHook + "\");"
+    ].join("\n");
+}
+
+function writeSharedFilesToNpc(npc, pkg) {
+    clearStoredSharedFiles(npc);
+    if (npc == null || pkg == null || pkg.sharedFiles == null || pkg.sharedFiles.length == 0) return;
+
+    var data = npc.getStoreddata();
+    if (data == null) return;
+
+    var manifest = [];
+    for (var i = 0; i < pkg.sharedFiles.length; i++) {
+        var file = pkg.sharedFiles[i];
+        if (file == null || !hasText(file.relativePath)) continue;
+
+        var key = getSharedStorageKey(file.relativePath);
+        data.put(key, encodeBundle(file.body == null ? "" : ("" + file.body)));
+        manifest.push({
+            path: file.relativePath,
+            key: key
+        });
+    }
+
+    data.put(GIT_LOADER_NPC_SHARED_MANIFEST_KEY, JSON.stringify(manifest));
+}
+
+function clearStoredSharedFiles(npc) {
+    if (npc == null) return;
+
+    var data = npc.getStoreddata();
+    if (data == null) return;
+
+    try {
+        var manifestText = "" + data.get(GIT_LOADER_NPC_SHARED_MANIFEST_KEY);
+        if (hasStoredValue(manifestText)) {
+            var manifest = JSON.parse(manifestText);
+            if (manifest != null && manifest.length != null) {
+                for (var i = 0; i < manifest.length; i++) {
+                    var entry = manifest[i];
+                    if (entry != null && hasText(entry.key)) data.remove(entry.key);
+                }
+            }
+        }
+    } catch (e) {}
+
+    try {
+        data.remove(GIT_LOADER_NPC_SHARED_MANIFEST_KEY);
+    } catch (e2) {}
+}
+
+function getSharedStorageKey(relativePath) {
+    return GIT_LOADER_NPC_SHARED_PREFIX + encodeQuery(normalizeSlashes(relativePath));
 }
 
 function parseGithubTarget(url) {
@@ -850,6 +999,13 @@ function getSelectedIndex(scroll) {
     return -1;
 }
 
+function normalizeActionSelection(index) {
+    if (index === 0) return "load";
+    if (index === 1) return "summary";
+    if (index === 2) return "clear";
+    return "";
+}
+
 function getGuiText(gui, id) {
     try {
         var comp = gui.getComponent(id);
@@ -992,7 +1148,9 @@ function decodeBundle(text) {
 function encodePackage(pkg) {
     try {
         var safeFiles = [];
+        var safeSharedFiles = [];
         var supportedFiles = pkg != null && pkg.supportedFiles != null ? pkg.supportedFiles : [];
+        var sharedFiles = pkg != null && pkg.sharedFiles != null ? pkg.sharedFiles : [];
 
         for (var i = 0; i < supportedFiles.length; i++) {
             safeFiles.push({
@@ -1002,10 +1160,18 @@ function encodePackage(pkg) {
             });
         }
 
+        for (var j = 0; j < sharedFiles.length; j++) {
+            safeSharedFiles.push({
+                relativePath: sharedFiles[j].relativePath,
+                body: sharedFiles[j].body
+            });
+        }
+
         return encodeBundle(JSON.stringify({
             bundleScript: pkg == null ? "" : pkg.bundleScript,
             supportedHooks: pkg == null ? [] : pkg.supportedHooks,
-            supportedFiles: safeFiles
+            supportedFiles: safeFiles,
+            sharedFiles: safeSharedFiles
         }));
     } catch (e) {
         return "";
@@ -1022,6 +1188,7 @@ function decodePackage(text) {
 
         parsed.supportedHooks = parsed.supportedHooks == null ? [] : parsed.supportedHooks;
         parsed.supportedFiles = parsed.supportedFiles == null ? [] : parsed.supportedFiles;
+        parsed.sharedFiles = parsed.sharedFiles == null ? [] : parsed.sharedFiles;
         return parsed;
     } catch (e) {
         return null;
@@ -1105,8 +1272,9 @@ function loadGithubPackage(url) {
     collectGithubFiles(parsed.owner, parsed.repo, parsed.path, ref, normalizeSlashes(parsed.path), files);
 
     var selection = selectHookFiles(files);
+    var sharedFiles = selectSharedFiles(files);
     var supported = selection.supportedFiles;
-    var ignored = selection.ignoredFiles;
+    var ignored = collectIgnoredFiles(files, selection.selectedPaths, collectSharedPaths(sharedFiles));
 
     var bundle = buildScriptBundle(url, supported);
     if (!hasText(bundle)) throw "Папка не содержит поддерживаемых hook-файлов.";
@@ -1122,10 +1290,12 @@ function loadGithubPackage(url) {
         rootPath: parsed.path,
         files: files,
         supportedFiles: supported,
+        sharedFiles: sharedFiles,
         supportedHooks: extractHooks(supported),
         ignoredFiles: ignored,
         layoutMode: selection.layoutMode,
         selectedPaths: selection.selectedPaths,
+        selectedSharedPaths: collectSharedPaths(sharedFiles),
         bundleScript: bundle,
         loadedAt: "" + GitLoader_System.currentTimeMillis()
     };
@@ -1170,6 +1340,60 @@ function selectHookFiles(files) {
         selectedPaths: selectedPaths,
         layoutMode: layoutMode
     };
+}
+
+function selectSharedFiles(files) {
+    var shared = [];
+
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        var clean = normalizeSlashes(file.relativePath);
+        if (clean.indexOf("shared/") !== 0) continue;
+        if (!isJsPath(clean)) continue;
+
+        shared.push({
+            relativePath: clean,
+            body: file.body
+        });
+    }
+
+    shared.sort(function(a, b) {
+        if (a.relativePath < b.relativePath) return -1;
+        if (a.relativePath > b.relativePath) return 1;
+        return 0;
+    });
+
+    return shared;
+}
+
+function collectSharedPaths(files) {
+    var paths = [];
+    if (files == null) return paths;
+
+    for (var i = 0; i < files.length; i++) {
+        if (files[i] != null && hasText(files[i].relativePath)) {
+            paths.push(files[i].relativePath);
+        }
+    }
+    return paths;
+}
+
+function collectIgnoredFiles(files, selectedHookPaths, selectedSharedPaths) {
+    var ignored = [];
+    var selectedLookup = {};
+    var hookPaths = selectedHookPaths == null ? [] : selectedHookPaths;
+    var sharedPaths = selectedSharedPaths == null ? [] : selectedSharedPaths;
+
+    for (var i = 0; i < hookPaths.length; i++) selectedLookup[hookPaths[i]] = true;
+    for (var j = 0; j < sharedPaths.length; j++) selectedLookup[sharedPaths[j]] = true;
+
+    for (var k = 0; k < files.length; k++) {
+        if (!selectedLookup[files[k].relativePath]) {
+            ignored.push(files[k].relativePath);
+        }
+    }
+
+    return ignored;
 }
 
 function groupFilesByHook(files) {
@@ -1259,6 +1483,7 @@ function buildPackageSummaryText(pkg) {
     lines.push("Layout: " + describeLayoutMode(pkg.layoutMode));
     lines.push("Найдено JS-файлов: " + pkg.files.length);
     lines.push("Поддерживаемых hook-скриптов: " + pkg.supportedFiles.length);
+    lines.push("Shared scripts: " + (pkg.sharedFiles == null ? 0 : pkg.sharedFiles.length));
     lines.push("Hooks: " + joinHookNames(pkg.supportedHooks));
     if (pkg.selectedPaths != null && pkg.selectedPaths.length > 0) {
         lines.push("Выбранные файлы: " + pkg.selectedPaths.join(", "));
