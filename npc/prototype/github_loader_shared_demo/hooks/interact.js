@@ -2,7 +2,7 @@ function interact(event) {
     var npc = event.npc;
     var player = event.player;
     var shared = gitLoaderRequireShared(event, "__shared");
-    var demoShared = shared.use(event, "demo_shared");
+    var demoShared = shared.demo;
 
     demoShared.ensureState(npc);
 

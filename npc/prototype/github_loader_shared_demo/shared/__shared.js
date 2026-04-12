@@ -1,5 +1,3 @@
 module.exports = {
-    use: function(event, libraryId) {
-        return gitLoaderRequireShared(event, libraryId);
-    }
+    demo: "demo_shared.js"
 };
