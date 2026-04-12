@@ -1,7 +1,8 @@
 function interact(event) {
     var npc = event.npc;
     var player = event.player;
-    var shared = gitLoaderRequireShared(event, "__shared");
+    var data = npc.getStoreddata();
+    var shared = (1, eval)("" + data.get("__shared"))(event);
     var demoShared = shared.demo;
 
     demoShared.ensureState(npc);
