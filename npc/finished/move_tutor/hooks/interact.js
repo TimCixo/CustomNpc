@@ -22,7 +22,7 @@ function interact(event) {
     var item = player.getMainhandItem();
 
     if (!isMoveTeachCoupon(item)) {
-        player.message("§eНужен купон на изучение движения в основной руке.");
+        player.message("В§eРќСѓР¶РµРЅ РєСѓРїРѕРЅ РЅР° РёР·СѓС‡РµРЅРёРµ РґРІРёР¶РµРЅРёСЏ РІ РѕСЃРЅРѕРІРЅРѕР№ СЂСѓРєРµ.");
         event.setCanceled(true);
         return;
     }
@@ -30,7 +30,7 @@ function interact(event) {
     try {
         player.showCustomGui(createPickerGui(player));
     } catch (e) {
-        player.message("§cCould not open team picker: " + e);
+        player.message("В§cCould not open team picker: " + e);
     }
 
     event.setCanceled(true);
@@ -51,7 +51,7 @@ function customGuiScroll(event) {
         }
     } catch (e) {
         try {
-            event.player.message("§cTeam picker error: " + e);
+            event.player.message("В§cTeam picker error: " + e);
         } catch (ignored) {}
     }
 }
@@ -74,19 +74,19 @@ function handleMovePick(event) {
 
     var slotText = trimString(player.getStoreddata().get(SELECTED_SLOT_KEY));
     if (!hasText(slotText)) {
-        player.message("§cNo selected party slot.");
+        player.message("В§cNo selected party slot.");
         return;
     }
 
     var slotIndex = parseInt(slotText, 10) - 1;
     if (isNaN(slotIndex) || slotIndex < 0 || slotIndex > 5) {
-        player.message("§cInvalid selected slot.");
+        player.message("В§cInvalid selected slot.");
         return;
     }
 
     var pokemon = getPartyPokemon(player, slotIndex);
     if (pokemon == null) {
-        player.message("§cSelected Pokemon is no longer in that slot.");
+        player.message("В§cSelected Pokemon is no longer in that slot.");
         return;
     }
 
@@ -107,7 +107,7 @@ function handleMovePick(event) {
     var output = runServerCommand(player, command);
 
     if (output == null) {
-        player.message("§cCould not run /teach.");
+        player.message("В§cCould not run /teach.");
         return;
     }
 
