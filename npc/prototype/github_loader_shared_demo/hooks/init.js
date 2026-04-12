@@ -1,3 +1,4 @@
 function init(event) {
-    sharedDemoEnsureState(event.npc);
+    var demoShared = gitLoaderRequireShared(event, "demo_shared");
+    demoShared.ensureState(event.npc);
 }

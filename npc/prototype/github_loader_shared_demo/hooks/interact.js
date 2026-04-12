@@ -1,15 +1,16 @@
 function interact(event) {
     var npc = event.npc;
     var player = event.player;
+    var demoShared = gitLoaderRequireShared(event, "demo_shared");
 
-    sharedDemoEnsureState(npc);
+    demoShared.ensureState(npc);
 
     var playerName = "";
     try {
         playerName = "" + player.getName();
     } catch (e) {}
 
-    var count = sharedDemoIncrement(npc, playerName);
+    var count = demoShared.increment(npc, playerName);
     player.message("Shared demo click=" + count);
-    player.message(sharedDemoBuildStatus(npc));
+    player.message(demoShared.buildStatus(npc));
 }

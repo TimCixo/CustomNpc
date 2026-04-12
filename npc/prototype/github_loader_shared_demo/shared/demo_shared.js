@@ -1,52 +1,54 @@
-var SHARED_DEMO_COUNT_KEY = "shared_demo_count";
-var SHARED_DEMO_LAST_PLAYER_KEY = "shared_demo_last_player";
+var COUNT_KEY = "shared_demo_count";
+var LAST_PLAYER_KEY = "shared_demo_last_player";
 
-function sharedDemoTrim(value) {
+function trim(value) {
     return ("" + value).replace(/^\s+|\s+$/g, "");
 }
 
-function sharedDemoHasText(value) {
-    return value != null && sharedDemoTrim(value).length > 0;
+function hasText(value) {
+    return value != null && trim(value).length > 0;
 }
 
-function sharedDemoParseInt(value, fallback) {
-    var parsed = parseInt(sharedDemoTrim(value), 10);
+function parseIntSafe(value, fallback) {
+    var parsed = parseInt(trim(value), 10);
     return isNaN(parsed) ? fallback : parsed;
 }
 
-function sharedDemoEnsureState(npc) {
-    if (npc == null) return;
+module.exports = {
+    ensureState: function(npc) {
+        if (npc == null) return;
 
-    var data = npc.getStoreddata();
-    if (data == null) return;
+        var data = npc.getStoreddata();
+        if (data == null) return;
 
-    if (!sharedDemoHasText(data.get(SHARED_DEMO_COUNT_KEY))) {
-        data.put(SHARED_DEMO_COUNT_KEY, "0");
+        if (!hasText(data.get(COUNT_KEY))) {
+            data.put(COUNT_KEY, "0");
+        }
+
+        if (!hasText(data.get(LAST_PLAYER_KEY))) {
+            data.put(LAST_PLAYER_KEY, "");
+        }
+    },
+
+    increment: function(npc, playerName) {
+        this.ensureState(npc);
+
+        var data = npc.getStoreddata();
+        var nextCount = parseIntSafe(data.get(COUNT_KEY), 0) + 1;
+
+        data.put(COUNT_KEY, "" + nextCount);
+        data.put(LAST_PLAYER_KEY, hasText(playerName) ? playerName : "");
+        return nextCount;
+    },
+
+    buildStatus: function(npc) {
+        this.ensureState(npc);
+
+        var data = npc.getStoreddata();
+        var count = parseIntSafe(data.get(COUNT_KEY), 0);
+        var lastPlayer = trim(data.get(LAST_PLAYER_KEY));
+
+        if (!hasText(lastPlayer)) lastPlayer = "<none>";
+        return "Shared demo count=" + count + ", last_player=" + lastPlayer;
     }
-
-    if (!sharedDemoHasText(data.get(SHARED_DEMO_LAST_PLAYER_KEY))) {
-        data.put(SHARED_DEMO_LAST_PLAYER_KEY, "");
-    }
-}
-
-function sharedDemoIncrement(npc, playerName) {
-    sharedDemoEnsureState(npc);
-
-    var data = npc.getStoreddata();
-    var nextCount = sharedDemoParseInt(data.get(SHARED_DEMO_COUNT_KEY), 0) + 1;
-
-    data.put(SHARED_DEMO_COUNT_KEY, "" + nextCount);
-    data.put(SHARED_DEMO_LAST_PLAYER_KEY, sharedDemoHasText(playerName) ? playerName : "");
-    return nextCount;
-}
-
-function sharedDemoBuildStatus(npc) {
-    sharedDemoEnsureState(npc);
-
-    var data = npc.getStoreddata();
-    var count = sharedDemoParseInt(data.get(SHARED_DEMO_COUNT_KEY), 0);
-    var lastPlayer = sharedDemoTrim(data.get(SHARED_DEMO_LAST_PLAYER_KEY));
-
-    if (!sharedDemoHasText(lastPlayer)) lastPlayer = "<none>";
-    return "Shared demo count=" + count + ", last_player=" + lastPlayer;
-}
+};
