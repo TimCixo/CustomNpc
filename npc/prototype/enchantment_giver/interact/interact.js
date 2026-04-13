@@ -1,5 +1,6 @@
 var BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
 var EnchantmentHelper = Java.type("net.minecraft.world.item.enchantment.EnchantmentHelper");
+var Registries = Java.type("net.minecraft.core.registries.Registries");
 
 function interact(event) {
     var npc = event.npc;
@@ -17,24 +18,29 @@ function interact(event) {
         return;
     }
 
-    var enchantments = BuiltInRegistries.ENCHANTMENT;
-    var iterator = enchantments.iterator();
-    var enchanted = false;
+    try {
+        var registry = npc.getWorld().registryAccess().registry(Registries.ENCHANTMENT).get();
+        var iterator = registry.entrySet().iterator();
+        var enchanted = false;
 
-    while (iterator.hasNext()) {
-        var ench = iterator.next();
-        if (ench.canEnchant(mcStack)) {
-            var maxLevel = ench.getMaxLevel();
-            EnchantmentHelper.setEnchantmentLevel(mcStack, ench, maxLevel);
-            enchanted = true;
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            var ench = entry.getValue();
+            if (ench.canEnchant(mcStack)) {
+                var maxLevel = ench.getMaxLevel();
+                EnchantmentHelper.setEnchantmentLevel(mcStack, ench, maxLevel);
+                enchanted = true;
+            }
         }
-    }
 
-    if (enchanted) {
-        item.setMCItemStack(mcStack);
-        player.updateClient();
-        player.message("§aItem enchanted with all possible enchantments at max level!");
-    } else {
-        player.message("§cNo enchantments could be applied to this item.");
+        if (enchanted) {
+            item.setMCItemStack(mcStack);
+            player.updateClient();
+            player.message("§aItem enchanted with all possible enchantments at max level!");
+        } else {
+            player.message("§cNo enchantments could be applied to this item.");
+        }
+    } catch (e) {
+        player.message("§cError enchanting item: " + e.message);
     }
 }
