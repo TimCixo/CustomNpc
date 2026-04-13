@@ -64,7 +64,7 @@ function interact(event) {
         var enchanted = false;
 
         for (var i = 0; i < ALL_ENCHANTMENTS.length; i++) {
-            var ench = ALL_ENCHANTMENTS[i].value();
+            var ench = ALL_ENCHANTMENTS[i];
             if (ench != null && ench.canEnchant(mcStack)) {
                 var maxLevel = ench.getMaxLevel();
                 EnchantmentHelper.setEnchantmentLevel(mcStack, ench, maxLevel);
