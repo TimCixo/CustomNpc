@@ -1,48 +1,47 @@
-var BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
 var EnchantmentHelper = Java.type("net.minecraft.world.item.enchantment.EnchantmentHelper");
-var ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
+var Enchantments = Java.type("net.minecraft.world.item.enchantment.Enchantments");
 
-var ENCHANTMENT_IDS = [
-    "minecraft:protection",
-    "minecraft:fire_protection",
-    "minecraft:feather_falling",
-    "minecraft:blast_protection",
-    "minecraft:projectile_protection",
-    "minecraft:thorns",
-    "minecraft:depth_strider",
-    "minecraft:frost_walker",
-    "minecraft:binding_curse",
-    "minecraft:soul_speed",
-    "minecraft:swift_sneak",
-    "minecraft:sharpness",
-    "minecraft:smite",
-    "minecraft:bane_of_arthropods",
-    "minecraft:knockback",
-    "minecraft:fire_aspect",
-    "minecraft:looting",
-    "minecraft:sweeping_edge",
-    "minecraft:efficiency",
-    "minecraft:silk_touch",
-    "minecraft:unbreaking",
-    "minecraft:fortune",
-    "minecraft:power",
-    "minecraft:punch",
-    "minecraft:flame",
-    "minecraft:infinity",
-    "minecraft:luck_of_the_sea",
-    "minecraft:lure",
-    "minecraft:loyalty",
-    "minecraft:impaling",
-    "minecraft:riptide",
-    "minecraft:channeling",
-    "minecraft:multishot",
-    "minecraft:piercing",
-    "minecraft:quick_charge",
-    "minecraft:wind_burst",
-    "minecraft:density",
-    "minecraft:breach",
-    "minecraft:mending",
-    "minecraft:vanishing_curse"
+var ALL_ENCHANTMENTS = [
+    Enchantments.PROTECTION,
+    Enchantments.FIRE_PROTECTION,
+    Enchantments.FEATHER_FALLING,
+    Enchantments.BLAST_PROTECTION,
+    Enchantments.PROJECTILE_PROTECTION,
+    Enchantments.THORNS,
+    Enchantments.DEPTH_STRIDER,
+    Enchantments.FROST_WALKER,
+    Enchantments.BINDING_CURSE,
+    Enchantments.SOUL_SPEED,
+    Enchantments.SWIFT_SNEAK,
+    Enchantments.SHARPNESS,
+    Enchantments.SMITE,
+    Enchantments.BANE_OF_ARTHROPODS,
+    Enchantments.KNOCKBACK,
+    Enchantments.FIRE_ASPECT,
+    Enchantments.LOOTING,
+    Enchantments.SWEEPING_EDGE,
+    Enchantments.EFFICIENCY,
+    Enchantments.SILK_TOUCH,
+    Enchantments.UNBREAKING,
+    Enchantments.FORTUNE,
+    Enchantments.POWER,
+    Enchantments.PUNCH,
+    Enchantments.FLAME,
+    Enchantments.INFINITY,
+    Enchantments.LUCK_OF_THE_SEA,
+    Enchantments.LURE,
+    Enchantments.LOYALTY,
+    Enchantments.IMPALING,
+    Enchantments.RIPTIDE,
+    Enchantments.CHANNELING,
+    Enchantments.MULTISHOT,
+    Enchantments.PIERCING,
+    Enchantments.QUICK_CHARGE,
+    Enchantments.WIND_BURST,
+    Enchantments.DENSITY,
+    Enchantments.BREACH,
+    Enchantments.MENDING,
+    Enchantments.VANISHING_CURSE
 ];
 
 function interact(event) {
@@ -64,8 +63,8 @@ function interact(event) {
     try {
         var enchanted = false;
 
-        for (var i = 0; i < ENCHANTMENT_IDS.length; i++) {
-            var ench = BuiltInRegistries.ENCHANTMENT.get(ResourceLocation.parse(ENCHANTMENT_IDS[i]));
+        for (var i = 0; i < ALL_ENCHANTMENTS.length; i++) {
+            var ench = ALL_ENCHANTMENTS[i];
             if (ench != null && ench.canEnchant(mcStack)) {
                 var maxLevel = ench.getMaxLevel();
                 EnchantmentHelper.setEnchantmentLevel(mcStack, ench, maxLevel);
