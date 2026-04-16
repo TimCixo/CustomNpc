@@ -1,14 +1,15 @@
 {
   "compilerOptions": {
     "checkJs": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0"
   },
   "include": [
-    "npc/**/*.js",
-    "items/**/*.js",
-    "blocks/**/*.js",
-    "modules/**/*.js",
-    "template/**/*.js",
+    "src/npc/**/*.js",
+    "src/items/**/*.js",
+    "src/blocks/**/*.js",
+    "src/modules/**/*.js",
+    "src/template/**/*.js",
     "types/**/*.d.ts"
   ]
 }

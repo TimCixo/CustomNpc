@@ -1,11 +1,13 @@
 {
   "compilerOptions": {
     "checkJs": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0"
   },
   "include": [
-    "**/*.js",
-    "**/*.ts",
-    "**/*.d.ts"
+    "*.js",
+    "*.ts",
+    "*.d.ts",
+    "mods/**/*.d.ts"
   ]
 }
