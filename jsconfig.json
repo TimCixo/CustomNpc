@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "baseUrl": "."
+  },
+  "include": [
+    "npc/**/*.js",
+    "items/**/*.js",
+    "blocks/**/*.js",
+    "modules/**/*.js",
+    "template/**/*.js",
+    "types/**/*.d.ts"
+  ]
+}
