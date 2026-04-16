@@ -33,6 +33,31 @@ The project contains ready-made NPC flows, scripted items and event logic writte
 
 - [npc](/e:/Projects/CustomNpc/npc)
 - [items](/e:/Projects/CustomNpc/items)
+- [blocks](/e:/Projects/CustomNpc/blocks)
+- [modules](/e:/Projects/CustomNpc/modules)
+- [docs](/e:/Projects/CustomNpc/docs)
+- [types](/e:/Projects/CustomNpc/types)
+- [template](/e:/Projects/CustomNpc/template)
+
+## Types Folder
+
+The repository now includes a root-level [types](/e:/Projects/CustomNpc/types) directory with generated `.d.ts` declaration bundles for `CustomNPCs Unofficial` and other mods from the active 1.21.1 pack.
+
+Use this folder as a local reference layer when you need to:
+
+- inspect available Java classes and package names;
+- confirm mod namespaces before calling `Java.type(...)`;
+- improve editor navigation and autocomplete while writing hook scripts.
+
+Important constraints:
+
+- files inside `types` are documentation/support artifacts, not runtime scripts for CustomNPCs;
+- they are not loaded by NPC hooks in-game;
+- folder names are versioned per mod jar, so they may change when the pack is updated.
+
+If you need the CustomNPCs declarations specifically, start with:
+
+- [types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230](/e:/Projects/CustomNpc/types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230)
 
 ## Main Module
 
