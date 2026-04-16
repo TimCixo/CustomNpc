@@ -58,6 +58,7 @@ Important constraints:
 If you need the CustomNPCs declarations specifically, start with:
 
 - [types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230](/e:/Projects/CustomNpc/types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230)
+- For practical usage notes, see [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md)
 
 ## Main Module
 
