@@ -11,9 +11,9 @@
 </br>
 <h2 align="left"> Description </h2>
 
-Repository with scripted systems for `CustomNPCs Unofficial` on `Minecraft 1.21.1`.
+Repository of scripted systems for `CustomNPCs Unofficial` on `Minecraft 1.21.1`.
 </br>
-The project contains ready-made NPC flows, scripted items and event logic written for in-game hooks such as `init`, `interact` and `timer`.
+This project is a working collection of NPC flows, scripted items, reusable runtime helpers, and technical experiments built for the in-game script environment rather than for a conventional standalone JavaScript runtime.
 
 - Build linked NPC systems;
 - Use `storeddata` and `tempdata` for runtime state;
@@ -22,76 +22,123 @@ The project contains ready-made NPC flows, scripted items and event logic writte
 
 </br>
 
-## Getting Started
+## What This Repo Is
 
-1. Place the required NPCs in the world;
-2. Assign the needed hooks from this repository;
-3. Configure linked NPCs and item scripts;
-4. Test the flow directly in-game.
+This repository is primarily a source library for:
 
-## Project Structure
+- scripted NPC interactions;
+- custom item behavior;
+- dialog and GUI logic;
+- runtime state patterns built around `storeddata` and `tempdata`;
+- automation, utility, and gameplay helpers for a modded Minecraft pack.
 
-- [npc](/e:/Projects/CustomNpc/npc)
-- [items](/e:/Projects/CustomNpc/items)
-- [blocks](/e:/Projects/CustomNpc/blocks)
-- [modules](/e:/Projects/CustomNpc/modules)
-- [docs](/e:/Projects/CustomNpc/docs)
-- [types](/e:/Projects/CustomNpc/types)
-- [template](/e:/Projects/CustomNpc/template)
+Most code here is written for hook-based execution such as `init`, `interact`, `timer`, `dialogOption`, and similar CustomNPCs entry points.
 
-## Types Folder
+## What Makes It Different
 
-The repository now includes a root-level [types](/e:/Projects/CustomNpc/types) directory with generated `.d.ts` declaration bundles for `CustomNPCs Unofficial` and other mods from the active 1.21.1 pack.
+This codebase is shaped by the constraints of the CustomNPCs scripting environment:
 
-Use this folder as a local reference layer when you need to:
+- scripts run inside the in-game UI, not in a normal Node.js project;
+- hooks behave as separate entry points, not as one shared application runtime;
+- many integrations rely on Minecraft and NeoForge Java classes through `Java.type(...)`;
+- practical compatibility matters more than abstract cleanliness;
+- runtime state often lives in `npc.getTempdata()` and durable state in `npc.getStoreddata()`.
 
-- inspect available Java classes and package names;
-- confirm mod namespaces before calling `Java.type(...)`;
-- improve editor navigation and autocomplete while writing hook scripts.
+Because of that, the repository is less about framework structure and more about reliable patterns for getting real in-game systems working.
 
-Important constraints:
+## Repository Layout
 
-- files inside `types` are documentation/support artifacts, not runtime scripts for CustomNPCs;
-- they are not loaded by NPC hooks in-game;
-- folder names are versioned per mod jar, so they may change when the pack is updated.
+- [src](/e:/Projects/CustomNpc/src): main source tree for hooks, items, modules, templates, and NPC systems.
+- [src/npc](/e:/Projects/CustomNpc/src/npc): complete NPC scripts, finished systems, prototypes, and technical utilities.
+- [src/items](/e:/Projects/CustomNpc/src/items): scripted items and item-driven workflows.
+- [src/modules](/e:/Projects/CustomNpc/src/modules): reusable helper logic shared by scripted systems where the project structure allows it.
+- [src/blocks](/e:/Projects/CustomNpc/src/blocks): block-related scripted behavior.
+- [src/template](/e:/Projects/CustomNpc/src/template): base hook templates and reference starting points.
+- [docs](/e:/Projects/CustomNpc/docs): focused notes on CustomNPCs behavior, GUI limitations, tempdata runtime patterns, and mapping usage.
+- [types](/e:/Projects/CustomNpc/types): local declaration and mapping support for editor tooling and Java class discovery.
 
-If you need the CustomNPCs declarations specifically, start with:
+## How To Read The Project
 
-- [types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230](/e:/Projects/CustomNpc/types/CustomNPCs-Unofficial-NeoForge-1.21.1.20251230)
-- For practical usage notes, see [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md)
+If you are new to the repository, this path is the fastest way to orient yourself:
 
-## Main Module
+1. Read this `README` for the high-level model.
+2. Open [src/npc](/e:/Projects/CustomNpc/src/npc) and inspect the separation between `finished`, `prototype`, and `technical`.
+3. Look through [src/items](/e:/Projects/CustomNpc/src/items) and [src/modules](/e:/Projects/CustomNpc/src/modules) to see how item logic and reusable helpers are organized.
+4. Use [docs](/e:/Projects/CustomNpc/docs) for project-specific notes when the runtime behaves differently from what the API shape suggests.
+5. Use [types](/e:/Projects/CustomNpc/types) when you need package discovery, Java class lookup, or editor support for mod APIs.
 
-The main finished module in this repository is:
+## Source Areas
 
-- [pokemon_catch_coordinator](/e:/Projects/CustomNpc/npc/finished/pokemon_catch_coordinator)
+The source tree is organized by purpose rather than by build step.
 
-It includes:
+`src/npc`:
+- gameplay-facing NPCs;
+- technical NPC tools;
+- experiments and prototypes;
+- finished scripted systems that can be adapted into other worlds or projects.
 
-- `main` NPC
-- scripted `pokemon_catch_configurator` item
-- scripted `pokemon_catch_command` item
-- scripted `ticket`
-- bind-to-main item flow
+`src/items`:
+- items that configure, trigger, bind, grant, or coordinate scripted flows;
+- support items used by larger NPC systems.
 
-Detailed module documentation:
+`src/modules`:
+- helper logic for configuration, dialog flow, GUI handling, economy patterns, linker logic, and other reusable pieces.
 
-- [pokemon_catch_coordinator/README.md](/e:/Projects/CustomNpc/npc/finished/pokemon_catch_coordinator/README.md)
+`src/template`:
+- lightweight entry templates for common hooks;
+- useful when starting a new NPC or item without copying old production code blindly.
 
-## Principles
+## Tooling And Typing
 
-- Each hook is treated as a separate entry point;
-- Persistent state is stored in `storeddata`;
-- Temporary runtime state is stored in `tempdata`;
-- Item logic uses vanilla Java classes and modern `DataComponents`;
-- Solutions are designed to work inside the game UI without requiring shared world files.
+This repository includes local type support to make Java-backed scripting more practical in the editor.
 
-## Use Cases
+- [jsconfig.json](/e:/Projects/CustomNpc/jsconfig.json) enables `checkJs` for the repository source.
+- [types/minecraft_mappings_java_type.d.ts](/e:/Projects/CustomNpc/types/minecraft_mappings_java_type.d.ts) helps the IDE understand many `Java.type(...)` lookups.
+- [types/mods](/e:/Projects/CustomNpc/types/mods) contains versioned mod declaration bundles used for editor navigation and API discovery.
 
-This repository is intended as a base for:
+These files are developer aids only:
 
-- event NPCs
-- scripted items
-- Cobblemon-related gameplay systems
-- linked NPC setups
-- simple scripted automation
+- they are not loaded by CustomNPCs in-game;
+- they help with autocomplete and navigation;
+- they do not guarantee that a method is actually safe in the script runtime.
+
+For the practical workflow around mappings and mod declarations, see [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md).
+
+## Design Principles
+
+- Prefer working solutions over elegant but uncertain ones.
+- Treat every hook as its own entry point.
+- Keep persistent state in `storeddata`.
+- Keep live runtime objects and managers in `tempdata` when the logic is complex enough to justify it.
+- Prefer real Minecraft item access through `MCItemStack` and modern item components when item data matters.
+- Do not assume old CustomNPCs API behavior is still valid on `1.21.1`.
+
+## Typical Use Cases
+
+This repository is useful if you are building or studying:
+
+- utility NPCs;
+- dialogue-driven interactions;
+- custom reward or exchange systems;
+- linked NPC setups;
+- scripted item controllers;
+- Cobblemon-adjacent gameplay systems;
+- practical runtime architecture for CustomNPCs scripting on modern Minecraft.
+
+## Recommended Docs
+
+- [docs/customnpcs_tempdata_object_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_tempdata_object_notes.md)
+- [docs/customnpcs_gui_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_gui_notes.md)
+- [docs/customnpcs_command_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_command_notes.md)
+- [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md)
+
+## Working Model
+
+The best way to use this repository is not to treat it as a polished framework with one golden entry point.
+
+Instead, use it as:
+
+- a catalogue of working patterns;
+- a base for adapting finished systems;
+- a reference for modern CustomNPCs scripting on `Minecraft 1.21.1`;
+- a place to compare runtime-safe approaches against misleading editor or API assumptions.
