@@ -46,6 +46,10 @@ var GIT_LOADER_ACTION_SCROLL_ID = 9322;
 var GIT_LOADER_URL_FIELD_ID = 9323;
 var GIT_LOADER_STATUS_ID = 9324;
 var GIT_LOADER_TOKEN_FIELD_ID = 9326;
+var GIT_LOADER_PREVIEW_GUI_ID = 9325;
+var GIT_LOADER_PREVIEW_SCROLL_ID = 9329;
+var GIT_LOADER_PREVIEW_STATUS_ID = 9327;
+var GIT_LOADER_PREVIEW_CODE_ID = 9328;
 var GIT_LOADER_ACTIONS = ["Load", "Preview", "Clear"];
 
 var GIT_LOADER_SUPPORTED_FILES = {
@@ -119,30 +123,26 @@ function customGuiScroll(event) {
         var gui = event.gui;
         var scroll = event.scroll;
         var player = event.player;
-        if (gui == null || gui.getID() != GIT_LOADER_GUI_ID) return;
-        if (scroll == null || scroll.getID() != GIT_LOADER_ACTION_SCROLL_ID) return;
+        if (gui == null) return;
+        if (scroll == null) return;
 
-        var sessionId = getActiveSession(player);
-        if (!hasText(sessionId)) {
-            setStatus(gui, "No active item session.");
-            safeUpdate(gui);
-            return;
-        }
+        if (gui.getID() == GIT_LOADER_GUI_ID) {
+            var sessionId = getActiveSession(player);
+            if (!hasText(sessionId)) {
+                setStatus(gui, "No active item session.");
+                safeUpdate(gui);
+                return;
+            }
 
-        var selectedIndex = getSelectedIndex(scroll);
-        var selected = normalizeActionSelection(selectedIndex);
-        if (selected == "load") {
-            handleLoadAction(player, gui, sessionId);
-        } else if (selected == "preview") {
-            setStatus(gui, "Preview пока не реализован.");
-        } else if (selected == "clear") {
-            clearCachedPackage(player, sessionId);
-            clearLoadedFieldsOnHeldItem(player, sessionId);
-            setStatus(gui, "Кэш кода очищен.");
-            player.message("GitHub Loader: кэш кода очищен.");
+            if (scroll.getID() == GIT_LOADER_ACTION_SCROLL_ID) {
+                handleActionScroll(player, gui, sessionId, scroll);
+            } else {
+                return;
+            }
+        } else if (gui.getID() == GIT_LOADER_PREVIEW_GUI_ID) {
+            handlePreviewScroll(player, gui, scroll);
         } else {
-            setStatus(gui, "Не удалось определить действие. Индекс: " + selectedIndex);
-            player.message("GitHub Loader: неизвестный индекс scroll: " + selectedIndex);
+            return;
         }
 
         safeUpdate(gui);
@@ -207,6 +207,22 @@ function createGui(player, item) {
     return gui;
 }
 
+function createPreviewGui(player, pkg) {
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GIT_LOADER_PREVIEW_GUI_ID, 520, 300, false, player);
+    gui.addLabel(1, "Превью кода GitHub Loader", 10, 10, 220, 18, 0xFFFFFF);
+    gui.addColoredLine(2, 10, 34, 500, 34, 0x5C8DFF, 1.5);
+
+    gui.addLabel(10, "Файлы", 10, 42, 80, 14, 0xE0E0E0);
+    gui.addScroll(GIT_LOADER_PREVIEW_SCROLL_ID, 10, 58, 180, 232, buildPreviewEntries(pkg));
+
+    gui.addLabel(11, "Превью", 200, 42, 80, 14, 0xE0E0E0);
+    gui.addTextArea(GIT_LOADER_PREVIEW_STATUS_ID, 200, 58, 310, 18);
+    gui.addTextArea(GIT_LOADER_PREVIEW_CODE_ID, 200, 80, 310, 210);
+
+    renderPreviewState(gui, pkg, 0);
+    return gui;
+}
+
 function handleLoadAction(player, gui, sessionId) {
     var url = trimString(getGuiText(gui, GIT_LOADER_URL_FIELD_ID));
     var githubToken = trimString(getGuiText(gui, GIT_LOADER_TOKEN_FIELD_ID));
@@ -234,6 +250,52 @@ function handleLoadAction(player, gui, sessionId) {
         setStatus(gui, "Ошибка загрузки: " + shortError(e));
         player.message("GitHub Loader: ошибка загрузки. " + shortError(e));
     }
+}
+
+function handleActionScroll(player, gui, sessionId, scroll) {
+    var selectedIndex = getSelectedIndex(scroll);
+    var selected = normalizeActionSelection(selectedIndex);
+    if (selected == "load") {
+        handleLoadAction(player, gui, sessionId);
+    } else if (selected == "preview") {
+        var pkg = getCachedPackage(player, getHeldLoaderItemForSession(player, sessionId), sessionId);
+        if (pkg == null) {
+            setStatus(gui, "Сначала загрузи пакет.");
+            return;
+        }
+
+        try {
+            player.showCustomGui(createPreviewGui(player, pkg));
+        } catch (e) {
+            setStatus(gui, "Ошибка открытия preview: " + shortError(e));
+        }
+    } else if (selected == "clear") {
+        clearCachedPackage(player, sessionId);
+        clearLoadedFieldsOnHeldItem(player, sessionId);
+        setStatus(gui, "Кэш кода очищен.");
+        player.message("GitHub Loader: кэш кода очищен.");
+    } else {
+        setStatus(gui, "Не удалось определить действие. Индекс: " + selectedIndex);
+        player.message("GitHub Loader: неизвестный индекс scroll: " + selectedIndex);
+    }
+}
+
+function handlePreviewScroll(player, gui, scroll) {
+    var sessionId = getActiveSession(player);
+    if (!hasText(sessionId)) {
+        setPreviewStatus(gui, "Нет активной сессии предмета.");
+        setPreviewCode(gui, "");
+        return;
+    }
+
+    var pkg = getCachedPackage(player, getHeldLoaderItemForSession(player, sessionId), sessionId);
+    if (pkg == null) {
+        setPreviewStatus(gui, "Сначала загрузи пакет.");
+        setPreviewCode(gui, "");
+        return;
+    }
+
+    renderPreviewState(gui, pkg, getSelectedIndex(scroll));
 }
 
 function applyPackageToNpcFromItem(item, player, npc) {
@@ -653,6 +715,109 @@ function buildLoadedStatusText(pkg, fallbackUrl) {
     ].join("\n");
 }
 
+function buildPreviewEntries(pkg) {
+    var entries = [];
+    var previewFiles = getPreviewFiles(pkg);
+
+    for (var i = 0; i < previewFiles.length; i++) {
+        entries.push(buildPreviewEntryLabel(previewFiles[i]));
+    }
+
+    if (entries.length === 0) {
+        entries.push("Нет файлов");
+    }
+    return entries;
+}
+
+function getPreviewFiles(pkg) {
+    var files = [];
+    if (pkg == null) return files;
+
+    var hookFiles = pkg.supportedFiles == null ? [] : pkg.supportedFiles;
+    var sharedFiles = pkg.sharedFiles == null ? [] : pkg.sharedFiles;
+
+    for (var i = 0; i < hookFiles.length; i++) {
+        if (hookFiles[i] == null) continue;
+        files.push({
+            kind: "hook",
+            hook: hookFiles[i].hook,
+            relativePath: hookFiles[i].relativePath,
+            body: hookFiles[i].body
+        });
+    }
+
+    for (var j = 0; j < sharedFiles.length; j++) {
+        if (sharedFiles[j] == null) continue;
+        files.push({
+            kind: sharedFiles[j].isCoordinator ? "shared_coordinator" : "shared",
+            hook: "",
+            relativePath: sharedFiles[j].relativePath,
+            body: sharedFiles[j].body
+        });
+    }
+
+    return files;
+}
+
+function buildPreviewEntryLabel(file) {
+    var cleanPath = hasText(file.relativePath) ? file.relativePath : "(без пути)";
+    if (file.kind == "hook") {
+        return "[" + (hasText(file.hook) ? file.hook : "?") + "] " + cleanPath;
+    }
+    if (file.kind == "shared_coordinator") {
+        return "[shared*] " + cleanPath;
+    }
+    return "[shared] " + cleanPath;
+}
+
+function renderPreviewState(gui, pkg, selectedIndex) {
+    if (pkg == null) {
+        setPreviewStatus(gui, "Превью пусто. Сначала загрузи пакет.");
+        setPreviewCode(gui, "");
+        return;
+    }
+
+    var previewFiles = getPreviewFiles(pkg);
+    if (previewFiles.length === 0) {
+        setPreviewStatus(gui, "В пакете нет preview-файлов.");
+        setPreviewCode(gui, "");
+        return;
+    }
+
+    var index = selectedIndex;
+    if (index < 0 || index >= previewFiles.length) index = 0;
+
+    var file = previewFiles[index];
+    setPreviewStatus(gui, buildPreviewMetaText(file));
+    setPreviewCode(gui, buildPreviewCodeText(file));
+}
+
+function buildPreviewMetaText(file) {
+    var pathText = hasText(file.relativePath) ? file.relativePath : "(без пути)";
+    var code = file.body == null ? "" : ("" + file.body);
+    var lines = code.length === 0 ? 0 : code.split(/\r?\n/).length;
+    var kindText = "hook";
+
+    if (file.kind == "shared") kindText = "shared";
+    if (file.kind == "shared_coordinator") kindText = "shared coordinator";
+
+    return "Тип: " + kindText + " | Путь: " + pathText + " | Строк: " + lines + " | Символов: " + code.length;
+}
+
+function buildPreviewCodeText(file) {
+    var code = file == null || file.body == null ? "" : ("" + file.body);
+    if (!hasText(code)) return "// Файл пуст";
+    return limitPreviewText(code, 12000);
+}
+
+function limitPreviewText(text, maxChars) {
+    var code = text == null ? "" : ("" + text);
+    if (code.length <= maxChars) return code;
+
+    var tail = "\n\n// --- preview truncated ---\n// Total chars: " + code.length + "\n";
+    return code.substring(0, Math.max(0, maxChars - tail.length)) + tail;
+}
+
 function extractRepoFromUrl(url) {
     try {
         var parsed = parseGithubTarget(url);
@@ -1006,8 +1171,34 @@ function setGuiText(gui, id, text) {
     } catch (e) {}
 }
 
+function setScrollList(gui, id, entries) {
+    try {
+        var comp = gui.getComponent(id);
+        if (comp != null && comp.setList != null) {
+            comp.setList(entries == null ? [] : entries);
+            return true;
+        }
+    } catch (e1) {}
+    try {
+        var comp2 = gui.getComponent(id);
+        if (comp2 != null && comp2.list != null) {
+            comp2.list = entries == null ? [] : entries;
+            return true;
+        }
+    } catch (e2) {}
+    return false;
+}
+
 function setStatus(gui, text) {
     setGuiText(gui, GIT_LOADER_STATUS_ID, text);
+}
+
+function setPreviewStatus(gui, text) {
+    setGuiText(gui, GIT_LOADER_PREVIEW_STATUS_ID, text);
+}
+
+function setPreviewCode(gui, text) {
+    setGuiText(gui, GIT_LOADER_PREVIEW_CODE_ID, text);
 }
 
 function safeUpdate(gui) {
