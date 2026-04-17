@@ -2,6 +2,27 @@
 
 Scripted Item для загрузки hook-скриптов NPC напрямую из GitHub-папки.
 
+## Структура loader-пакета
+
+Теперь пакет разделён на две роли:
+
+- `init.js` и `interact.js` — тонкий bootstrap/installer предмета
+- `runtime.js` — основной runtime loader, который bootstrap подтягивает из репозитория
+
+Внутри `github_loader/` также есть папка `shared/`:
+
+- `shared/main_ui.js` — главное окно loader-а
+- `shared/preview_ui.js` — отдельное окно preview
+- `shared/git_runtime.js` — GitHub URL parsing, HTTP и сборка пакета
+- `shared/__shared.js` — карта модулей для дальнейшей унификации структуры
+
+Практический нюанс:
+
+- bootstrap остаётся маленьким и живёт прямо в item hook
+- основной функционал loader-а больше не обязан лежать внутри installer-скрипта
+- runtime кэшируется у игрока после первого использования и периодически обновляется с `github_loader/runtime.js`
+- `shared/` используется как source-разбиение по ответственности для поддержки runtime-кода
+
 ## Что изменено
 
 Теперь предмет ориентирован не на "любую папку с любыми `.js`", а на один явный NPC-пакет.
