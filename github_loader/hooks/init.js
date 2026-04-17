@@ -17,7 +17,10 @@ var GIT_LOADER_HOOKS_KEY = "github_npc_loader_hooks";
 var GIT_LOADER_SUMMARY_KEY = "github_npc_loader_summary";
 var GIT_LOADER_SELF_RUNTIME_URL_KEY = "github_npc_loader_self_runtime_url";
 var GIT_LOADER_SELF_RUNTIME_VERSION_KEY = "github_npc_loader_self_runtime_version";
-var GIT_LOADER_DEFAULT_RUNTIME_URL = "https://raw.githubusercontent.com/TimCixo/CustomNpc/main/github_loader/runtime.js";
+var GIT_LOADER_INSTALLED_PACKAGE_KEY = "github_loader_installed_package";
+var GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY = "github_loader_installed_runtime_source";
+var GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY = "github_loader_installed_runtime_signature";
+var GIT_LOADER_DEFAULT_RUNTIME_URL = "https://raw.githubusercontent.com/TimCixo/CustomNpc/main/github_loader/installer.js";
 var GIT_LOADER_DEFAULT_RUNTIME_VERSION = "main";
 
 function init(event) {
@@ -36,15 +39,18 @@ function init(event) {
     ensureString(tag, GIT_LOADER_SUMMARY_KEY, "");
     ensureString(tag, GIT_LOADER_SELF_RUNTIME_URL_KEY, GIT_LOADER_DEFAULT_RUNTIME_URL);
     ensureString(tag, GIT_LOADER_SELF_RUNTIME_VERSION_KEY, GIT_LOADER_DEFAULT_RUNTIME_VERSION);
+    ensureString(tag, GIT_LOADER_INSTALLED_PACKAGE_KEY, "");
+    ensureString(tag, GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY, "");
+    ensureString(tag, GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY, "");
 
     mcStack.set(GitLoaderInit_DataComponents.CUSTOM_DATA, GitLoaderInit_CustomData.of(tag));
     mcStack.set(GitLoaderInit_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
     mcStack.set(GitLoaderInit_DataComponents.CUSTOM_NAME, GitLoaderInit_Component.literal(GIT_LOADER_ITEM_NAME));
     mcStack.set(GitLoaderInit_DataComponents.LORE, new GitLoaderInit_ItemLore(buildLore([
-        "Минимальный установщик GitHub Loader.",
-        "Runtime loader подтягивается из github_loader/runtime.js.",
-        "При первом использовании runtime кэшируется и затем обновляется.",
-        "ПКМ по воздуху открывает loader GUI после bootstrap."
+        "Minimal GitHub Loader installer.",
+        "Bootstrap opens installer.js until the item is installed.",
+        "Apply downloads github_loader/hooks and shared into the item.",
+        "Next reopen runs the installed runtime from item data."
     ])));
     applyLegacyItemPresentation(item, GIT_LOADER_ITEM_NAME);
 

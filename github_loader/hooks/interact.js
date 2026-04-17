@@ -4,14 +4,19 @@ var GitLoaderBoot_InputStreamReader = Java.type("java.io.InputStreamReader");
 var GitLoaderBoot_BufferedReader = Java.type("java.io.BufferedReader");
 var GitLoaderBoot_StringBuilder = Java.type("java.lang.StringBuilder");
 var GitLoaderBoot_System = Java.type("java.lang.System");
+var GitLoaderBoot_Base64 = Java.type("java.util.Base64");
+var GitLoaderBoot_StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
 
 var GIT_LOADER_ITEM_TYPE = "github_npc_loader_tool";
 var GIT_LOADER_SESSION_KEY = "github_npc_loader_session_id";
 var GIT_LOADER_ACTIVE_SESSION_KEY = "github_npc_loader_active_session";
+var GIT_LOADER_ACTIVE_ITEM_KEY = "github_npc_loader_active_item";
 var GIT_LOADER_SELF_RUNTIME_URL_KEY = "github_npc_loader_self_runtime_url";
 var GIT_LOADER_SELF_RUNTIME_VERSION_KEY = "github_npc_loader_self_runtime_version";
+var GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY = "github_loader_installed_runtime_source";
+var GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY = "github_loader_installed_runtime_signature";
 
-var GIT_LOADER_DEFAULT_RUNTIME_URL = "https://raw.githubusercontent.com/TimCixo/CustomNpc/main/github_loader/runtime.js";
+var GIT_LOADER_DEFAULT_RUNTIME_URL = "https://raw.githubusercontent.com/TimCixo/CustomNpc/main/github_loader/installer.js";
 var GIT_LOADER_RUNTIME_REFRESH_MS = 300000;
 
 var GIT_LOADER_TEMP_RUNTIME_MODULE_KEY = "github_loader_runtime_module";
@@ -28,6 +33,7 @@ function interact(event) {
 
     if (!isLoaderItem(item)) return;
     rememberActiveSession(player, getSessionId(item));
+    rememberActiveItem(player, item);
 
     try {
         var runtime = ensureRuntime(player, item, false);
@@ -70,9 +76,18 @@ function customGuiClosed(event) {
 }
 
 function ensureRuntime(player, item, forceRefresh) {
-    var runtimeUrl = getSelfRuntimeUrl(item);
-    var runtime = getCachedRuntimeModule(player, runtimeUrl, forceRefresh);
+    var installedSource = getInstalledRuntimeSource(item);
+    var runtimeKey = getRuntimeKey(item, installedSource);
+    var runtime = getCachedRuntimeModule(player, runtimeKey, forceRefresh);
     if (runtime != null) return runtime;
+
+    if (hasText(installedSource)) {
+        runtime = buildRuntimeModule(installedSource);
+        cacheRuntimeModule(player, runtimeKey, runtime, GitLoaderBoot_System.currentTimeMillis());
+        return runtime;
+    }
+
+    var runtimeUrl = getSelfRuntimeUrl(item);
 
     var source = "";
     var fetchedAt = 0;
@@ -95,11 +110,11 @@ function ensureRuntime(player, item, forceRefresh) {
     }
 
     if (!hasText(source)) {
-        throw "runtime loader is unavailable. Проверь `github_loader/runtime.js` и доступ к GitHub.";
+        throw "runtime loader is unavailable. Check `github_loader/installer.js` and GitHub access.";
     }
 
     runtime = buildRuntimeModule(source);
-    cacheRuntimeModule(player, runtimeUrl, runtime, fetchedFresh ? fetchedAt : normalizeTimestamp(fetchedAt));
+    cacheRuntimeModule(player, runtimeKey, runtime, fetchedFresh ? fetchedAt : normalizeTimestamp(fetchedAt));
     return runtime;
 }
 
@@ -226,6 +241,27 @@ function getSelfRuntimeUrl(item) {
     return hasText(runtimeUrl) ? runtimeUrl : GIT_LOADER_DEFAULT_RUNTIME_URL;
 }
 
+function getRuntimeKey(item, installedSource) {
+    if (hasText(installedSource)) {
+        return "item://github_loader/" + getInstalledRuntimeSignature(item);
+    }
+    return getSelfRuntimeUrl(item);
+}
+
+function getInstalledRuntimeSource(item) {
+    var tag = getCustomTag(item);
+    if (tag == null) return "";
+    return decodeBundle(readTag(tag, GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY));
+}
+
+function getInstalledRuntimeSignature(item) {
+    var tag = getCustomTag(item);
+    if (tag == null) return "installed";
+
+    var signature = readTag(tag, GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY);
+    return hasText(signature) ? signature : "installed";
+}
+
 function isLoaderItem(item) {
     var tag = getCustomTag(item);
     return tag != null && readTag(tag, "item_type") == GIT_LOADER_ITEM_TYPE;
@@ -253,6 +289,12 @@ function rememberActiveSession(player, sessionId) {
     } catch (e) {}
 }
 
+function rememberActiveItem(player, item) {
+    try {
+        player.getTempdata().put(GIT_LOADER_ACTIVE_ITEM_KEY, item);
+    } catch (e) {}
+}
+
 function getActiveSession(player) {
     try {
         return trimString(player.getTempdata().get(GIT_LOADER_ACTIVE_SESSION_KEY));
@@ -261,7 +303,19 @@ function getActiveSession(player) {
     }
 }
 
+function getActiveLoaderItem(player) {
+    try {
+        var item = player.getTempdata().get(GIT_LOADER_ACTIVE_ITEM_KEY);
+        if (item == null || item.isEmpty()) return null;
+        return isLoaderItem(item) ? item : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function getHeldLoaderItemForActiveSession(player) {
+    var item = getActiveLoaderItem(player);
+    if (item != null) return item;
     return getHeldLoaderItemForSession(player, getActiveSession(player));
 }
 
@@ -304,6 +358,17 @@ function fetchText(url) {
         try {
             if (reader != null) reader.close();
         } catch (ignored) {}
+    }
+}
+
+function decodeBundle(text) {
+    try {
+        var clean = trimString(text);
+        if (!hasText(clean)) return "";
+        var bytes = GitLoaderBoot_Base64.getDecoder().decode(clean);
+        return "" + new java.lang.String(bytes, GitLoaderBoot_StandardCharsets.UTF_8);
+    } catch (e) {
+        return "";
     }
 }
 
