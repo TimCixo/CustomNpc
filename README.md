@@ -48,24 +48,24 @@ Because of that, the repository is less about framework structure and more about
 
 ## Repository Layout
 
-- [src](/e:/Projects/CustomNpc/src): main source tree for hooks, items, modules, templates, and NPC systems.
-- [src/npc](/e:/Projects/CustomNpc/src/npc): complete NPC scripts, finished systems, prototypes, and technical utilities.
-- [src/items](/e:/Projects/CustomNpc/src/items): scripted items and item-driven workflows.
-- [src/modules](/e:/Projects/CustomNpc/src/modules): reusable helper logic shared by scripted systems where the project structure allows it.
-- [src/blocks](/e:/Projects/CustomNpc/src/blocks): block-related scripted behavior.
-- [src/template](/e:/Projects/CustomNpc/src/template): base hook templates and reference starting points.
-- [docs](/e:/Projects/CustomNpc/docs): focused notes on CustomNPCs behavior, GUI limitations, tempdata runtime patterns, and mapping usage.
-- [types](/e:/Projects/CustomNpc/types): local declaration and mapping support for editor tooling and Java class discovery.
+- [src](/src): main source tree for hooks, items, modules, templates, and NPC systems.
+- [src/npc](/src/npc): complete NPC scripts, finished systems, prototypes, and technical utilities.
+- [src/items](/src/items): scripted items and item-driven workflows.
+- [src/modules](/src/modules): reusable helper logic shared by scripted systems where the project structure allows it.
+- [src/blocks](/src/blocks): block-related scripted behavior.
+- [src/template](/src/template): base hook templates and reference starting points.
+- [docs](/docs): focused notes on CustomNPCs behavior, GUI limitations, tempdata runtime patterns, and mapping usage.
+- [types](/types): local declaration and mapping support for editor tooling and Java class discovery.
 
 ## How To Read The Project
 
 If you are new to the repository, this path is the fastest way to orient yourself:
 
 1. Read this `README` for the high-level model.
-2. Open [src/npc](/e:/Projects/CustomNpc/src/npc) and inspect the separation between `finished`, `prototype`, and `technical`.
-3. Look through [src/items](/e:/Projects/CustomNpc/src/items) and [src/modules](/e:/Projects/CustomNpc/src/modules) to see how item logic and reusable helpers are organized.
-4. Use [docs](/e:/Projects/CustomNpc/docs) for project-specific notes when the runtime behaves differently from what the API shape suggests.
-5. Use [types](/e:/Projects/CustomNpc/types) when you need package discovery, Java class lookup, or editor support for mod APIs.
+2. Open [src/npc](/src/npc) and inspect the separation between `finished`, `prototype`, and `technical`.
+3. Look through [src/items](/src/items) and [src/modules](/src/modules) to see how item logic and reusable helpers are organized.
+4. Use [docs](/docs) for project-specific notes when the runtime behaves differently from what the API shape suggests.
+5. Use [types](/types) when you need package discovery, Java class lookup, or editor support for mod APIs.
 
 ## Source Areas
 
@@ -92,9 +92,9 @@ The source tree is organized by purpose rather than by build step.
 
 This repository includes local type support to make Java-backed scripting more practical in the editor.
 
-- [jsconfig.json](/e:/Projects/CustomNpc/jsconfig.json) enables `checkJs` for the repository source.
-- [types/minecraft_mappings_java_type.d.ts](/e:/Projects/CustomNpc/types/minecraft_mappings_java_type.d.ts) helps the IDE understand many `Java.type(...)` lookups.
-- [types/mods](/e:/Projects/CustomNpc/types/mods) contains versioned mod declaration bundles used for editor navigation and API discovery.
+- [jsconfig.json](/jsconfig.json) enables `checkJs` for the repository source.
+- [types/minecraft_mappings_java_type.d.ts](/types/minecraft_mappings_java_type.d.ts) helps the IDE understand many `Java.type(...)` lookups.
+- [types/mods](/types/mods) contains versioned mod declaration bundles used for editor navigation and API discovery.
 
 These files are developer aids only:
 
@@ -102,7 +102,7 @@ These files are developer aids only:
 - they help with autocomplete and navigation;
 - they do not guarantee that a method is actually safe in the script runtime.
 
-For the practical workflow around mappings and mod declarations, see [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md).
+For the practical workflow around mappings and mod declarations, see [docs/java_type_mappings.md](/docs/java_type_mappings.md).
 
 ## Design Principles
 
@@ -127,10 +127,10 @@ This repository is useful if you are building or studying:
 
 ## Recommended Docs
 
-- [docs/customnpcs_tempdata_object_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_tempdata_object_notes.md)
-- [docs/customnpcs_gui_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_gui_notes.md)
-- [docs/customnpcs_command_notes.md](/e:/Projects/CustomNpc/docs/customnpcs_command_notes.md)
-- [docs/java_type_mappings.md](/e:/Projects/CustomNpc/docs/java_type_mappings.md)
+- [docs/customnpcs_tempdata_object_notes.md](/docs/customnpcs_tempdata_object_notes.md)
+- [docs/customnpcs_gui_notes.md](/docs/customnpcs_gui_notes.md)
+- [docs/customnpcs_command_notes.md](/docs/customnpcs_command_notes.md)
+- [docs/java_type_mappings.md](/docs/java_type_mappings.md)
 
 ## Working Model
 
