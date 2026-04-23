@@ -14,6 +14,7 @@ var GitLoader_StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
 var GIT_LOADER_ITEM_TYPE = "github_npc_loader_tool";
 var GIT_LOADER_SESSION_KEY = "github_npc_loader_session_id";
 var GIT_LOADER_LAST_URL_KEY = "github_npc_loader_last_url";
+var GIT_LOADER_MODE_KEY = "github_loader_mode";
 var GIT_LOADER_ACTIVE_SESSION_KEY = "github_npc_loader_active_session";
 var GIT_LOADER_ACTIVE_ITEM_KEY = "github_npc_loader_active_item";
 var GIT_LOADER_GUI_URL_PREFIX = "github_npc_loader_url_";
@@ -24,6 +25,8 @@ var GIT_LOADER_SELF_RUNTIME_VERSION_KEY = "github_npc_loader_self_runtime_versio
 var GIT_LOADER_INSTALLED_PACKAGE_KEY = "github_loader_installed_package";
 var GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY = "github_loader_installed_runtime_source";
 var GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY = "github_loader_installed_runtime_signature";
+var GIT_LOADER_INSTALLED_HOOKS_KEY = "github_loader_installed_hooks";
+var GIT_LOADER_INSTALLED_SHARED_KEY = "github_loader_installed_shared";
 var GIT_LOADER_TEMP_RUNTIME_MODULE_KEY = "github_loader_runtime_module";
 var GIT_LOADER_TEMP_RUNTIME_URL_KEY = "github_loader_runtime_url";
 var GIT_LOADER_TEMP_RUNTIME_FETCHED_AT_KEY = "github_loader_runtime_fetched_at";
@@ -36,7 +39,7 @@ var GIT_LOADER_ACTION_SCROLL_ID = 9322;
 var GIT_LOADER_URL_FIELD_ID = 9323;
 var GIT_LOADER_STATUS_ID = 9324;
 var GIT_LOADER_TOKEN_FIELD_ID = 9326;
-var GIT_LOADER_ACTIONS = ["Apply", "Cancel"];
+var GIT_LOADER_ACTIONS = ["Install", "Cancel"];
 
 function interact(event) {
     var item = event.item;
@@ -218,7 +221,7 @@ function handleApplyAction(player, gui, sessionId) {
         }
 
         invalidateBootstrapRuntimeCache(player);
-        setStatus(gui, "Installed. Reopen the item.");
+        setStatus(gui, "Installed. Reopen the item to use the ready loader.");
         player.message(
             "GitHub Loader: installed from " +
             installedPkg.owner + "/" + installedPkg.repo + "@" + installedPkg.ref +
@@ -241,6 +244,7 @@ function loadLoaderPackageFromRepo(repoUrl, githubToken) {
     var loaderRootPath = locateLoaderRootPath(parsed.path, tree);
     var files = collectLoaderFiles(parsed.owner, parsed.repo, ref, loaderRootPath, tree, githubToken);
     var runtimeSource = buildInstalledRuntimeSource(files);
+    validateInstalledLoaderPayload(files, runtimeSource);
 
     return {
         sourceUrl: repoUrl,
@@ -333,7 +337,7 @@ function collectLoaderFiles(owner, repo, ref, loaderRootPath, tree, githubToken)
         out.push({
             path: cleanPath,
             relativePath: cleanPath.substring(loaderRootPath.length + 1),
-            body: fetchText(buildGithubRawUrl(owner, repo, ref, cleanPath), githubToken)
+            body: fetchBlobText(owner, repo, trimString(entry.sha), githubToken)
         });
     }
 
@@ -344,7 +348,8 @@ function collectLoaderFiles(owner, repo, ref, loaderRootPath, tree, githubToken)
     });
 
     if (out.length === 0) throw "no loader files found inside `" + loaderRootPath + "`";
-    if (!hasLoaderSubdirFiles(out, "hooks/")) throw "folder `" + loaderRootPath + "/hooks` is missing";
+    if (!hasLoaderFile(out, "hooks/init.js")) throw "required file `" + loaderRootPath + "/hooks/init.js` is missing";
+    if (!hasLoaderFile(out, "hooks/interact.js")) throw "required file `" + loaderRootPath + "/hooks/interact.js` is missing";
     if (!hasLoaderSubdirFiles(out, "shared/")) throw "folder `" + loaderRootPath + "/shared` is missing";
     return out;
 }
@@ -365,14 +370,56 @@ function hasLoaderSubdirFiles(files, prefix) {
     return false;
 }
 
+function hasLoaderFile(files, relativePath) {
+    var wanted = normalizeSlashes(relativePath);
+    for (var i = 0; i < files.length; i++) {
+        if (files[i] != null && normalizeSlashes(files[i].relativePath) == wanted) return true;
+    }
+    return false;
+}
+
 function buildInstalledRuntimeSource(files) {
-    var installerSource = findLoaderFileBody(files, "installer.js");
-    if (hasText(installerSource)) return installerSource;
+    var readyInteractSource = findLoaderFileBody(files, "hooks/interact.js");
+    if (hasText(readyInteractSource)) return readyInteractSource;
 
     var runtimeSource = findLoaderFileBody(files, "runtime.js");
     if (hasText(runtimeSource)) return runtimeSource;
 
-    throw "loader runtime source is missing. Expected `github_loader/installer.js` or `github_loader/runtime.js`.";
+    throw "loader runtime source is missing. Expected `github_loader/hooks/interact.js` or `github_loader/runtime.js`.";
+}
+
+function validateInstalledLoaderPayload(files, runtimeSource) {
+    if (!hasText(runtimeSource)) throw "installed runtime source is empty";
+    validateRuntimeModuleSource(runtimeSource, "installed runtime");
+
+    var initSource = findLoaderFileBody(files, "hooks/init.js");
+    validateRuntimeModuleSource(initSource, "hooks/init.js");
+
+    var sharedCount = 0;
+    for (var i = 0; i < files.length; i++) {
+        if (files[i] != null && normalizeSlashes(files[i].relativePath).indexOf("shared/") === 0) {
+            sharedCount++;
+            validateRuntimeModuleSource(files[i].body, files[i].relativePath);
+        }
+    }
+    if (sharedCount <= 0) throw "loader shared payload is empty";
+}
+
+function validateRuntimeModuleSource(source, label) {
+    if (!hasText(source)) throw label + " is empty";
+    try {
+        (1, eval)(
+            "(function(){\n" +
+            source +
+            "\nreturn {" +
+            " interact: (typeof interact == 'function' ? interact : null)," +
+            " customGuiScroll: (typeof customGuiScroll == 'function' ? customGuiScroll : null)," +
+            " customGuiClosed: (typeof customGuiClosed == 'function' ? customGuiClosed : null)" +
+            "}; })"
+        );
+    } catch (e) {
+        throw label + " is not executable: " + shortError(e);
+    }
 }
 
 function findLoaderFileBody(files, relativePath) {
@@ -390,6 +437,15 @@ function writeInstalledPackageToItem(player, item, pkg, repoUrl) {
     if (tag == null) return false;
 
     var signature = buildInstalledRuntimeSignature(pkg);
+    var split = splitLoaderFiles(pkg.files);
+    var oldFirmware = snapshotItemFirmware(item);
+    var rewrite = rewriteItemFirmware(item, split.hooks);
+    if (!rewrite.ok) {
+        restoreItemFirmware(item, oldFirmware);
+        throw "failed to rewrite item firmware: " + rewrite.error;
+    }
+
+    tag.putString(GIT_LOADER_MODE_KEY, "ready");
     tag.putString(GIT_LOADER_LAST_URL_KEY, trimString(repoUrl));
     tag.putString(GIT_LOADER_INSTALLED_PACKAGE_KEY, encodeBundle(JSON.stringify({
         sourceUrl: pkg.sourceUrl,
@@ -398,13 +454,138 @@ function writeInstalledPackageToItem(player, item, pkg, repoUrl) {
         ref: pkg.ref,
         loaderRootPath: pkg.loaderRootPath,
         installedAt: pkg.installedAt,
-        files: pkg.files
+        files: buildFileSummary(pkg.files)
     })));
     tag.putString(GIT_LOADER_INSTALLED_RUNTIME_SOURCE_KEY, encodeBundle(pkg.runtimeSource));
     tag.putString(GIT_LOADER_INSTALLED_RUNTIME_SIGNATURE_KEY, signature);
+    tag.putString(GIT_LOADER_INSTALLED_HOOKS_KEY, encodeBundle(JSON.stringify(split.hooks)));
+    tag.putString(GIT_LOADER_INSTALLED_SHARED_KEY, encodeBundle(JSON.stringify(split.shared)));
     tag.putString(GIT_LOADER_SELF_RUNTIME_URL_KEY, "item://github_loader/" + signature);
     tag.putString(GIT_LOADER_SELF_RUNTIME_VERSION_KEY, signature);
-    return writeHeldTag(player, item, tag);
+    if (!writeHeldTag(player, item, tag)) {
+        restoreItemFirmware(item, oldFirmware);
+        return false;
+    }
+    return true;
+}
+
+function buildFileSummary(files) {
+    var out = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (file == null) continue;
+        out.push({
+            path: file.path,
+            relativePath: file.relativePath,
+            chars: file.body == null ? 0 : ("" + file.body).length
+        });
+    }
+    return out;
+}
+
+function snapshotItemFirmware(item) {
+    var out = {};
+    out["0"] = getScriptContainerSource(item, 0);
+    out["2"] = getScriptContainerSource(item, 2);
+    out["48"] = getScriptContainerSource(item, 48);
+    out["51"] = getScriptContainerSource(item, 51);
+    return out;
+}
+
+function restoreItemFirmware(item, snapshot) {
+    if (snapshot == null) return;
+    setScriptContainerSource(item.scripts, 0, snapshot["0"]);
+    setScriptContainerSource(item.scripts, 2, snapshot["2"]);
+    setScriptContainerSource(item.scripts, 48, snapshot["48"]);
+    setScriptContainerSource(item.scripts, 51, snapshot["51"]);
+    try {
+        item.saveScriptData();
+    } catch (e) {}
+}
+
+function getScriptContainerSource(item, index) {
+    try {
+        if (item == null || item.scripts == null) return "";
+        var container = null;
+        try {
+            container = item.scripts[index];
+        } catch (e1) {}
+        if (container == null && item.scripts.get != null) {
+            try {
+                container = item.scripts.get(index);
+            } catch (e2) {}
+        }
+        return container == null ? "" : ("" + container.script);
+    } catch (e) {
+        return "";
+    }
+}
+
+function rewriteItemFirmware(item, hookFiles) {
+    try {
+        var initSource = findFileInList(hookFiles, "hooks/init.js");
+        var interactSource = findFileInList(hookFiles, "hooks/interact.js");
+        if (!hasText(initSource)) return { ok: false, error: "hooks/init.js missing" };
+        if (!hasText(interactSource)) return { ok: false, error: "hooks/interact.js missing" };
+        if (item == null || item.scripts == null) return { ok: false, error: "item script list unavailable" };
+
+        setScriptContainerSource(item.scripts, 0, initSource);
+        setScriptContainerSource(item.scripts, 2, interactSource);
+        setScriptContainerSource(item.scripts, 48, interactSource);
+        setScriptContainerSource(item.scripts, 51, interactSource);
+
+        try {
+            item.enabled = true;
+        } catch (e1) {}
+        try {
+            item.saveScriptData();
+        } catch (e2) {}
+        return { ok: true, error: "" };
+    } catch (e) {
+        return { ok: false, error: shortError(e) };
+    }
+}
+
+function setScriptContainerSource(scripts, index, source) {
+    var container = null;
+    try {
+        container = scripts[index];
+    } catch (e1) {}
+    if (container == null && scripts.get != null) {
+        try {
+            container = scripts.get(index);
+        } catch (e2) {}
+    }
+    if (container == null) return false;
+    container.script = source == null ? "" : ("" + source);
+    container.fullscript = source == null ? "" : ("" + source);
+    try {
+        container.errored = false;
+    } catch (e3) {}
+    return true;
+}
+
+function findFileInList(files, relativePath) {
+    var wanted = normalizeSlashes(relativePath);
+    for (var i = 0; i < files.length; i++) {
+        if (files[i] != null && normalizeSlashes(files[i].relativePath) == wanted) {
+            return files[i].body == null ? "" : ("" + files[i].body);
+        }
+    }
+    return "";
+}
+
+function splitLoaderFiles(files) {
+    var hooks = [];
+    var shared = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (file == null) continue;
+        var rel = normalizeSlashes(file.relativePath);
+        if (rel.indexOf("hooks/") === 0) hooks.push(file);
+        if (rel.indexOf("shared/") === 0) shared.push(file);
+    }
+    return { hooks: hooks, shared: shared };
 }
 
 function buildInstalledRuntimeSignature(pkg) {
@@ -501,6 +682,16 @@ function fetchJson(url, githubToken) {
     } catch (e) {
         throw "GitHub returned invalid JSON";
     }
+}
+
+function fetchBlobText(owner, repo, sha, githubToken) {
+    if (!hasText(sha)) throw "GitHub tree entry is missing blob sha";
+    var payload = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), githubToken);
+    var encoding = trimString(payload == null ? "" : payload.encoding).toLowerCase();
+    var content = payload == null ? "" : trimString(payload.content);
+    if (encoding == "base64") return decodeBase64Text(content.replace(/\s+/g, ""));
+    if (hasText(content)) return content;
+    throw "GitHub blob is empty or unsupported";
 }
 
 function fetchText(url, githubToken) {
@@ -903,6 +1094,15 @@ function decodeBundle(text) {
         var clean = trimString(text);
         if (!hasStoredValue(clean)) return "";
         var bytes = GitLoader_Base64.getDecoder().decode(clean);
+        return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
+    } catch (e) {
+        return "";
+    }
+}
+
+function decodeBase64Text(text) {
+    try {
+        var bytes = GitLoader_Base64.getDecoder().decode(trimString(text));
         return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
     } catch (e) {
         return "";

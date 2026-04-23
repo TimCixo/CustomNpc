@@ -1,148 +1,102 @@
 function createPreviewGui(player, pkg) {
-    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GIT_LOADER_PREVIEW_GUI_ID, 520, 300, false, player);
-    gui.addLabel(1, "Превью кода GitHub Loader", 10, 10, 220, 18, 0xFFFFFF);
-    gui.addColoredLine(2, 10, 34, 500, 34, 0x5C8DFF, 1.5);
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GIT_LOADER_PREVIEW_GUI_ID, 540, 310, false, player);
+    gui.addLabel(1, "Downloaded Package Preview", 10, 10, 240, 18, 0xFFFFFF);
+    gui.addColoredLine(2, 10, 34, 520, 34, 0x5C8DFF, 1.5);
 
-    gui.addLabel(10, "Файлы", 10, 42, 80, 14, 0xE0E0E0);
-    gui.addScroll(GIT_LOADER_PREVIEW_SCROLL_ID, 10, 58, 180, 232, buildPreviewEntries(pkg));
+    gui.addLabel(10, "Files", 10, 42, 80, 14, 0xE0E0E0);
+    gui.addScroll(GIT_LOADER_PREVIEW_SCROLL_ID, 10, 58, 190, 206, buildPreviewEntries(pkg));
+    gui.addScroll(GIT_LOADER_PREVIEW_BACK_SCROLL_ID, 10, 272, 190, 24, ["Back"]);
 
-    gui.addLabel(11, "Превью", 200, 42, 80, 14, 0xE0E0E0);
-    gui.addTextArea(GIT_LOADER_PREVIEW_STATUS_ID, 200, 58, 310, 18);
-    gui.addTextArea(GIT_LOADER_PREVIEW_CODE_ID, 200, 80, 310, 210);
+    gui.addLabel(11, "Code", 210, 42, 80, 14, 0xE0E0E0);
+    gui.addTextArea(GIT_LOADER_PREVIEW_STATUS_ID, 210, 58, 320, 28);
+    gui.addTextArea(GIT_LOADER_PREVIEW_CODE_ID, 210, 92, 320, 204);
 
     renderPreviewState(gui, pkg, 0);
     return gui;
 }
 
 function handlePreviewScroll(player, gui, scroll) {
+    if (scroll != null && scroll.getID() == GIT_LOADER_PREVIEW_BACK_SCROLL_ID) {
+        var item = getHeldLoaderItemForSession(player, getActiveSession(player));
+        if (item != null && !item.isEmpty()) {
+            player.showCustomGui(createGui(player, item));
+        }
+        return;
+    }
+
     var sessionId = getActiveSession(player);
-    if (!hasText(sessionId)) {
-        setPreviewStatus(gui, "Нет активной сессии предмета.");
-        setPreviewCode(gui, "");
-        return;
-    }
-
-    var pkg = getCachedPackage(player, getHeldLoaderItemForSession(player, sessionId), sessionId);
+    var item = getHeldLoaderItemForSession(player, sessionId);
+    var pkg = getCurrentDownloadedPackage(player, item, sessionId);
     if (pkg == null) {
-        setPreviewStatus(gui, "Сначала загрузи пакет.");
+        setPreviewStatus(gui, "No downloaded package.");
         setPreviewCode(gui, "");
         return;
     }
-
     renderPreviewState(gui, pkg, getSelectedIndex(scroll));
 }
 
 function buildPreviewEntries(pkg) {
+    var files = getPreviewFiles(pkg);
     var entries = [];
-    var previewFiles = getPreviewFiles(pkg);
-
-    for (var i = 0; i < previewFiles.length; i++) {
-        entries.push(buildPreviewEntryLabel(previewFiles[i]));
+    for (var i = 0; i < files.length; i++) {
+        entries.push(buildPreviewEntryLabel(files[i]));
     }
-
-    if (entries.length === 0) {
-        entries.push("Нет файлов");
-    }
-    return entries;
+    return entries.length > 0 ? entries : ["No files"];
 }
 
 function getPreviewFiles(pkg) {
     var files = [];
     if (pkg == null) return files;
-
-    var hookFiles = pkg.supportedFiles == null ? [] : pkg.supportedFiles;
-    var sharedFiles = pkg.sharedFiles == null ? [] : pkg.sharedFiles;
-
-    for (var i = 0; i < hookFiles.length; i++) {
-        if (hookFiles[i] == null) continue;
-        files.push({
-            kind: "hook",
-            hook: hookFiles[i].hook,
-            relativePath: hookFiles[i].relativePath,
-            body: hookFiles[i].body
-        });
-    }
-
-    for (var j = 0; j < sharedFiles.length; j++) {
-        if (sharedFiles[j] == null) continue;
-        files.push({
-            kind: sharedFiles[j].isCoordinator ? "shared_coordinator" : "shared",
-            hook: "",
-            relativePath: sharedFiles[j].relativePath,
-            body: sharedFiles[j].body
-        });
-    }
-
+    appendPreviewFiles(files, pkg.supportedFiles, "hook");
+    appendPreviewFiles(files, pkg.sharedFiles, "shared");
+    appendPreviewFiles(files, pkg.ignoredFiles, "ignored");
     return files;
 }
 
+function appendPreviewFiles(out, files, kind) {
+    if (files == null) return;
+    for (var i = 0; i < files.length; i++) {
+        if (files[i] == null) continue;
+        out.push({
+            kind: kind,
+            hook: files[i].hook || "",
+            relativePath: files[i].relativePath || files[i].path || "",
+            body: files[i].body || ""
+        });
+    }
+}
+
 function buildPreviewEntryLabel(file) {
-    var cleanPath = hasText(file.relativePath) ? file.relativePath : "(без пути)";
-    if (file.kind == "hook") {
-        return "[" + (hasText(file.hook) ? file.hook : "?") + "] " + cleanPath;
-    }
-    if (file.kind == "shared_coordinator") {
-        return "[shared*] " + cleanPath;
-    }
-    return "[shared] " + cleanPath;
+    var cleanPath = hasText(file.relativePath) ? file.relativePath : "(no path)";
+    if (file.kind == "hook") return "[" + (hasText(file.hook) ? file.hook : "?") + "] " + cleanPath;
+    if (file.kind == "shared") return "[shared] " + cleanPath;
+    return "[ignored] " + cleanPath;
 }
 
 function renderPreviewState(gui, pkg, selectedIndex) {
-    if (pkg == null) {
-        setPreviewStatus(gui, "Превью пусто. Сначала загрузи пакет.");
-        setPreviewCode(gui, "");
-        return;
-    }
-
-    var previewFiles = getPreviewFiles(pkg);
-    if (previewFiles.length === 0) {
-        setPreviewStatus(gui, "В пакете нет preview-файлов.");
+    var files = getPreviewFiles(pkg);
+    if (files.length === 0) {
+        setPreviewStatus(gui, "Preview is empty.");
         setPreviewCode(gui, "");
         return;
     }
 
     var index = selectedIndex;
-    if (index < 0 || index >= previewFiles.length) index = 0;
-
-    var file = previewFiles[index];
+    if (index < 0 || index >= files.length) index = 0;
+    var file = files[index];
     setPreviewStatus(gui, buildPreviewMetaText(file));
-    setPreviewCode(gui, buildPreviewCodeText(file));
+    setPreviewCode(gui, limitPreviewText(file.body, 12000));
 }
 
 function buildPreviewMetaText(file) {
-    var pathText = hasText(file.relativePath) ? file.relativePath : "(без пути)";
-    var code = file.body == null ? "" : ("" + file.body);
-    var lines = code.length === 0 ? 0 : code.split(/\r?\n/).length;
-    var kindText = "hook";
-
-    if (file.kind == "shared") kindText = "shared";
-    if (file.kind == "shared_coordinator") kindText = "shared coordinator";
-
-    return "Тип: " + kindText + " | Путь: " + pathText + " | Строк: " + lines + " | Символов: " + code.length;
-}
-
-function buildPreviewCodeText(file) {
     var code = file == null || file.body == null ? "" : ("" + file.body);
-    if (!hasText(code)) return "// Файл пуст";
-    return limitPreviewText(code, 12000);
+    var lines = code.length === 0 ? 0 : code.split(/\r?\n/).length;
+    return file.kind + " | " + file.relativePath + " | lines=" + lines + " | chars=" + code.length;
 }
 
 function limitPreviewText(text, maxChars) {
     var code = text == null ? "" : ("" + text);
-    if (code.length <= maxChars) return code;
-
+    if (code.length <= maxChars) return hasText(code) ? code : "// Empty file";
     var tail = "\n\n// --- preview truncated ---\n// Total chars: " + code.length + "\n";
     return code.substring(0, Math.max(0, maxChars - tail.length)) + tail;
 }
-
-module.exports = {
-    createPreviewGui: createPreviewGui,
-    handlePreviewScroll: handlePreviewScroll,
-    buildPreviewEntries: buildPreviewEntries,
-    getPreviewFiles: getPreviewFiles,
-    buildPreviewEntryLabel: buildPreviewEntryLabel,
-    renderPreviewState: renderPreviewState,
-    buildPreviewMetaText: buildPreviewMetaText,
-    buildPreviewCodeText: buildPreviewCodeText,
-    limitPreviewText: limitPreviewText
-};
