@@ -1,5 +1,4 @@
 {
-    "mainUi": "main_ui.js",
-    "previewUi": "preview_ui.js",
-    "gitRuntime": "git_runtime.js"
+    "role": "source_only",
+    "files": ["git_runtime.js", "main_ui.js", "preview_ui.js"]
 }

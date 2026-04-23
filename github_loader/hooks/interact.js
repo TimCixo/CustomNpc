@@ -1,185 +1,134 @@
 var GitLoader_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 var GitLoader_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var GitLoader_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
+var GitLoader_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 var GitLoader_URL = Java.type("java.net.URL");
 var GitLoader_URLEncoder = Java.type("java.net.URLEncoder");
 var GitLoader_InputStreamReader = Java.type("java.io.InputStreamReader");
 var GitLoader_BufferedReader = Java.type("java.io.BufferedReader");
 var GitLoader_StringBuilder = Java.type("java.lang.StringBuilder");
-var GitLoader_System = Java.type("java.lang.System");
-var GitLoader_Thread = Java.type("java.lang.Thread");
 var GitLoader_Base64 = Java.type("java.util.Base64");
 var GitLoader_StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
 
-var GIT_LOADER_ITEM_TYPE = "github_npc_loader_tool";
-var GIT_LOADER_SESSION_KEY = "github_npc_loader_session_id";
-var GIT_LOADER_LAST_URL_KEY = "github_npc_loader_last_url";
-var GIT_LOADER_MODE_KEY = "github_loader_mode";
-var GIT_LOADER_ACTIVE_SESSION_KEY = "github_npc_loader_active_session";
-var GIT_LOADER_ACTIVE_ITEM_KEY = "github_npc_loader_active_item";
-var GIT_LOADER_GUI_URL_PREFIX = "github_npc_loader_url_";
-var GIT_LOADER_GUI_LAST_URL_KEY = "github_npc_loader_last_url";
-var GIT_LOADER_GUI_TOKEN_KEY = "github_npc_loader_github_token";
-var GIT_LOADER_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
-var GIT_LOADER_DOWNLOADED_SIGNATURE_KEY = "github_loader_downloaded_signature";
-var GIT_LOADER_TEMP_PACKAGE_KEY = "github_loader_downloaded_package_temp_";
+var ITEM_TYPE = "github_npc_loader_tool";
+var ITEM_LAST_URL_KEY = "github_loader_last_url";
+var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
+var PLAYER_ACTIVE_ITEM_KEY = "github_loader_active_item";
+var PLAYER_TOKEN_KEY = "github_loader_token";
 
-var GIT_LOADER_HTTP_RETRIES = 4;
-var GIT_LOADER_HTTP_RETRY_DELAY_MS = 350;
-var GIT_LOADER_MAX_SCRIPT_CHARS = 65000;
+var GUI_ID = 9321;
+var ACTION_SCROLL_ID = 9322;
+var URL_FIELD_ID = 9323;
+var STATUS_ID = 9324;
+var TOKEN_FIELD_ID = 9326;
+var ACTIONS = ["Download", "Preview", "Clear"];
 
-var GIT_LOADER_GUI_ID = 9321;
-var GIT_LOADER_ACTION_SCROLL_ID = 9322;
-var GIT_LOADER_URL_FIELD_ID = 9323;
-var GIT_LOADER_STATUS_ID = 9324;
-var GIT_LOADER_TOKEN_FIELD_ID = 9326;
-var GIT_LOADER_ACTIONS = ["Download", "Preview", "Clear"];
+var PREVIEW_GUI_ID = 9331;
+var PREVIEW_SCROLL_ID = 9332;
+var PREVIEW_CODE_ID = 9333;
+var PREVIEW_STATUS_ID = 9334;
+var PREVIEW_BACK_ID = 9335;
 
-var GIT_LOADER_PREVIEW_GUI_ID = 9331;
-var GIT_LOADER_PREVIEW_SCROLL_ID = 9332;
-var GIT_LOADER_PREVIEW_CODE_ID = 9333;
-var GIT_LOADER_PREVIEW_STATUS_ID = 9334;
-var GIT_LOADER_PREVIEW_BACK_SCROLL_ID = 9335;
-
-var GIT_LOADER_HOOK_ORDER = [
-    "init", "interact", "timer", "target", "attack", "damaged",
-    "meleeAttack", "killed", "kills", "died", "collide"
-];
+var HOOK_ORDER = ["init", "interact", "timer", "target", "attack", "damaged", "meleeAttack", "killed", "kills", "died", "collide"];
 
 function interact(event) {
     var item = event.item;
     var player = event.player;
-    var target = event.target;
     if (!isLoaderItem(item)) return;
 
-    rememberActiveSession(player, getSessionId(item));
     rememberActiveItem(player, item);
 
-    if (target != null && isNpcTarget(target)) {
-        applyPackageToNpc(player, target, item);
-        event.setCanceled(true);
-        return;
+    if (isNpcTarget(event.target)) {
+        applyPackageToNpc(player, event.target, item);
+    } else {
+        player.showCustomGui(createMainGui(player, item));
     }
 
-    try {
-        player.showCustomGui(createGui(player, item));
-    } catch (e) {
-        player.message("GitHub Loader: GUI error. " + shortError(e));
-    }
     event.setCanceled(true);
 }
 
 function customGuiScroll(event) {
-    try {
-        if (event == null || event.gui == null || event.player == null) return;
-        var gui = event.gui;
-        var player = event.player;
-        var scroll = event.scroll;
+    var gui = event.gui;
+    if (gui == null) return;
 
-        if (gui.getID() == GIT_LOADER_GUI_ID) {
-            if (scroll == null || scroll.getID() != GIT_LOADER_ACTION_SCROLL_ID) return;
-            var sessionId = resolveActiveSession(player);
-            if (!hasText(sessionId)) {
-                setStatus(gui, "No active loader item session.");
-                safeUpdate(gui);
-                return;
-            }
-            handleMainActionScroll(player, gui, sessionId, scroll);
-            safeUpdate(gui);
-            return;
-        }
+    if (gui.getID() == GUI_ID) {
+        handleMainScroll(event.player, gui, event.scroll);
+        safeUpdate(gui);
+        return;
+    }
 
-        if (gui.getID() == GIT_LOADER_PREVIEW_GUI_ID) {
-            handlePreviewScroll(player, gui, scroll);
-            safeUpdate(gui);
-        }
-    } catch (e) {
-        try {
-            event.player.message("GitHub Loader: " + shortError(e));
-        } catch (ignored) {}
+    if (gui.getID() == PREVIEW_GUI_ID) {
+        handlePreviewScroll(event.player, gui, event.scroll);
+        safeUpdate(gui);
     }
 }
 
 function customGuiClosed(event) {
-    try {
-        var gui = event.gui;
-        var player = event.player;
-        if (gui == null || gui.getID() != GIT_LOADER_GUI_ID) return;
-        var sessionId = resolveActiveSession(player);
-        if (hasText(sessionId)) persistMainFields(player, gui, sessionId);
-    } catch (e) {}
+    if (event.gui == null || event.gui.getID() != GUI_ID) return;
+    var item = getActiveLoaderItem(event.player);
+    if (item == null || item.isEmpty()) return;
+
+    writeLastUrl(item, trimString(getGuiText(event.gui, URL_FIELD_ID)));
+    event.player.getStoreddata().put(PLAYER_TOKEN_KEY, trimString(getGuiText(event.gui, TOKEN_FIELD_ID)));
 }
 
-function createGui(player, item) {
-    var sessionId = getSessionId(item);
-    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GIT_LOADER_GUI_ID, 380, 286, false, player);
-    var pkg = getCurrentDownloadedPackage(player, item, sessionId);
-    var url = getInitialUrl(player, item, sessionId);
+function createMainGui(player, item) {
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GUI_ID, 380, 286, false, player);
+    var pkg = getDownloadedPackage(item);
 
     gui.addLabel(1, "GitHub NPC Loader", 10, 10, 220, 18, 0xFFFFFF);
     gui.addColoredLine(2, 10, 34, 360, 34, 0x5C8DFF, 1.5);
     gui.addLabel(10, "GitHub URL", 10, 42, 100, 14, 0xE0E0E0);
-    gui.addTextField(GIT_LOADER_URL_FIELD_ID, 10, 58, 360, 20);
-    gui.addLabel(13, "GitHub Token", 10, 84, 100, 14, 0xE0E0E0);
-    gui.addTextField(GIT_LOADER_TOKEN_FIELD_ID, 10, 100, 360, 20);
-    gui.addLabel(11, "Actions", 10, 130, 80, 14, 0xE0E0E0);
-    gui.addScroll(GIT_LOADER_ACTION_SCROLL_ID, 10, 146, 104, 82, GIT_LOADER_ACTIONS);
-    gui.addLabel(12, "Status", 124, 130, 80, 14, 0xE0E0E0);
-    gui.addTextArea(GIT_LOADER_STATUS_ID, 124, 146, 246, 112);
+    gui.addTextField(URL_FIELD_ID, 10, 58, 360, 20);
+    gui.addLabel(11, "GitHub Token", 10, 84, 100, 14, 0xE0E0E0);
+    gui.addTextField(TOKEN_FIELD_ID, 10, 100, 360, 20);
+    gui.addLabel(12, "Actions", 10, 130, 80, 14, 0xE0E0E0);
+    gui.addScroll(ACTION_SCROLL_ID, 10, 146, 104, 82, ACTIONS);
+    gui.addLabel(13, "Status", 124, 130, 80, 14, 0xE0E0E0);
+    gui.addTextArea(STATUS_ID, 124, 146, 246, 112);
 
-    setGuiText(gui, GIT_LOADER_URL_FIELD_ID, url);
-    setGuiText(gui, GIT_LOADER_TOKEN_FIELD_ID, getInitialGithubToken(player));
-    setStatus(gui, buildDownloadedStatusText(pkg, url));
+    setGuiText(gui, URL_FIELD_ID, readTag(getTag(item), ITEM_LAST_URL_KEY));
+    setGuiText(gui, TOKEN_FIELD_ID, trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY)));
+    setStatus(gui, buildPackageStatus(pkg));
     return gui;
 }
 
-function handleMainActionScroll(player, gui, sessionId, scroll) {
-    var selectedIndex = getSelectedIndex(scroll);
-    if (selectedIndex === 0) {
-        handleDownloadAction(player, gui, sessionId);
-    } else if (selectedIndex === 1) {
-        openPreviewGui(player, gui, sessionId);
-    } else if (selectedIndex === 2) {
-        clearDownloadedPackage(player, sessionId);
-        setStatus(gui, "Downloaded package cleared.");
-        player.message("GitHub Loader: downloaded package cleared.");
-    } else {
-        setStatus(gui, "Unknown action index: " + selectedIndex);
-    }
-}
-
-function handleDownloadAction(player, gui, sessionId) {
-    var repoUrl = trimString(getGuiText(gui, GIT_LOADER_URL_FIELD_ID));
-    var githubToken = trimString(getGuiText(gui, GIT_LOADER_TOKEN_FIELD_ID));
-    if (!hasText(repoUrl)) {
-        setStatus(gui, "Paste a GitHub repository or package URL.");
-        return;
-    }
-
-    var item = getHeldLoaderItemForSession(player, sessionId);
+function handleMainScroll(player, gui, scroll) {
+    if (scroll == null || scroll.getID() != ACTION_SCROLL_ID) return;
+    var item = getActiveLoaderItem(player);
     if (item == null || item.isEmpty()) {
-        setStatus(gui, "Loader item is not in main hand or off hand.");
+        setStatus(gui, "Loader item is missing.");
         return;
     }
 
-    persistMainFields(player, gui, sessionId);
-
-    try {
-        var pkg = loadGithubPackage(repoUrl, githubToken);
-        validateNpcPackage(pkg);
-        writeDownloadedPackageToItem(player, item, pkg, repoUrl);
-        cacheDownloadedPackage(player, sessionId, pkg);
-        setStatus(gui, buildDownloadedStatusText(pkg, repoUrl));
-        player.message("GitHub Loader: downloaded " + pkg.owner + "/" + pkg.repo + "@" + pkg.ref + ".");
-    } catch (e) {
-        setStatus(gui, "Download error: " + shortError(e));
-        player.message("GitHub Loader download error: " + shortError(e));
+    var selected = getSelectedIndex(scroll);
+    if (selected === 0) {
+        downloadNpcPackage(player, item, gui);
+    } else if (selected === 1) {
+        openPreviewGui(player, item, gui);
+    } else if (selected === 2) {
+        clearDownloadedPackage(item, player);
+        setStatus(gui, "Downloaded package cleared.");
     }
 }
 
-function openPreviewGui(player, gui, sessionId) {
-    var item = getHeldLoaderItemForSession(player, sessionId);
-    var pkg = getCurrentDownloadedPackage(player, item, sessionId);
+function downloadNpcPackage(player, item, gui) {
+    var url = trimString(getGuiText(gui, URL_FIELD_ID));
+    var token = trimString(getGuiText(gui, TOKEN_FIELD_ID));
+    if (!hasText(url)) {
+        setStatus(gui, "Paste a GitHub URL.");
+        return;
+    }
+
+    var pkg = loadNpcPackage(url, token);
+    writeDownloadedPackage(item, pkg, url);
+    player.getStoreddata().put(PLAYER_TOKEN_KEY, token);
+    setStatus(gui, buildPackageStatus(pkg));
+    player.message("GitHub Loader: package downloaded.");
+}
+
+function openPreviewGui(player, item, gui) {
+    var pkg = getDownloadedPackage(item);
     if (pkg == null) {
         setStatus(gui, "Download a package first.");
         return;
@@ -188,46 +137,172 @@ function openPreviewGui(player, gui, sessionId) {
 }
 
 function createPreviewGui(player, pkg) {
-    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GIT_LOADER_PREVIEW_GUI_ID, 540, 310, false, player);
-    gui.addLabel(1, "Downloaded Package Preview", 10, 10, 240, 18, 0xFFFFFF);
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(PREVIEW_GUI_ID, 540, 310, false, player);
+    gui.addLabel(1, "Package Preview", 10, 10, 220, 18, 0xFFFFFF);
     gui.addColoredLine(2, 10, 34, 520, 34, 0x5C8DFF, 1.5);
     gui.addLabel(10, "Files", 10, 42, 80, 14, 0xE0E0E0);
-    gui.addScroll(GIT_LOADER_PREVIEW_SCROLL_ID, 10, 58, 190, 206, buildPreviewEntries(pkg));
-    gui.addScroll(GIT_LOADER_PREVIEW_BACK_SCROLL_ID, 10, 272, 190, 24, ["Back"]);
+    gui.addScroll(PREVIEW_SCROLL_ID, 10, 58, 190, 206, buildPreviewEntries(pkg));
+    gui.addScroll(PREVIEW_BACK_ID, 10, 272, 190, 24, ["Back"]);
     gui.addLabel(11, "Code", 210, 42, 80, 14, 0xE0E0E0);
-    gui.addTextArea(GIT_LOADER_PREVIEW_STATUS_ID, 210, 58, 320, 28);
-    gui.addTextArea(GIT_LOADER_PREVIEW_CODE_ID, 210, 92, 320, 204);
-    renderPreviewState(gui, pkg, 0);
+    gui.addTextArea(PREVIEW_STATUS_ID, 210, 58, 320, 28);
+    gui.addTextArea(PREVIEW_CODE_ID, 210, 92, 320, 204);
+    renderPreview(gui, pkg, 0);
     return gui;
 }
 
 function handlePreviewScroll(player, gui, scroll) {
-    if (scroll != null && scroll.getID() == GIT_LOADER_PREVIEW_BACK_SCROLL_ID) {
-        var item = getHeldLoaderItemForSession(player, getActiveSession(player));
-        if (item != null && !item.isEmpty()) player.showCustomGui(createGui(player, item));
+    if (scroll == null) return;
+    if (scroll.getID() == PREVIEW_BACK_ID) {
+        var item = getActiveLoaderItem(player);
+        if (item != null && !item.isEmpty()) player.showCustomGui(createMainGui(player, item));
         return;
     }
+    if (scroll.getID() != PREVIEW_SCROLL_ID) return;
 
-    var sessionId = getActiveSession(player);
-    var item = getHeldLoaderItemForSession(player, sessionId);
-    var pkg = getCurrentDownloadedPackage(player, item, sessionId);
+    var item = getActiveLoaderItem(player);
+    var pkg = item == null ? null : getDownloadedPackage(item);
     if (pkg == null) {
         setPreviewStatus(gui, "No downloaded package.");
         setPreviewCode(gui, "");
         return;
     }
-    renderPreviewState(gui, pkg, getSelectedIndex(scroll));
+    renderPreview(gui, pkg, getSelectedIndex(scroll));
 }
 
-function loadGithubPackage(url, githubToken) {
+function renderPreview(gui, pkg, index) {
+    var files = getPreviewFiles(pkg);
+    if (files.length === 0) {
+        setPreviewStatus(gui, "Preview is empty.");
+        setPreviewCode(gui, "");
+        return;
+    }
+
+    if (index < 0 || index >= files.length) index = 0;
+    var file = files[index];
+    var code = file.body == null ? "" : "" + file.body;
+    setPreviewStatus(gui, file.kind + " | " + file.relativePath + " | chars=" + code.length);
+    setPreviewCode(gui, code.length > 12000 ? code.substring(0, 12000) + "\n\n// --- preview truncated ---" : (hasText(code) ? code : "// Empty file"));
+}
+
+function buildPreviewEntries(pkg) {
+    var files = getPreviewFiles(pkg);
+    var entries = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        entries.push("[" + file.kind + "] " + file.relativePath);
+    }
+    return entries.length > 0 ? entries : ["No files"];
+}
+
+function getPreviewFiles(pkg) {
+    var out = [];
+    appendPreviewFiles(out, pkg == null ? null : pkg.hooks, "hook");
+    appendPreviewFiles(out, pkg == null ? null : pkg.shared, "shared");
+    return out;
+}
+
+function appendPreviewFiles(out, files, kind) {
+    if (files == null) return;
+    for (var i = 0; i < files.length; i++) {
+        out.push({
+            kind: kind,
+            relativePath: files[i].relativePath,
+            body: files[i].body
+        });
+    }
+}
+
+function applyPackageToNpc(player, npc, item) {
+    var pkg = getDownloadedPackage(item);
+    if (pkg == null) {
+        player.message("GitHub Loader: download a package first.");
+        return;
+    }
+
+    var data = npc.getStoreddata();
+    data.put("__github_loader_package", JSON.stringify({
+        sourceUrl: pkg.sourceUrl,
+        owner: pkg.owner,
+        repo: pkg.repo,
+        ref: pkg.ref,
+        rootPath: pkg.rootPath
+    }));
+    data.put("__shared", buildNpcSharedFactory(pkg.shared));
+    writeNpcHooks(data, pkg.hooks);
+    writeNpcScriptTabs(npc, pkg.hooks);
+    try {
+        npc.updateClient();
+    } catch (e) {}
+    player.message("GitHub Loader: code loaded into NPC.");
+}
+
+function writeNpcHooks(data, hooks) {
+    var oldCount = parseIntSafe(data.get("github_loader_hook_count"), 0);
+    for (var i = 0; i < oldCount; i++) {
+        data.remove("github_loader_hook_" + i + "_name");
+        data.remove("github_loader_hook_" + i + "_path");
+        data.remove("github_loader_hook_" + i + "_body");
+    }
+    for (var j = 0; j < hooks.length; j++) {
+        data.put("github_loader_hook_" + j + "_name", hooks[j].hook);
+        data.put("github_loader_hook_" + j + "_path", hooks[j].relativePath);
+        data.put("github_loader_hook_" + j + "_body", hooks[j].body);
+    }
+    data.put("github_loader_hook_count", "" + hooks.length);
+}
+
+function writeNpcScriptTabs(npc, hooks) {
+    try {
+        var mcNpc = npc.getMCEntity != null ? npc.getMCEntity() : npc.mCEntity;
+        var scripts = mcNpc.script.scripts;
+        for (var i = 0; i < hooks.length; i++) {
+            var slot = hookIndex(hooks[i].hook);
+            var container = scripts[slot];
+            if (container == null && scripts.get != null) container = scripts.get(slot);
+            if (container == null) continue;
+            container.script = hooks[i].body;
+            container.fullscript = hooks[i].body;
+        }
+        mcNpc.script.enabled = true;
+    } catch (e) {}
+}
+
+function buildNpcSharedFactory(sharedFiles) {
+    var source = "(function(event){\n";
+    source += "var __modules={};\n";
+    source += "function __define(id,fn){__modules[id]={fn:fn,exports:{},loaded:false};}\n";
+    source += "function __require(id){var m=__modules[id];if(!m)throw 'Missing shared module '+id;if(!m.loaded){m.loaded=true;var module={exports:m.exports};m.fn(module,module.exports,__require,event);m.exports=module.exports;}return m.exports;}\n";
+    for (var i = 0; i < sharedFiles.length; i++) {
+        var id = sharedFiles[i].relativePath.substring("shared/".length);
+        source += "__define(" + JSON.stringify(id) + ",function(module,exports,require,event){\n";
+        source += sharedFiles[i].body + "\n});\n";
+    }
+    source += "var shared={};\n";
+    for (var j = 0; j < sharedFiles.length; j++) {
+        var name = sharedFiles[j].relativePath.substring(sharedFiles[j].relativePath.lastIndexOf("/") + 1).replace(/\.js$/i, "");
+        source += "shared[" + JSON.stringify(name) + "]=__require(" + JSON.stringify(sharedFiles[j].relativePath.substring("shared/".length)) + ");\n";
+    }
+    source += "return shared;\n";
+    source += "})";
+    return source;
+}
+
+function loadNpcPackage(url, token) {
     var parsed = parseGithubTarget(url);
-    var ref = resolveGithubRef(parsed, githubToken);
-    var tree = fetchRepoTree(parsed.owner, parsed.repo, ref, githubToken);
-    var rootPath = resolveNpcPackageRoot(parsed.path, tree);
-    var files = collectGithubFiles(parsed.owner, parsed.repo, ref, rootPath, tree, githubToken);
-    var supported = selectHookFiles(files);
-    var shared = selectSharedFiles(files);
-    var ignored = collectIgnoredFiles(files, supported, shared);
+    var ref = resolveGithubRef(parsed, token);
+    var tree = fetchRepoTree(parsed.owner, parsed.repo, ref, token);
+    var rootPath = resolvePackageRoot(parsed.path, tree);
+    var hooks = collectPackageFiles(parsed.owner, parsed.repo, token, tree, rootPath, "hooks/");
+    var shared = collectPackageFiles(parsed.owner, parsed.repo, token, tree, rootPath, "shared/");
+
+    if (hooks.length === 0) throw "Package has no hook files";
+    for (var i = 0; i < hooks.length; i++) {
+        hooks[i].hook = detectHookName(hooks[i].relativePath);
+        if (!hasText(hooks[i].hook)) throw "Unsupported hook file: " + hooks[i].relativePath;
+        validateScript(hooks[i].body, hooks[i].relativePath);
+    }
+    sortHooks(hooks);
+    for (var j = 0; j < shared.length; j++) validateScript(shared[j].body, shared[j].relativePath);
 
     return {
         sourceUrl: url,
@@ -235,685 +310,119 @@ function loadGithubPackage(url, githubToken) {
         repo: parsed.repo,
         ref: ref,
         rootPath: rootPath,
-        files: files,
-        supportedFiles: supported,
-        sharedFiles: shared,
-        ignoredFiles: ignored,
-        supportedHooks: extractHooks(supported),
-        loadedAt: "" + GitLoader_System.currentTimeMillis()
+        hooks: hooks,
+        shared: shared
     };
 }
 
-function validateNpcPackage(pkg) {
-    if (pkg == null) throw "Package is empty";
-    if (pkg.supportedFiles == null || pkg.supportedFiles.length === 0) throw "Package has no supported hook files";
-    for (var i = 0; i < pkg.supportedFiles.length; i++) {
-        var file = pkg.supportedFiles[i];
-        if (!hasText(file.body)) throw "Hook file is empty: " + file.relativePath;
-        validateScriptSource(file.body, file.relativePath);
-        if (file.body.length > GIT_LOADER_MAX_SCRIPT_CHARS) throw "Hook `" + file.hook + "` is larger than the script tab limit";
+function resolvePackageRoot(requestedPath, tree) {
+    var requested = normalizePath(requestedPath);
+    if (hasText(requested)) return requested;
+
+    var roots = {};
+    for (var i = 0; i < tree.length; i++) {
+        var entry = tree[i];
+        if (entry == null || trimString(entry.type) != "blob") continue;
+        var path = normalizePath(entry.path);
+        var marker = path.indexOf("/hooks/");
+        if (marker >= 0 && /\.js$/i.test(path)) roots[path.substring(0, marker)] = true;
+        if (path.indexOf("hooks/") === 0 && /\.js$/i.test(path)) roots[""] = true;
     }
-    buildSharedFactorySource(pkg.sharedFiles);
+
+    var keys = objectKeys(roots);
+    if (keys.length === 1) return keys[0];
+    return "";
 }
 
-function applyPackageToNpc(player, target, item) {
-    if (!isNpcTarget(target)) {
-        player.message("GitHub Loader: right click an NPC to apply the downloaded package.");
-        return false;
+function collectPackageFiles(owner, repo, token, tree, rootPath, folder) {
+    var files = [];
+    var prefix = hasText(rootPath) ? (rootPath + "/" + folder) : folder;
+    for (var i = 0; i < tree.length; i++) {
+        var entry = tree[i];
+        var path = entry == null ? "" : normalizePath(entry.path);
+        if (trimString(entry == null ? "" : entry.type) != "blob") continue;
+        if (path.indexOf(prefix) !== 0 || !/\.js$/i.test(path)) continue;
+        files.push({
+            relativePath: hasText(rootPath) ? path.substring(rootPath.length + 1) : path,
+            body: fetchBlobText(owner, repo, trimString(entry.sha), token)
+        });
     }
+    files.sort(function(a, b) {
+        return a.relativePath < b.relativePath ? -1 : (a.relativePath > b.relativePath ? 1 : 0);
+    });
+    return files;
+}
 
-    var pkg = getCurrentDownloadedPackage(player, item, getSessionId(item));
+function sortHooks(hooks) {
+    hooks.sort(function(a, b) {
+        return hookIndex(a.hook) - hookIndex(b.hook);
+    });
+}
+
+function detectHookName(relativePath) {
+    var match = normalizePath(relativePath).match(/^hooks\/([^\/]+)\.js$/i);
+    if (match == null) return "";
+    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i].toLowerCase() == trimString(match[1]).toLowerCase()) return HOOK_ORDER[i];
+    return "";
+}
+
+function hookIndex(name) {
+    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i] == name) return i;
+    return 999;
+}
+
+function buildPackageStatus(pkg) {
     if (pkg == null) {
-        player.message("GitHub Loader: download a package first.");
-        return false;
-    }
-
-    validateNpcPackage(pkg);
-    var data = target.getStoreddata();
-    data.put("__github_loader_package", JSON.stringify(buildStoredPackageMeta(pkg)));
-    data.put("__shared", buildSharedFactorySource(pkg.sharedFiles));
-    writeStoredFiles(data, "github_loader_hook", pkg.supportedFiles);
-    writeStoredFiles(data, "github_loader_shared", pkg.sharedFiles);
-
-    var scriptResult = tryWriteNpcScriptTabs(target, pkg.supportedFiles);
-    try {
-        target.updateClient();
-    } catch (e) {}
-
-    player.message("GitHub Loader: loaded " + pkg.supportedFiles.length + " hook(s) and " + pkg.sharedFiles.length + " shared file(s) into NPC.");
-    if (!scriptResult.ok) player.message("GitHub Loader: script tabs were not directly updated; durable copies were written to storeddata.");
-    return true;
-}
-
-function tryWriteNpcScriptTabs(npc, hookFiles) {
-    try {
-        var mcNpc = null;
-        try {
-            mcNpc = npc.getMCEntity();
-        } catch (e1) {
-            mcNpc = npc.mCEntity;
-        }
-        if (mcNpc == null || mcNpc.script == null || mcNpc.script.scripts == null) return { ok: false };
-        var scripts = mcNpc.script.scripts;
-
-        for (var i = 0; i < hookFiles.length; i++) {
-            var file = hookFiles[i];
-            var index = hookSortIndex(file.hook);
-            var container = null;
-            try {
-                container = scripts[index];
-            } catch (e2) {}
-            if (container == null && scripts.get != null) {
-                try {
-                    container = scripts.get(index);
-                } catch (e3) {}
-            }
-            if (container == null) continue;
-            container.script = file.body || "";
-            container.fullscript = file.body || "";
-            try {
-                container.errored = false;
-            } catch (e4) {}
-        }
-        try {
-            mcNpc.script.enabled = true;
-        } catch (e5) {}
-        return { ok: true };
-    } catch (e) {
-        return { ok: false, error: shortError(e) };
-    }
-}
-
-function buildSharedFactorySource(sharedFiles) {
-    var files = sharedFiles == null ? [] : sharedFiles;
-    var entries = [];
-    for (var i = 0; i < files.length; i++) {
-        var rel = normalizeSlashes(files[i].relativePath);
-        if (rel == "shared/__shared.js") continue;
-        entries.push({ id: rel.substring("shared/".length), body: files[i].body || "" });
-    }
-
-    var source = "(function(event){\n";
-    source += "var __modules={};\n";
-    source += "function __define(id,fn){__modules[id]={fn:fn,exports:{},loaded:false};}\n";
-    source += "function __require(id){var m=__modules[id];if(!m)throw 'Missing shared module '+id;if(!m.loaded){m.loaded=true;var module={exports:m.exports};m.fn(module,module.exports,__require,event);m.exports=module.exports;}return m.exports;}\n";
-    for (var j = 0; j < entries.length; j++) {
-        source += "__define(" + JSON.stringify(entries[j].id) + ",function(module,exports,require,event){\n";
-        source += entries[j].body + "\n});\n";
-    }
-    source += "var shared={};\n";
-    for (var k = 0; k < entries.length; k++) {
-        source += "shared[" + JSON.stringify(moduleNameFromPath(entries[k].id)) + "]=__require(" + JSON.stringify(entries[k].id) + ");\n";
-    }
-    source += "return shared;\n})";
-
-    validateScriptSource(source, "__shared");
-    return source;
-}
-
-function writeStoredFiles(data, prefix, files) {
-    var oldCount = parseIntSafe(data.get(prefix + "_count"), 0);
-    for (var i = 0; i < oldCount; i++) {
-        data.remove(prefix + "_" + i + "_path");
-        data.remove(prefix + "_" + i + "_hook");
-        data.remove(prefix + "_" + i + "_body");
-    }
-    var list = files == null ? [] : files;
-    for (var j = 0; j < list.length; j++) {
-        data.put(prefix + "_" + j + "_path", list[j].relativePath || "");
-        data.put(prefix + "_" + j + "_hook", list[j].hook || "");
-        data.put(prefix + "_" + j + "_body", list[j].body || "");
-    }
-    data.put(prefix + "_count", "" + list.length);
-}
-
-function buildStoredPackageMeta(pkg) {
-    return {
-        sourceUrl: pkg.sourceUrl,
-        owner: pkg.owner,
-        repo: pkg.repo,
-        ref: pkg.ref,
-        rootPath: pkg.rootPath,
-        loadedAt: pkg.loadedAt,
-        supportedHooks: pkg.supportedHooks,
-        hookCount: pkg.supportedFiles == null ? 0 : pkg.supportedFiles.length,
-        sharedCount: pkg.sharedFiles == null ? 0 : pkg.sharedFiles.length
-    };
-}
-
-function writeDownloadedPackageToItem(player, item, pkg, repoUrl) {
-    var tag = getCustomTag(item);
-    if (tag == null) throw "Item custom data is missing";
-    tag.putString(GIT_LOADER_LAST_URL_KEY, trimString(repoUrl));
-    tag.putString(GIT_LOADER_DOWNLOADED_PACKAGE_KEY, encodeBundle(JSON.stringify(pkg)));
-    tag.putString(GIT_LOADER_DOWNLOADED_SIGNATURE_KEY, buildDownloadedSignature(pkg));
-    if (!writeHeldTag(player, item, tag)) throw "Failed to write downloaded package into item";
-}
-
-function getCurrentDownloadedPackage(player, item, sessionId) {
-    var cached = getCachedDownloadedPackage(player, sessionId);
-    if (cached != null) return cached;
-
-    var pkg = getDownloadedPackageFromItem(item);
-    if (pkg != null) cacheDownloadedPackage(player, sessionId, pkg);
-    return pkg;
-}
-
-function getDownloadedPackageFromItem(item) {
-    try {
-        var tag = getCustomTag(item);
-        if (tag == null) return null;
-        var decoded = decodeBundle(readTag(tag, GIT_LOADER_DOWNLOADED_PACKAGE_KEY));
-        if (!hasText(decoded)) return null;
-        return JSON.parse(decoded);
-    } catch (e) {
-        return null;
-    }
-}
-
-function cacheDownloadedPackage(player, sessionId, pkg) {
-    try {
-        player.getTempdata().put(GIT_LOADER_TEMP_PACKAGE_KEY + sessionId, pkg);
-    } catch (e) {}
-}
-
-function getCachedDownloadedPackage(player, sessionId) {
-    try {
-        var pkg = player.getTempdata().get(GIT_LOADER_TEMP_PACKAGE_KEY + sessionId);
-        return pkg == null ? null : pkg;
-    } catch (e) {
-        return null;
-    }
-}
-
-function clearDownloadedPackage(player, sessionId) {
-    try {
-        player.getTempdata().remove(GIT_LOADER_TEMP_PACKAGE_KEY + sessionId);
-    } catch (e) {}
-    var item = getHeldLoaderItemForSession(player, sessionId);
-    if (item == null || item.isEmpty()) return;
-    var tag = getCustomTag(item);
-    if (tag == null) return;
-    tag.putString(GIT_LOADER_DOWNLOADED_PACKAGE_KEY, "");
-    tag.putString(GIT_LOADER_DOWNLOADED_SIGNATURE_KEY, "");
-    writeHeldTag(player, item, tag);
-}
-
-function buildDownloadedSignature(pkg) {
-    if (pkg == null) return "";
-    return [pkg.owner, pkg.repo, pkg.ref, pkg.rootPath, pkg.loadedAt].join("@");
-}
-
-function buildDownloadedStatusText(pkg, url) {
-    if (pkg == null) {
-        return [
-            "Ready item: yes",
-            "URL: " + (hasText(url) ? url : "-"),
-            "Downloaded: no",
-            "Use Download, then Preview or right click an NPC."
-        ].join("\n");
+        return "Downloaded: no";
     }
     return [
         "Downloaded: yes",
         "Repo: " + pkg.owner + "/" + pkg.repo + "@" + pkg.ref,
         "Path: " + (hasText(pkg.rootPath) ? pkg.rootPath : "/"),
-        "Hooks: " + joinHookNames(pkg.supportedHooks),
-        "Shared: " + (pkg.sharedFiles == null ? 0 : pkg.sharedFiles.length),
-        "Ignored: " + (pkg.ignoredFiles == null ? 0 : pkg.ignoredFiles.length)
+        "Hooks: " + pkg.hooks.length,
+        "Shared: " + pkg.shared.length
     ].join("\n");
 }
 
-function buildPreviewEntries(pkg) {
-    var files = getPreviewFiles(pkg);
-    var entries = [];
-    for (var i = 0; i < files.length; i++) entries.push(buildPreviewEntryLabel(files[i]));
-    return entries.length > 0 ? entries : ["No files"];
+function writeDownloadedPackage(item, pkg, url) {
+    var tag = getTag(item);
+    tag.putString(ITEM_LAST_URL_KEY, url);
+    tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, encodeText(JSON.stringify(pkg)));
+    writeTag(item, tag);
 }
 
-function getPreviewFiles(pkg) {
-    var files = [];
-    if (pkg == null) return files;
-    appendPreviewFiles(files, pkg.supportedFiles, "hook");
-    appendPreviewFiles(files, pkg.sharedFiles, "shared");
-    appendPreviewFiles(files, pkg.ignoredFiles, "ignored");
-    return files;
-}
-
-function appendPreviewFiles(out, files, kind) {
-    if (files == null) return;
-    for (var i = 0; i < files.length; i++) {
-        if (files[i] == null) continue;
-        out.push({
-            kind: kind,
-            hook: files[i].hook || "",
-            relativePath: files[i].relativePath || files[i].path || "",
-            body: files[i].body || ""
-        });
-    }
-}
-
-function buildPreviewEntryLabel(file) {
-    var cleanPath = hasText(file.relativePath) ? file.relativePath : "(no path)";
-    if (file.kind == "hook") return "[" + (hasText(file.hook) ? file.hook : "?") + "] " + cleanPath;
-    if (file.kind == "shared") return "[shared] " + cleanPath;
-    return "[ignored] " + cleanPath;
-}
-
-function renderPreviewState(gui, pkg, selectedIndex) {
-    var files = getPreviewFiles(pkg);
-    if (files.length === 0) {
-        setPreviewStatus(gui, "Preview is empty.");
-        setPreviewCode(gui, "");
-        return;
-    }
-    var index = selectedIndex;
-    if (index < 0 || index >= files.length) index = 0;
-    var file = files[index];
-    setPreviewStatus(gui, buildPreviewMetaText(file));
-    setPreviewCode(gui, limitPreviewText(file.body, 12000));
-}
-
-function buildPreviewMetaText(file) {
-    var code = file == null || file.body == null ? "" : ("" + file.body);
-    var lines = code.length === 0 ? 0 : code.split(/\r?\n/).length;
-    return file.kind + " | " + file.relativePath + " | lines=" + lines + " | chars=" + code.length;
-}
-
-function limitPreviewText(text, maxChars) {
-    var code = text == null ? "" : ("" + text);
-    if (code.length <= maxChars) return hasText(code) ? code : "// Empty file";
-    var tail = "\n\n// --- preview truncated ---\n// Total chars: " + code.length + "\n";
-    return code.substring(0, Math.max(0, maxChars - tail.length)) + tail;
-}
-
-function parseGithubTarget(url) {
-    var clean = trimString(url).replace(/^https?:\/\/www\.github\.com\//i, "https://github.com/");
-    clean = clean.replace(/\/+$/, "");
-    var match = clean.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/(.*))?$/i);
-    if (match == null) throw "Only github.com URLs are supported";
-
-    var owner = trimString(match[1]);
-    var repo = trimString(match[2]).replace(/\.git$/i, "");
-    var tail = trimString(match[3]);
-    var parts = hasText(tail) ? tail.split("/") : [];
-    var ref = "";
-    var path = "";
-
-    if (parts.length > 0) {
-        if (parts[0] == "tree" || parts[0] == "blob") {
-            if (parts.length < 2) throw "GitHub URL is missing a branch or tag";
-            ref = trimString(parts[1]);
-            path = parts.slice(2).join("/");
-        } else {
-            path = parts.join("/");
-        }
-    }
-    return { owner: owner, repo: repo, ref: ref, path: normalizeSlashes(path) };
-}
-
-function resolveGithubRef(parsed, githubToken) {
-    var ref = trimString(parsed.ref);
-    if (hasText(ref)) return ref;
-    var repoInfo = fetchJson("https://api.github.com/repos/" + parsed.owner + "/" + parsed.repo, githubToken);
-    ref = trimString(repoInfo == null ? "" : repoInfo.default_branch);
-    return hasText(ref) ? ref : "main";
-}
-
-function fetchRepoTree(owner, repo, ref, githubToken) {
-    var treeUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/git/trees/" + encodeQuery(ref) + "?recursive=1";
-    var payload = fetchJson(treeUrl, githubToken);
-    return payload != null && isArray(payload.tree) ? payload.tree : [];
-}
-
-function resolveNpcPackageRoot(requestedPath, tree) {
-    var requested = normalizeSlashes(requestedPath);
-    if (hasText(requested)) return requested;
-    var roots = {};
-    for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        if (entry == null || trimString(entry.type) != "blob") continue;
-        var root = inferRootFromHookPath(normalizeSlashes(entry.path));
-        if (hasText(root)) roots[root] = true;
-    }
-    var keys = objectKeys(roots);
-    if (keys.length === 1) return keys[0];
-    if (keys.length > 1) throw "Repository has multiple NPC packages. Use a nested package URL.";
-    return "";
-}
-
-function collectGithubFiles(owner, repo, ref, rootPath, tree, githubToken) {
-    var files = [];
-    var cleanRoot = normalizeSlashes(rootPath);
-    for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        if (entry == null || trimString(entry.type) != "blob") continue;
-        var path = normalizeSlashes(entry.path);
-        if (!isJsPath(path)) continue;
-        if (hasText(cleanRoot) && path != cleanRoot && path.indexOf(cleanRoot + "/") !== 0) continue;
-        files.push({
-            name: path.substring(path.lastIndexOf("/") + 1),
-            path: path,
-            relativePath: toRelativePath(path, cleanRoot),
-            body: fetchBlobText(owner, repo, trimString(entry.sha), githubToken)
-        });
-    }
-    files.sort(compareRelativePath);
-    return files;
-}
-
-function selectHookFiles(files) {
-    var selected = [];
-    var byHook = {};
-    for (var i = 0; i < files.length; i++) {
-        var file = files[i];
-        var hook = detectHookName(file.relativePath);
-        if (!hasText(hook)) continue;
-        if (byHook[hook] != null) throw "Duplicate hook `" + hook + "`: " + byHook[hook].relativePath + " and " + file.relativePath;
-        file.hook = hook;
-        byHook[hook] = file;
-        selected.push(file);
-    }
-    selected.sort(function(a, b) { return hookSortIndex(a.hook) - hookSortIndex(b.hook); });
-    return selected;
-}
-
-function selectSharedFiles(files) {
-    var selected = [];
-    for (var i = 0; i < files.length; i++) {
-        var rel = normalizeSlashes(files[i].relativePath);
-        if (rel.indexOf("shared/") === 0 && isJsPath(rel)) selected.push(files[i]);
-    }
-    selected.sort(compareRelativePath);
-    return selected;
-}
-
-function collectIgnoredFiles(files, hooks, shared) {
-    var used = {};
-    markUsed(used, hooks);
-    markUsed(used, shared);
-    var ignored = [];
-    for (var i = 0; i < files.length; i++) {
-        if (!used[files[i].relativePath]) ignored.push(files[i]);
-    }
-    return ignored;
-}
-
-function markUsed(used, files) {
-    if (files == null) return;
-    for (var i = 0; i < files.length; i++) {
-        if (files[i] != null) used[files[i].relativePath] = true;
-    }
-}
-
-function detectHookName(relativePath) {
-    var rel = normalizeSlashes(relativePath);
-    var match = rel.match(/^hooks\/([^\/]+)\.js$/i);
-    if (match != null) return normalizeHookName(match[1]);
-    match = rel.match(/^([^\/]+)\.js$/i);
-    if (match != null) return normalizeHookName(match[1]);
-    match = rel.match(/^([^\/]+)\/\1\.js$/i);
-    if (match != null) return normalizeHookName(match[1]);
-    return "";
-}
-
-function normalizeHookName(name) {
-    var clean = trimString(name);
-    for (var i = 0; i < GIT_LOADER_HOOK_ORDER.length; i++) {
-        if (clean.toLowerCase() == GIT_LOADER_HOOK_ORDER[i].toLowerCase()) return GIT_LOADER_HOOK_ORDER[i];
-    }
-    return "";
-}
-
-function hookSortIndex(name) {
-    for (var i = 0; i < GIT_LOADER_HOOK_ORDER.length; i++) {
-        if (GIT_LOADER_HOOK_ORDER[i] == name) return i;
-    }
-    return 999;
-}
-
-function extractHooks(files) {
-    var hooks = [];
-    for (var i = 0; i < files.length; i++) {
-        if (files[i] != null && hasText(files[i].hook)) hooks.push(files[i].hook);
-    }
-    return hooks;
-}
-
-function inferRootFromHookPath(path) {
-    var clean = normalizeSlashes(path);
-    var index = clean.indexOf("/hooks/");
-    if (index >= 0 && isJsPath(clean)) return clean.substring(0, index);
-    var parts = clean.split("/");
-    if (parts.length >= 2 && detectHookName(parts[parts.length - 1]) != "") return parts.slice(0, parts.length - 1).join("/");
-    return "";
-}
-
-function fetchJson(url, githubToken) {
-    var text = fetchText(url, githubToken);
-    try {
-        return JSON.parse(text);
-    } catch (e) {
-        throw "GitHub returned invalid JSON";
-    }
-}
-
-function fetchBlobText(owner, repo, sha, githubToken) {
-    if (!hasText(sha)) throw "GitHub tree entry is missing blob sha";
-    var payload = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), githubToken);
-    var encoding = trimString(payload == null ? "" : payload.encoding).toLowerCase();
-    var content = payload == null ? "" : trimString(payload.content);
-    if (encoding == "base64") return decodeBase64Text(content.replace(/\s+/g, ""));
-    if (hasText(content)) return content;
-    throw "GitHub blob is empty or unsupported";
-}
-
-function fetchText(url, githubToken) {
-    var lastError = null;
-    for (var attempt = 1; attempt <= GIT_LOADER_HTTP_RETRIES; attempt++) {
-        try {
-            return fetchTextOnce(url, githubToken);
-        } catch (e) {
-            lastError = e;
-            if (!shouldRetryHttpError(e, attempt)) break;
-            sleepMs(GIT_LOADER_HTTP_RETRY_DELAY_MS * attempt);
-        }
-    }
-    throw lastError == null ? "Unknown HTTP error" : lastError;
-}
-
-function fetchTextOnce(url, githubToken) {
-    var conn = null;
-    var reader = null;
-    var errorReader = null;
-    try {
-        conn = new GitLoader_URL(url).openConnection();
-        var resolvedToken = resolveGithubToken(githubToken);
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 CustomNpc-GitHubLoader");
-        conn.setRequestProperty("Accept", "application/vnd.github+json");
-        if (hasText(resolvedToken) && url.indexOf("https://api.github.com/") === 0) conn.setRequestProperty("Authorization", "Bearer " + resolvedToken);
-        conn.setRequestProperty("Connection", "close");
-        conn.setUseCaches(false);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(20000);
-
-        reader = new GitLoader_BufferedReader(new GitLoader_InputStreamReader(conn.getInputStream(), "UTF-8"));
-        var out = new GitLoader_StringBuilder();
-        var line;
-        while ((line = reader.readLine()) != null) out.append(line).append("\n");
-        return "" + out.toString();
-    } catch (e) {
-        var code = "";
-        var errorText = "";
-        try {
-            code = "" + conn.getResponseCode();
-        } catch (e2) {}
-        try {
-            if (conn != null && conn.getErrorStream() != null) {
-                errorReader = new GitLoader_BufferedReader(new GitLoader_InputStreamReader(conn.getErrorStream(), "UTF-8"));
-                var errorOut = new GitLoader_StringBuilder();
-                var errorLine;
-                while ((errorLine = errorReader.readLine()) != null) errorOut.append(errorLine).append("\n");
-                errorText = trimString("" + errorOut.toString());
-            }
-        } catch (e3) {}
-        if (hasText(code)) {
-            if (code == "401") throw "HTTP 401: invalid GitHub token";
-            if (code == "403" && errorText.toLowerCase().indexOf("rate limit") >= 0) throw "HTTP 403: GitHub API rate limit exceeded";
-            throw hasText(errorText) ? ("HTTP " + code + ": " + shortError(errorText)) : ("HTTP " + code);
-        }
-        throw "" + e;
-    } finally {
-        try {
-            if (reader != null) reader.close();
-        } catch (e4) {}
-        try {
-            if (errorReader != null) errorReader.close();
-        } catch (e5) {}
-    }
-}
-
-function shouldRetryHttpError(errorText, attempt) {
-    if (attempt >= GIT_LOADER_HTTP_RETRIES) return false;
-    var text = trimString("" + errorText).toLowerCase();
-    return text.indexOf("connection reset") >= 0
-        || text.indexOf("unexpected end of file") >= 0
-        || text.indexOf("read timed out") >= 0
-        || text.indexOf("connect timed out") >= 0
-        || text.indexOf("http 429") >= 0
-        || text.indexOf("http 500") >= 0
-        || text.indexOf("http 502") >= 0
-        || text.indexOf("http 503") >= 0
-        || text.indexOf("http 504") >= 0;
-}
-
-function resolveGithubToken(explicitToken) {
-    var token = trimString(explicitToken);
-    if (hasText(token)) return token;
-    try {
-        token = trimString(GitLoader_System.getenv("GITHUB_TOKEN"));
-    } catch (e) {
-        token = "";
-    }
-    return token;
-}
-
-function validateScriptSource(source, label) {
-    try {
-        (1, eval)("(function(){\n" + (source == null ? "" : ("" + source)) + "\n})");
-    } catch (e) {
-        throw "Invalid script `" + label + "`: " + shortError(e);
-    }
-}
-
-function persistMainFields(player, gui, sessionId) {
-    try {
-        player.getStoreddata().put(GIT_LOADER_GUI_URL_PREFIX + sessionId, trimString(getGuiText(gui, GIT_LOADER_URL_FIELD_ID)));
-        player.getStoreddata().put(GIT_LOADER_GUI_LAST_URL_KEY, trimString(getGuiText(gui, GIT_LOADER_URL_FIELD_ID)));
-        player.getStoreddata().put(GIT_LOADER_GUI_TOKEN_KEY, trimString(getGuiText(gui, GIT_LOADER_TOKEN_FIELD_ID)));
-    } catch (e) {}
-}
-
-function getInitialUrl(player, item, sessionId) {
-    var tag = getCustomTag(item);
-    var itemUrl = tag == null ? "" : readTag(tag, GIT_LOADER_LAST_URL_KEY);
-    if (hasStoredValue(itemUrl)) return itemUrl;
-    try {
-        var stored = trimString(player.getStoreddata().get(GIT_LOADER_GUI_URL_PREFIX + sessionId));
-        if (hasStoredValue(stored)) return stored;
-    } catch (e) {}
-    try {
-        var lastUrl = trimString(player.getStoreddata().get(GIT_LOADER_GUI_LAST_URL_KEY));
-        return hasStoredValue(lastUrl) ? lastUrl : "";
-    } catch (e1) {
-        return "";
-    }
-}
-
-function getInitialGithubToken(player) {
-    try {
-        var stored = trimString(player.getStoreddata().get(GIT_LOADER_GUI_TOKEN_KEY));
-        return hasStoredValue(stored) ? stored : "";
-    } catch (e) {
-        return "";
-    }
-}
-
-function isLoaderItem(item) {
-    var tag = getCustomTag(item);
-    return tag != null && readTag(tag, "item_type") == GIT_LOADER_ITEM_TYPE;
-}
-
-function isNpcTarget(target) {
-    if (target == null) return false;
-    try {
-        return target.getStoreddata() != null;
-    } catch (e) {
-        return false;
-    }
-}
-
-function getSessionId(item) {
-    var tag = getCustomTag(item);
-    return tag == null ? "" : readTag(tag, GIT_LOADER_SESSION_KEY);
-}
-
-function getCustomTag(item) {
+function getDownloadedPackage(item) {
     if (item == null || item.isEmpty()) return null;
-    try {
-        var customData = item.getMCItemStack().get(GitLoader_DataComponents.CUSTOM_DATA);
-        if (customData == null) return null;
-        return customData.copyTag();
-    } catch (e) {
-        return null;
-    }
+    var encoded = readTag(getTag(item), ITEM_DOWNLOADED_PACKAGE_KEY);
+    if (!hasText(encoded)) return null;
+    return JSON.parse(decodeText(encoded));
 }
 
-function writeHeldTag(player, item, tag) {
+function clearDownloadedPackage(item, player) {
+    var tag = getTag(item);
+    tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
+    writeTag(item, tag);
     try {
-        var mcStack = item.getMCItemStack();
-        if (mcStack == null || mcStack.isEmpty()) return false;
-        mcStack.set(GitLoader_DataComponents.CUSTOM_DATA, GitLoader_CustomData.of(tag));
         player.updatePlayerInventory();
-        return true;
-    } catch (e) {
-        return false;
-    }
+    } catch (e) {}
 }
 
-function rememberActiveSession(player, sessionId) {
-    try {
-        player.getTempdata().put(GIT_LOADER_ACTIVE_SESSION_KEY, sessionId);
-    } catch (e) {}
+function writeLastUrl(item, url) {
+    var tag = getTag(item);
+    tag.putString(ITEM_LAST_URL_KEY, url);
+    writeTag(item, tag);
 }
 
 function rememberActiveItem(player, item) {
+    player.getTempdata().put(PLAYER_ACTIVE_ITEM_KEY, item);
+}
+
+function getActiveLoaderItem(player) {
+    var item = null;
     try {
-        player.getTempdata().put(GIT_LOADER_ACTIVE_ITEM_KEY, item);
+        item = player.getTempdata().get(PLAYER_ACTIVE_ITEM_KEY);
     } catch (e) {}
-}
-
-function getActiveSession(player) {
-    try {
-        return trimString(player.getTempdata().get(GIT_LOADER_ACTIVE_SESSION_KEY));
-    } catch (e) {
-        return "";
-    }
-}
-
-function resolveActiveSession(player) {
-    var sessionId = getActiveSession(player);
-    if (hasText(sessionId)) return sessionId;
-    var item = getCurrentLoaderItem(player);
-    if (item != null && !item.isEmpty()) {
-        sessionId = getSessionId(item);
-        if (hasText(sessionId)) rememberActiveSession(player, sessionId);
-    }
-    return sessionId;
-}
-
-function getCurrentLoaderItem(player) {
-    var item = getActiveLoaderItem(player);
-    if (item != null && !item.isEmpty()) return item;
+    if (isLoaderItem(item)) return item;
     try {
         item = player.getMainhandItem();
         if (isLoaderItem(item)) return item;
@@ -925,74 +434,123 @@ function getCurrentLoaderItem(player) {
     return null;
 }
 
-function getActiveLoaderItem(player) {
+function isNpcTarget(target) {
+    if (target == null) return false;
     try {
-        var item = player.getTempdata().get(GIT_LOADER_ACTIVE_ITEM_KEY);
-        if (item == null || item.isEmpty()) return null;
-        return isLoaderItem(item) ? item : null;
+        return target.getStoreddata() != null;
     } catch (e) {
-        return null;
+        return false;
     }
 }
 
-function getHeldLoaderItemForSession(player, sessionId) {
-    try {
-        var mainhand = player.getMainhandItem();
-        if (isLoaderItem(mainhand) && getSessionId(mainhand) == sessionId) return mainhand;
-    } catch (e1) {}
-    try {
-        var offhand = player.getOffhandItem();
-        if (isLoaderItem(offhand) && getSessionId(offhand) == sessionId) return offhand;
-    } catch (e2) {}
-    return getActiveLoaderItem(player);
+function isLoaderItem(item) {
+    if (item == null || item.isEmpty()) return false;
+    return readTag(getTag(item), "item_type") == ITEM_TYPE;
 }
 
-function getSelectedIndex(scroll) {
+function getTag(item) {
     try {
-        var selection = scroll.getSelection();
-        if (selection != null && selection.length > 0) return selection[0];
-    } catch (e1) {}
-    try {
-        if (scroll.selection != null && scroll.selection.length > 0) return scroll.selection[0];
-    } catch (e2) {}
-    return -1;
-}
-
-function getGuiText(gui, id) {
-    try {
-        var comp = gui.getComponent(id);
-        if (comp != null && comp.getText != null) return "" + comp.getText();
-    } catch (e1) {}
-    try {
-        var comp2 = gui.getComponent(id);
-        if (comp2 != null && comp2.text != null) return "" + comp2.text;
-    } catch (e2) {}
-    return "";
-}
-
-function setGuiText(gui, id, text) {
-    try {
-        var comp = gui.getComponent(id);
-        if (comp != null && comp.setText != null) comp.setText(text == null ? "" : ("" + text));
+        var customData = item.getMCItemStack().get(GitLoader_DataComponents.CUSTOM_DATA);
+        if (customData != null) return customData.copyTag();
     } catch (e) {}
+    return new GitLoader_CompoundTag();
 }
 
-function setStatus(gui, text) {
-    setGuiText(gui, GIT_LOADER_STATUS_ID, text);
+function writeTag(item, tag) {
+    item.getMCItemStack().set(GitLoader_DataComponents.CUSTOM_DATA, GitLoader_CustomData.of(tag));
 }
 
-function setPreviewStatus(gui, text) {
-    setGuiText(gui, GIT_LOADER_PREVIEW_STATUS_ID, text);
+function parseGithubTarget(url) {
+    var clean = trimString(url).replace(/^https?:\/\/www\.github\.com\//i, "https://github.com/").replace(/\/+$/, "");
+    var match = clean.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/(.*))?$/i);
+    if (match == null) throw "Only github.com URLs are supported";
+
+    var owner = trimString(match[1]);
+    var repo = trimString(match[2]).replace(/\.git$/i, "");
+    var tail = trimString(match[3]);
+    var ref = "";
+    var path = "";
+    if (hasText(tail)) {
+        var parts = tail.split("/");
+        if (parts[0] == "tree" || parts[0] == "blob") {
+            ref = trimString(parts[1]);
+            path = parts.slice(2).join("/");
+        } else {
+            path = parts.join("/");
+        }
+    }
+    return { owner: owner, repo: repo, ref: ref, path: normalizePath(path) };
 }
 
-function setPreviewCode(gui, text) {
-    setGuiText(gui, GIT_LOADER_PREVIEW_CODE_ID, text);
+function resolveGithubRef(parsed, token) {
+    if (hasText(parsed.ref)) return parsed.ref;
+    var repoInfo = fetchJson("https://api.github.com/repos/" + parsed.owner + "/" + parsed.repo, token);
+    return hasText(repoInfo.default_branch) ? trimString(repoInfo.default_branch) : "main";
 }
 
-function safeUpdate(gui) {
+function fetchRepoTree(owner, repo, ref, token) {
+    var url = "https://api.github.com/repos/" + owner + "/" + repo + "/git/trees/" + encodeQuery(ref) + "?recursive=1";
+    var json = fetchJson(url, token);
+    return json != null && isArray(json.tree) ? json.tree : [];
+}
+
+function fetchJson(url, token) {
+    return JSON.parse(fetchText(url, token));
+}
+
+function fetchText(url, token) {
+    var conn = null;
+    var reader = null;
     try {
-        gui.update();
-    } catch (e) {}
+        conn = new GitLoader_URL(url).openConnection();
+        conn.setRequestProperty("User-Agent", "CustomNpc-GitHubLoader");
+        conn.setRequestProperty("Accept", "application/vnd.github+json");
+        if (hasText(token) && url.indexOf("https://api.github.com/") === 0) conn.setRequestProperty("Authorization", "Bearer " + token);
+        reader = new GitLoader_BufferedReader(new GitLoader_InputStreamReader(conn.getInputStream(), "UTF-8"));
+        var out = new GitLoader_StringBuilder();
+        var line;
+        while ((line = reader.readLine()) != null) out.append(line).append("\n");
+        return "" + out.toString();
+    } catch (e) {
+        try {
+            throw "HTTP " + conn.getResponseCode();
+        } catch (ignored) {
+            throw "" + e;
+        }
+    } finally {
+        try {
+            if (reader != null) reader.close();
+        } catch (e2) {}
+    }
+}
+
+function fetchBlobText(owner, repo, sha, token) {
+    var json = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), token);
+    if (trimString(json.encoding).toLowerCase() != "base64") throw "Unsupported blob encoding";
+    return decodeBase64(trimString(json.content).replace(/\s+/g, ""));
+}
+
+function validateScript(source, label) {
+    try {
+        (1, eval)("(function(){\n" + source + "\n})");
+    } catch (e) {
+        throw "Invalid `" + label + "`";
+    }
+}
+
+function encodeText(text) {
+    var bytes = new java.lang.String(text == null ? "" : "" + text).getBytes(GitLoader_StandardCharsets.UTF_8);
+    return "" + GitLoader_Base64.getEncoder().encodeToString(bytes);
+}
+
+function decodeText(text) {
+    var bytes = GitLoader_Base64.getDecoder().decode(trimString(text));
+    return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
+}
+
+function decodeBase64(text) {
+    var bytes = GitLoader_Base64.getDecoder().decode(text);
+    return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
 }
 
 function readTag(tag, key) {
@@ -1003,109 +561,62 @@ function readTag(tag, key) {
     }
 }
 
-function encodeBundle(text) {
+function getSelectedIndex(scroll) {
+    var selection = scroll.getSelection();
+    return selection != null && selection.length > 0 ? selection[0] : -1;
+}
+
+function getGuiText(gui, id) {
+    var component = gui.getComponent(id);
+    if (component == null) return "";
+    if (component.getText != null) return "" + component.getText();
+    return component.text == null ? "" : "" + component.text;
+}
+
+function setGuiText(gui, id, text) {
+    var component = gui.getComponent(id);
+    if (component != null && component.setText != null) component.setText(text == null ? "" : "" + text);
+}
+
+function setStatus(gui, text) {
+    setGuiText(gui, STATUS_ID, text);
+}
+
+function setPreviewStatus(gui, text) {
+    setGuiText(gui, PREVIEW_STATUS_ID, text);
+}
+
+function setPreviewCode(gui, text) {
+    setGuiText(gui, PREVIEW_CODE_ID, text);
+}
+
+function safeUpdate(gui) {
     try {
-        var raw = new java.lang.String(text == null ? "" : ("" + text)).getBytes(GitLoader_StandardCharsets.UTF_8);
-        return "" + GitLoader_Base64.getEncoder().encodeToString(raw);
-    } catch (e) {
-        return "";
-    }
-}
-
-function decodeBundle(text) {
-    try {
-        var clean = trimString(text);
-        if (!hasStoredValue(clean)) return "";
-        var bytes = GitLoader_Base64.getDecoder().decode(clean);
-        return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
-    } catch (e) {
-        return "";
-    }
-}
-
-function decodeBase64Text(text) {
-    var bytes = GitLoader_Base64.getDecoder().decode(trimString(text));
-    return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
-}
-
-function encodePath(path) {
-    var parts = normalizeSlashes(path).split("/");
-    var encoded = [];
-    for (var i = 0; i < parts.length; i++) {
-        if (hasText(parts[i])) encoded.push(encodeQuery(parts[i]));
-    }
-    return encoded.join("/");
+        gui.update();
+    } catch (e) {}
 }
 
 function encodeQuery(value) {
     return ("" + GitLoader_URLEncoder.encode("" + value, "UTF-8")).replace(/\+/g, "%20");
 }
 
-function toRelativePath(path, rootPath) {
-    var cleanPath = normalizeSlashes(path);
-    var cleanRoot = normalizeSlashes(rootPath);
-    if (!hasText(cleanRoot)) return cleanPath;
-    if (cleanPath == cleanRoot) return cleanPath.substring(cleanPath.lastIndexOf("/") + 1);
-    if (cleanPath.indexOf(cleanRoot + "/") === 0) return cleanPath.substring(cleanRoot.length + 1);
-    return cleanPath;
-}
-
-function compareRelativePath(a, b) {
-    var left = a == null ? "" : a.relativePath;
-    var right = b == null ? "" : b.relativePath;
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
-}
-
-function moduleNameFromPath(path) {
-    var name = normalizeSlashes(path);
-    name = name.substring(name.lastIndexOf("/") + 1).replace(/\.js$/i, "");
-    return name.replace(/[^A-Za-z0-9_]/g, "_");
-}
-
-function joinHookNames(hooks) {
-    if (hooks == null || hooks.length === 0) return "-";
-    return hooks.join(", ");
-}
-
-function sleepMs(ms) {
-    try {
-        GitLoader_Thread.sleep(ms);
-    } catch (e) {}
+function normalizePath(value) {
+    return trimString(value).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
 function objectKeys(obj) {
     var keys = [];
-    for (var key in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, key)) keys.push(key);
-    }
+    for (var key in obj) if (Object.prototype.hasOwnProperty.call(obj, key)) keys.push(key);
     return keys;
 }
 
 function isArray(value) {
-    try {
-        return Object.prototype.toString.call(value) == "[object Array]";
-    } catch (e) {
-        return false;
-    }
+    return Object.prototype.toString.call(value) == "[object Array]";
 }
 
-function normalizeSlashes(value) {
-    return trimString(value).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-}
-
-function isJsPath(path) {
-    return /\.js$/i.test(trimString(path));
-}
-
-function parseIntSafe(value, def) {
+function parseIntSafe(value, fallback) {
     var parsed = parseInt(trimString(value), 10);
-    return isNaN(parsed) ? def : parsed;
-}
-
-function shortError(e) {
-    return trimString(("" + e).replace(/\r?\n+/g, " "));
+    return isNaN(parsed) ? fallback : parsed;
 }
 
 function trimString(value) {
@@ -1114,9 +625,4 @@ function trimString(value) {
 
 function hasText(value) {
     return value != null && trimString(value).length > 0;
-}
-
-function hasStoredValue(value) {
-    var text = trimString(value);
-    return text.length > 0 && text != "null" && text != "undefined";
 }
