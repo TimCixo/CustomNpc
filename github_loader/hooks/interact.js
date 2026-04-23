@@ -268,10 +268,12 @@ function applyPackageToNpc(player, npc, item) {
             parts.push("script tabs not written");
         }
     } else {
-        parts.push("direct script tabs unavailable");
+        parts.push("Script tabs unavailable");
     }
     player.message("GitHub Loader: " + parts.join(", ") + ".");
-    if (hasText(scriptResult.error)) player.message("GitHub Loader: script tab error: " + scriptResult.error);
+    if (scriptResult.attempted && hasText(scriptResult.error)) {
+        player.message("GitHub Loader: script tab error: " + scriptResult.error);
+    }
 }
 
 function writeNpcHooks(data, hooks) {
@@ -294,14 +296,20 @@ function writeNpcScriptTabs(npc, hooks) {
     try {
         var handler = getNpcScriptHandler(npc);
         if (handler == null || handler.scripts == null) {
-            result.error = "script handler is unavailable";
+            result.error = "script tabs unavailable";
+            return result;
+        }
+        var scripts = handler.scripts;
+        var scriptCount = getCollectionSize(scripts);
+        if (scriptCount <= 0) {
+            result.error = "script tabs unavailable";
             return result;
         }
         result.attempted = true;
-        var scripts = handler.scripts;
         for (var i = 0; i < hooks.length; i++) {
             var slot = hookIndex(hooks[i].hook);
             if (slot < 0) continue;
+            if (slot >= scriptCount) continue;
             var container = typeof scripts[slot] != "undefined" ? scripts[slot] : null;
             if (container == null && scripts.get != null) container = scripts.get(slot);
             if (container == null) continue;
@@ -675,6 +683,13 @@ function safeUpdate(gui) {
     try {
         gui.update();
     } catch (e) {}
+}
+
+function getCollectionSize(value) {
+    if (value == null) return 0;
+    if (typeof value.length == "number") return value.length;
+    if (value.size != null) return value.size();
+    return 0;
 }
 
 function encodeQuery(value) {
