@@ -15,6 +15,7 @@ var ITEM_LAST_URL_KEY = "github_loader_last_url";
 var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
 var PLAYER_ACTIVE_ITEM_KEY = "github_loader_active_item";
 var PLAYER_TOKEN_KEY = "github_loader_token";
+var NPC_SHARED_SOURCES_KEY = "github_npc_loader_shared_sources";
 
 var GUI_ID = 9321;
 var ACTION_SCROLL_ID = 9322;
@@ -244,6 +245,7 @@ function applyPackageToNpc(player, npc, item) {
             ref: pkg.ref,
             rootPath: pkg.rootPath
         }));
+        data.put(NPC_SHARED_SOURCES_KEY, JSON.stringify(buildSharedSourceMap(pkg.shared)));
         data.put("__shared", buildNpcSharedFactory(pkg.shared));
         writeNpcHooks(data, pkg.hooks);
         storeddataWritten = true;
@@ -329,22 +331,47 @@ function writeNpcScriptTabs(npc, hooks) {
 
 function buildNpcSharedFactory(sharedFiles) {
     var source = "(function(event){\n";
-    source += "var __modules={};\n";
-    source += "function __define(id,fn){__modules[id]={fn:fn,exports:{},loaded:false};}\n";
-    source += "function __require(id){var m=__modules[id];if(!m)throw 'Missing shared module '+id;if(!m.loaded){m.loaded=true;var module={exports:m.exports};m.fn(module,module.exports,__require,event);m.exports=module.exports;}return m.exports;}\n";
-    for (var i = 0; i < sharedFiles.length; i++) {
-        var id = sharedFiles[i].relativePath.substring("shared/".length);
-        source += "__define(" + JSON.stringify(id) + ",function(module,exports,require,event){\n";
-        source += sharedFiles[i].body + "\n});\n";
-    }
+    source += "var npc=event==null?null:event.npc;\n";
+    source += "if(npc==null||npc.getStoreddata==null)throw 'Shared coordinator `__shared` is missing';\n";
+    source += "var data=npc.getStoreddata();\n";
+    source += "var rawSources=''+data.get(" + JSON.stringify(NPC_SHARED_SOURCES_KEY) + ");\n";
+    source += "if(rawSources==null||rawSources==''||rawSources=='null'||rawSources=='undefined')throw 'Shared coordinator `__shared` is missing';\n";
+    source += "var sourceMap=JSON.parse(rawSources);\n";
+    source += "var moduleCache={};\n";
+    source += "function normalizeSharedPath(path){return (''+path).replace(/\\\\/g,'/').replace(/^\\/+|\\/+$/g,'').replace(/^shared\\//,'');}\n";
+    source += "function resolveSharedSource(path){\n";
+    source += "var normalized=normalizeSharedPath(path);\n";
+    source += "var candidates=[normalized,'shared/'+normalized,'/'+normalized,'/shared/'+normalized];\n";
+    source += "for(var i=0;i<candidates.length;i++){if(Object.prototype.hasOwnProperty.call(sourceMap,candidates[i]))return {key:candidates[i],source:''+sourceMap[candidates[i]]};}\n";
+    source += "throw 'Shared module file missing: '+normalized;\n";
+    source += "}\n";
+    source += "function evalCommonJs(source,filename,requireFn){var module={exports:{}};var exports=module.exports;var fn=(1,eval)('(function(module,exports,require){\\n'+source+'\\n;return module.exports;\\n})');return fn(module,exports,requireFn);}\n";
+    source += "function requireSharedModule(path){\n";
+    source += "var resolved=resolveSharedSource(path);\n";
+    source += "if(Object.prototype.hasOwnProperty.call(moduleCache,resolved.key))return moduleCache[resolved.key];\n";
+    source += "var exports=evalCommonJs(resolved.source,resolved.key,requireSharedModule);\n";
+    source += "moduleCache[resolved.key]=exports;\n";
+    source += "return exports;\n";
+    source += "}\n";
+    source += "var coordinatorInfo=null;\n";
+    source += "try{coordinatorInfo=resolveSharedSource('__shared.js');}catch(e){throw 'Shared coordinator `__shared` is missing';}\n";
+    source += "var coordinator=evalCommonJs(coordinatorInfo.source,coordinatorInfo.key,requireSharedModule);\n";
     source += "var shared={};\n";
-    for (var j = 0; j < sharedFiles.length; j++) {
-        var name = sharedFiles[j].relativePath.substring(sharedFiles[j].relativePath.lastIndexOf("/") + 1).replace(/\.js$/i, "");
-        source += "shared[" + JSON.stringify(name) + "]=__require(" + JSON.stringify(sharedFiles[j].relativePath.substring("shared/".length)) + ");\n";
-    }
+    source += "for(var alias in coordinator){if(Object.prototype.hasOwnProperty.call(coordinator,alias)){shared[alias]=requireSharedModule(coordinator[alias]);}}\n";
     source += "return shared;\n";
     source += "})";
     return source;
+}
+
+function buildSharedSourceMap(sharedFiles) {
+    var map = {};
+    for (var i = 0; i < sharedFiles.length; i++) {
+        var path = normalizePath(sharedFiles[i].relativePath);
+        map[path] = sharedFiles[i].body;
+        var shortPath = path.indexOf("shared/") === 0 ? path.substring("shared/".length) : path;
+        map[shortPath] = sharedFiles[i].body;
+    }
+    return map;
 }
 
 function loadNpcPackage(url, token) {
