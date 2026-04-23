@@ -40,10 +40,11 @@ function interact(event) {
 
     if (isNpcTarget(event.target)) {
         applyPackageToNpc(player, event.target, item);
-    } else {
-        player.showCustomGui(createMainGui(player, item));
+        event.setCanceled(true);
+        return;
     }
 
+    player.showCustomGui(createMainGui(player, item));
     event.setCanceled(true);
 }
 
@@ -52,14 +53,14 @@ function customGuiScroll(event) {
     if (gui == null) return;
 
     if (gui.getID() == GUI_ID) {
-        handleMainScroll(event.player, gui, event.scroll);
-        safeUpdate(gui);
+        var shouldUpdateMain = handleMainScroll(event.player, gui, event.scroll);
+        if (shouldUpdateMain !== false) safeUpdate(gui);
         return;
     }
 
     if (gui.getID() == PREVIEW_GUI_ID) {
-        handlePreviewScroll(event.player, gui, event.scroll);
-        safeUpdate(gui);
+        var shouldUpdatePreview = handlePreviewScroll(event.player, gui, event.scroll);
+        if (shouldUpdatePreview !== false) safeUpdate(gui);
     }
 }
 
@@ -94,22 +95,25 @@ function createMainGui(player, item) {
 }
 
 function handleMainScroll(player, gui, scroll) {
-    if (scroll == null || scroll.getID() != ACTION_SCROLL_ID) return;
+    if (scroll == null || scroll.getID() != ACTION_SCROLL_ID) return true;
     var item = getActiveLoaderItem(player);
     if (item == null || item.isEmpty()) {
         setStatus(gui, "Loader item is missing.");
-        return;
+        return true;
     }
 
     var selected = getSelectedIndex(scroll);
     if (selected === 0) {
         downloadNpcPackage(player, item, gui);
+        return true;
     } else if (selected === 1) {
-        openPreviewGui(player, item, gui);
+        return openPreviewGui(player, item, gui);
     } else if (selected === 2) {
         clearDownloadedPackage(item, player);
         setStatus(gui, "Downloaded package cleared.");
+        return true;
     }
+    return true;
 }
 
 function downloadNpcPackage(player, item, gui) {
@@ -131,9 +135,10 @@ function openPreviewGui(player, item, gui) {
     var pkg = getDownloadedPackage(item);
     if (pkg == null) {
         setStatus(gui, "Download a package first.");
-        return;
+        return true;
     }
     player.showCustomGui(createPreviewGui(player, pkg));
+    return false;
 }
 
 function createPreviewGui(player, pkg) {
@@ -151,22 +156,23 @@ function createPreviewGui(player, pkg) {
 }
 
 function handlePreviewScroll(player, gui, scroll) {
-    if (scroll == null) return;
+    if (scroll == null) return true;
     if (scroll.getID() == PREVIEW_BACK_ID) {
         var item = getActiveLoaderItem(player);
         if (item != null && !item.isEmpty()) player.showCustomGui(createMainGui(player, item));
-        return;
+        return false;
     }
-    if (scroll.getID() != PREVIEW_SCROLL_ID) return;
+    if (scroll.getID() != PREVIEW_SCROLL_ID) return true;
 
     var item = getActiveLoaderItem(player);
     var pkg = item == null ? null : getDownloadedPackage(item);
     if (pkg == null) {
         setPreviewStatus(gui, "No downloaded package.");
         setPreviewCode(gui, "");
-        return;
+        return true;
     }
     renderPreview(gui, pkg, getSelectedIndex(scroll));
+    return true;
 }
 
 function renderPreview(gui, pkg, index) {
@@ -213,27 +219,59 @@ function appendPreviewFiles(out, files, kind) {
 }
 
 function applyPackageToNpc(player, npc, item) {
+    if (!isNpcTarget(npc)) {
+        player.message("GitHub Loader: target is not a CustomNPC.");
+        var targetInfo = describeTarget(npc);
+        if (hasText(targetInfo)) player.message("GitHub Loader: " + targetInfo);
+        return;
+    }
+
     var pkg = getDownloadedPackage(item);
     if (pkg == null) {
         player.message("GitHub Loader: download a package first.");
         return;
     }
 
-    var data = npc.getStoreddata();
-    data.put("__github_loader_package", JSON.stringify({
-        sourceUrl: pkg.sourceUrl,
-        owner: pkg.owner,
-        repo: pkg.repo,
-        ref: pkg.ref,
-        rootPath: pkg.rootPath
-    }));
-    data.put("__shared", buildNpcSharedFactory(pkg.shared));
-    writeNpcHooks(data, pkg.hooks);
-    writeNpcScriptTabs(npc, pkg.hooks);
+    var storeddataWritten = false;
+    var hooksStored = 0;
+    var scriptResult = { attempted: false, written: 0, error: "" };
+    try {
+        var data = npc.getStoreddata();
+        data.put("__github_loader_package", JSON.stringify({
+            sourceUrl: pkg.sourceUrl,
+            owner: pkg.owner,
+            repo: pkg.repo,
+            ref: pkg.ref,
+            rootPath: pkg.rootPath
+        }));
+        data.put("__shared", buildNpcSharedFactory(pkg.shared));
+        writeNpcHooks(data, pkg.hooks);
+        storeddataWritten = true;
+        hooksStored = pkg.hooks.length;
+    } catch (e) {
+        player.message("GitHub Loader: failed to write NPC storeddata: " + e);
+        return;
+    }
+
+    scriptResult = writeNpcScriptTabs(npc, pkg.hooks);
     try {
         npc.updateClient();
     } catch (e) {}
-    player.message("GitHub Loader: code loaded into NPC.");
+
+    var parts = [];
+    if (storeddataWritten) parts.push("storeddata written");
+    if (hooksStored > 0) parts.push("hooks=" + hooksStored);
+    if (scriptResult.attempted) {
+        if (scriptResult.written > 0) {
+            parts.push("script tabs written=" + scriptResult.written);
+        } else {
+            parts.push("script tabs not written");
+        }
+    } else {
+        parts.push("direct script tabs unavailable");
+    }
+    player.message("GitHub Loader: " + parts.join(", ") + ".");
+    if (hasText(scriptResult.error)) player.message("GitHub Loader: script tab error: " + scriptResult.error);
 }
 
 function writeNpcHooks(data, hooks) {
@@ -252,19 +290,33 @@ function writeNpcHooks(data, hooks) {
 }
 
 function writeNpcScriptTabs(npc, hooks) {
+    var result = { attempted: false, written: 0, error: "" };
     try {
-        var mcNpc = npc.getMCEntity != null ? npc.getMCEntity() : npc.mCEntity;
-        var scripts = mcNpc.script.scripts;
+        var handler = getNpcScriptHandler(npc);
+        if (handler == null || handler.scripts == null) {
+            result.error = "script handler is unavailable";
+            return result;
+        }
+        result.attempted = true;
+        var scripts = handler.scripts;
         for (var i = 0; i < hooks.length; i++) {
             var slot = hookIndex(hooks[i].hook);
-            var container = scripts[slot];
+            if (slot < 0) continue;
+            var container = typeof scripts[slot] != "undefined" ? scripts[slot] : null;
             if (container == null && scripts.get != null) container = scripts.get(slot);
             if (container == null) continue;
             container.script = hooks[i].body;
             container.fullscript = hooks[i].body;
+            result.written++;
         }
-        mcNpc.script.enabled = true;
-    } catch (e) {}
+        handler.enabled = true;
+        if (handler.saveScriptData != null) handler.saveScriptData();
+        if (handler.loadScriptData != null) handler.loadScriptData();
+        return result;
+    } catch (e) {
+        result.error = "" + e;
+    }
+    return result;
 }
 
 function buildNpcSharedFactory(sharedFiles) {
@@ -368,7 +420,7 @@ function detectHookName(relativePath) {
 
 function hookIndex(name) {
     for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i] == name) return i;
-    return 999;
+    return -1;
 }
 
 function buildPackageStatus(pkg) {
@@ -437,10 +489,39 @@ function getActiveLoaderItem(player) {
 function isNpcTarget(target) {
     if (target == null) return false;
     try {
-        return target.getStoreddata() != null;
+        return getNpcScriptHandler(target) != null;
     } catch (e) {
         return false;
     }
+}
+
+function getNpcScriptHandler(target) {
+    if (target == null) return null;
+    try {
+        if (target.getMCEntity == null && target.mCEntity == null) return null;
+        if (target.getStoreddata == null) return null;
+        if (target.updateClient == null) return null;
+        var mcEntity = target.getMCEntity != null ? target.getMCEntity() : target.mCEntity;
+        if (mcEntity == null || mcEntity.script == null || mcEntity.script.scripts == null) return null;
+        return mcEntity.script;
+    } catch (e) {
+        return null;
+    }
+}
+
+function describeTarget(target) {
+    if (target == null) return "";
+    var parts = [];
+    try {
+        if (target.getClass != null) parts.push("class=" + target.getClass().getName());
+    } catch (e1) {}
+    try {
+        if (target.getName != null) parts.push("name=" + target.getName());
+    } catch (e2) {}
+    try {
+        if (target.getType != null) parts.push("type=" + target.getType());
+    } catch (e3) {}
+    return parts.join(", ");
 }
 
 function isLoaderItem(item) {
