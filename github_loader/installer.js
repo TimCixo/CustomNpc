@@ -19,8 +19,12 @@ var ITEM_LAST_URL_KEY = "github_loader_last_url";
 var ITEM_INSTALLED_INIT_KEY = "github_loader_installed_init";
 var ITEM_INSTALLED_INTERACT_KEY = "github_loader_installed_interact";
 var ITEM_INSTALLED_SHARED_KEY = "github_loader_installed_shared";
+var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
 var PLAYER_ACTIVE_ITEM_KEY = "github_loader_active_item";
 var PLAYER_TOKEN_KEY = "github_loader_token";
+
+var STAGE_INSTALLER = "installer";
+var STAGE_READY = "ready";
 
 var GUI_ID = 9321;
 var ACTION_SCROLL_ID = 9322;
@@ -29,43 +33,64 @@ var STATUS_ID = 9324;
 var TOKEN_FIELD_ID = 9326;
 var ACTIONS = ["Install", "Cancel"];
 
+function init(event) {
+    var item = event.item;
+    if (item == null || item.isEmpty()) return;
+
+    ensureLoaderTag(item);
+    if (isReadyStage(item)) {
+        runReadyHandler(item, "init", event);
+        return;
+    }
+    applyInstallerPresentation(item);
+}
+
 function interact(event) {
     var item = event.item;
-    var player = event.player;
-    ensureInstallerItem(item);
-    rememberActiveItem(player, item);
-    player.showCustomGui(createInstallerGui(player, item));
+    if (item == null || item.isEmpty()) return;
+
+    ensureLoaderTag(item);
+    if (isReadyStage(item)) {
+        runReadyHandler(item, "interact", event);
+        return;
+    }
+
+    rememberActiveItem(event.player, item);
+    event.player.showCustomGui(createInstallerGui(event.player, item));
     event.setCanceled(true);
 }
 
 function customGuiScroll(event) {
-    if (event.gui == null || event.gui.getID() != GUI_ID) return;
-    if (event.scroll == null || event.scroll.getID() != ACTION_SCROLL_ID) return;
+    var item = getActiveLoaderItem(event.player);
+    if (item == null || item.isEmpty()) return;
 
-    var player = event.player;
-    var item = getActiveLoaderItem(player);
-    if (item == null || item.isEmpty()) {
-        setStatus(event.gui, "Loader item is missing.");
-        safeUpdate(event.gui);
+    if (isReadyStage(item)) {
+        runReadyHandler(item, "customGuiScroll", event);
         return;
     }
 
+    if (event.gui == null || event.gui.getID() != GUI_ID) return;
+    if (event.scroll == null || event.scroll.getID() != ACTION_SCROLL_ID) return;
+
     var selected = getSelectedIndex(event.scroll);
     if (selected === 0) {
-        installReadyFirmware(player, item, event.gui);
+        installReadyFirmware(event.player, item, event.gui);
     } else if (selected === 1) {
-        player.closeGui();
-        return;
-    } else {
-        setStatus(event.gui, "Unknown action.");
+        event.player.closeGui();
     }
     safeUpdate(event.gui);
 }
 
 function customGuiClosed(event) {
-    if (event.gui == null || event.gui.getID() != GUI_ID) return;
     var item = getActiveLoaderItem(event.player);
     if (item == null || item.isEmpty()) return;
+
+    if (isReadyStage(item)) {
+        runReadyHandler(item, "customGuiClosed", event);
+        return;
+    }
+
+    if (event.gui == null || event.gui.getID() != GUI_ID) return;
     writeLastUrl(item, trimString(getGuiText(event.gui, URL_FIELD_ID)));
     event.player.getStoreddata().put(PLAYER_TOKEN_KEY, trimString(getGuiText(event.gui, TOKEN_FIELD_ID)));
 }
@@ -82,9 +107,8 @@ function createInstallerGui(player, item) {
     gui.addScroll(ACTION_SCROLL_ID, 10, 146, 90, 52, ACTIONS);
     gui.addLabel(13, "Status", 110, 130, 80, 14, 0xE0E0E0);
     gui.addTextArea(STATUS_ID, 110, 146, 240, 98);
-
     setGuiText(gui, URL_FIELD_ID, readTag(getTag(item), ITEM_LAST_URL_KEY));
-    setGuiText(gui, TOKEN_FIELD_ID, readPlayerToken(player));
+    setGuiText(gui, TOKEN_FIELD_ID, trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY)));
     setStatus(gui, "Installer ready.");
     return gui;
 }
@@ -97,13 +121,17 @@ function installReadyFirmware(player, item, gui) {
         return;
     }
 
-    var loader = downloadLoaderPayload(repoUrl, token);
-    rewriteItemScripts(item, loader);
-    writeInstalledData(item, loader, repoUrl);
-    eventlessWriteItem(item, player);
+    var payload = downloadLoaderPayload(repoUrl, token);
+    writeInstalledFirmware(item, payload, repoUrl);
+    applyReadyPresentation(item);
+
+    try {
+        player.updatePlayerInventory();
+    } catch (e) {}
+
     player.getStoreddata().put(PLAYER_TOKEN_KEY, token);
     setStatus(gui, "Installed. Reopen the item.");
-    player.message("GitHub Loader: installer switched item to ready mode.");
+    player.message("GitHub Loader: ready firmware installed.");
     player.closeGui();
 }
 
@@ -111,10 +139,11 @@ function downloadLoaderPayload(repoUrl, token) {
     var parsed = parseGithubTarget(repoUrl);
     var ref = resolveGithubRef(parsed, token);
     var tree = fetchRepoTree(parsed.owner, parsed.repo, ref, token);
-    var root = locateLoaderRoot(tree, parsed.path);
-    var initSource = fetchRequiredLoaderFile(parsed, token, tree, root, "hooks/init.js");
-    var interactSource = fetchRequiredLoaderFile(parsed, token, tree, root, "hooks/interact.js");
-    var sharedFiles = fetchLoaderSharedFiles(parsed, token, tree, root);
+    var root = locateLoaderRoot(parsed.path, tree);
+
+    var initSource = fetchRequiredFile(parsed, token, tree, root, "hooks/init.js");
+    var interactSource = fetchRequiredFile(parsed, token, tree, root, "hooks/interact.js");
+    var sharedFiles = fetchSharedFiles(parsed, token, tree, root);
 
     validateScript(initSource, "hooks/init.js");
     validateScript(interactSource, "hooks/interact.js");
@@ -127,71 +156,55 @@ function downloadLoaderPayload(repoUrl, token) {
     };
 }
 
-function locateLoaderRoot(tree, requestedPath) {
-    var requested = normalizePath(requestedPath);
-    if (requested == "github_loader" || requested.indexOf("github_loader/") === 0) return "github_loader";
-
-    for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        if (entry != null && normalizePath(entry.path).indexOf("github_loader/") === 0) return "github_loader";
-    }
-    throw "github_loader folder not found";
-}
-
-function fetchRequiredLoaderFile(parsed, token, tree, root, relativePath) {
-    var fullPath = root + "/" + relativePath;
-    var sha = findTreeSha(tree, fullPath);
-    if (!hasText(sha)) throw "Missing `" + fullPath + "`";
-    return fetchBlobText(parsed.owner, parsed.repo, sha, token);
-}
-
-function fetchLoaderSharedFiles(parsed, token, tree, root) {
-    var files = [];
-    var prefix = root + "/shared/";
-    for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        var path = entry == null ? "" : normalizePath(entry.path);
-        if (trimString(entry == null ? "" : entry.type) != "blob") continue;
-        if (path.indexOf(prefix) !== 0 || !/\.js$/i.test(path)) continue;
-        files.push({
-            path: path.substring(root.length + 1),
-            body: fetchBlobText(parsed.owner, parsed.repo, trimString(entry.sha), token)
-        });
-    }
-    files.sort(function(a, b) {
-        return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0);
-    });
-    if (files.length === 0) throw "Loader shared files are missing";
-    return files;
-}
-
-function rewriteItemScripts(item, loader) {
-    setScriptSource(item, 0, loader.initSource);
-    setScriptSource(item, 2, loader.interactSource);
-    setScriptSource(item, 48, loader.interactSource);
-    setScriptSource(item, 51, loader.interactSource);
-    item.enabled = true;
-    item.saveScriptData();
-}
-
-function writeInstalledData(item, loader, repoUrl) {
+function writeInstalledFirmware(item, payload, repoUrl) {
     var tag = getTag(item);
     tag.putString("item_type", ITEM_TYPE);
-    tag.putString(ITEM_STAGE_KEY, "ready");
+    tag.putString(ITEM_STAGE_KEY, STAGE_READY);
     tag.putString(ITEM_LAST_URL_KEY, repoUrl);
-    tag.putString(ITEM_INSTALLED_INIT_KEY, encodeText(loader.initSource));
-    tag.putString(ITEM_INSTALLED_INTERACT_KEY, encodeText(loader.interactSource));
-    tag.putString(ITEM_INSTALLED_SHARED_KEY, encodeText(JSON.stringify(loader.sharedFiles)));
+    tag.putString(ITEM_INSTALLED_INIT_KEY, encodeText(payload.initSource));
+    tag.putString(ITEM_INSTALLED_INTERACT_KEY, encodeText(payload.interactSource));
+    tag.putString(ITEM_INSTALLED_SHARED_KEY, encodeText(JSON.stringify(payload.sharedFiles)));
+    if (!hasText(readTag(tag, ITEM_DOWNLOADED_PACKAGE_KEY))) tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
     writeTag(item, tag);
 }
 
-function ensureInstallerItem(item) {
+function runReadyHandler(item, name, event) {
+    var runtime = buildReadyRuntime(item);
+    if (runtime == null || typeof runtime[name] != "function") return;
+    runtime[name](event);
+}
+
+function buildReadyRuntime(item) {
     var tag = getTag(item);
-    if (!hasText(readTag(tag, "item_type"))) tag.putString("item_type", ITEM_TYPE);
-    if (!hasText(readTag(tag, ITEM_STAGE_KEY))) tag.putString(ITEM_STAGE_KEY, "installer");
+    var initSource = decodeText(readTag(tag, ITEM_INSTALLED_INIT_KEY));
+    var interactSource = decodeText(readTag(tag, ITEM_INSTALLED_INTERACT_KEY));
+    if (!hasText(initSource) || !hasText(interactSource)) return null;
+
+    var factory = (1, eval)(
+        "(function(){\n" +
+        initSource + "\n" +
+        interactSource + "\n" +
+        "return {" +
+        "init:(typeof init=='function'?init:null)," +
+        "interact:(typeof interact=='function'?interact:null)," +
+        "customGuiScroll:(typeof customGuiScroll=='function'?customGuiScroll:null)," +
+        "customGuiClosed:(typeof customGuiClosed=='function'?customGuiClosed:null)" +
+        "};\n" +
+        "})"
+    );
+    return factory();
+}
+
+function ensureLoaderTag(item) {
+    var tag = getTag(item);
+    tag.putString("item_type", ITEM_TYPE);
+    if (!hasText(readTag(tag, ITEM_STAGE_KEY))) tag.putString(ITEM_STAGE_KEY, STAGE_INSTALLER);
     if (!hasText(readTag(tag, ITEM_LAST_URL_KEY))) tag.putString(ITEM_LAST_URL_KEY, "");
+    if (!hasText(readTag(tag, ITEM_INSTALLED_INIT_KEY))) tag.putString(ITEM_INSTALLED_INIT_KEY, "");
+    if (!hasText(readTag(tag, ITEM_INSTALLED_INTERACT_KEY))) tag.putString(ITEM_INSTALLED_INTERACT_KEY, "");
+    if (!hasText(readTag(tag, ITEM_INSTALLED_SHARED_KEY))) tag.putString(ITEM_INSTALLED_SHARED_KEY, "");
+    if (!hasText(readTag(tag, ITEM_DOWNLOADED_PACKAGE_KEY))) tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
     writeTag(item, tag);
-    applyInstallerPresentation(item);
 }
 
 function applyInstallerPresentation(item) {
@@ -200,10 +213,27 @@ function applyInstallerPresentation(item) {
     mcStack.set(GitLoader_DataComponents.CUSTOM_NAME, GitLoader_Component.literal("GitHub Loader Installer"));
     mcStack.set(GitLoader_DataComponents.LORE, new GitLoader_ItemLore(buildLore([
         "Installer stage.",
-        "Use Install to write ready firmware into this item."
+        "Use Install to store ready firmware into this item."
     ])));
     try {
         item.setCustomName("GitHub Loader Installer");
+        item.setTexture(1, "minecraft:oak_sapling");
+        item.setMaxStackSize(1);
+        item.setDurabilityShow(false);
+    } catch (e) {}
+}
+
+function applyReadyPresentation(item) {
+    var mcStack = item.getMCItemStack();
+    mcStack.set(GitLoader_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
+    mcStack.set(GitLoader_DataComponents.CUSTOM_NAME, GitLoader_Component.literal("GitHub NPC Loader"));
+    mcStack.set(GitLoader_DataComponents.LORE, new GitLoader_ItemLore(buildLore([
+        "Ready loader stage.",
+        "Right click air to download and preview NPC packages.",
+        "Right click an NPC to apply the downloaded package."
+    ])));
+    try {
+        item.setCustomName("GitHub NPC Loader");
         item.setTexture(1, "minecraft:oak_sapling");
         item.setMaxStackSize(1);
         item.setDurabilityShow(false);
@@ -231,54 +261,48 @@ function getActiveLoaderItem(player) {
     return null;
 }
 
+function isReadyStage(item) {
+    return readTag(getTag(item), ITEM_STAGE_KEY) == STAGE_READY;
+}
+
 function isLoaderItem(item) {
-    if (item == null || item.isEmpty()) return false;
-    return readTag(getTag(item), "item_type") == ITEM_TYPE;
+    return item != null && !item.isEmpty() && readTag(getTag(item), "item_type") == ITEM_TYPE;
 }
 
-function getTag(item) {
-    try {
-        var customData = item.getMCItemStack().get(GitLoader_DataComponents.CUSTOM_DATA);
-        if (customData != null) return customData.copyTag();
-    } catch (e) {}
-    return new GitLoader_CompoundTag();
+function locateLoaderRoot(requestedPath, tree) {
+    var requested = normalizePath(requestedPath);
+    if (requested == "github_loader" || requested.indexOf("github_loader/") === 0) return "github_loader";
+    for (var i = 0; i < tree.length; i++) {
+        if (tree[i] != null && normalizePath(tree[i].path).indexOf("github_loader/") === 0) return "github_loader";
+    }
+    throw "github_loader folder not found";
 }
 
-function writeTag(item, tag) {
-    item.getMCItemStack().set(GitLoader_DataComponents.CUSTOM_DATA, GitLoader_CustomData.of(tag));
+function fetchRequiredFile(parsed, token, tree, root, relativePath) {
+    var fullPath = root + "/" + relativePath;
+    var sha = findTreeSha(tree, fullPath);
+    if (!hasText(sha)) throw "Missing `" + fullPath + "`";
+    return fetchBlobText(parsed.owner, parsed.repo, sha, token);
 }
 
-function eventlessWriteItem(item, player) {
-    try {
-        player.updatePlayerInventory();
-    } catch (e) {}
-}
-
-function setScriptSource(item, index, source) {
-    var container = item.scripts[index];
-    if (container == null && item.scripts.get != null) container = item.scripts.get(index);
-    if (container == null) throw "Missing script slot " + index;
-    container.script = source;
-    container.fullscript = source;
-    try {
-        container.errored = false;
-    } catch (e) {}
-}
-
-function buildLore(lines) {
-    var lore = new GitLoader_ArrayList();
-    for (var i = 0; i < lines.length; i++) lore.add(GitLoader_Component.literal(lines[i]));
-    return lore;
-}
-
-function writeLastUrl(item, url) {
-    var tag = getTag(item);
-    tag.putString(ITEM_LAST_URL_KEY, url);
-    writeTag(item, tag);
-}
-
-function readPlayerToken(player) {
-    return trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY));
+function fetchSharedFiles(parsed, token, tree, root) {
+    var files = [];
+    var prefix = root + "/shared/";
+    for (var i = 0; i < tree.length; i++) {
+        var entry = tree[i];
+        var path = entry == null ? "" : normalizePath(entry.path);
+        if (trimString(entry == null ? "" : entry.type) != "blob") continue;
+        if (path.indexOf(prefix) !== 0 || !/\.js$/i.test(path)) continue;
+        files.push({
+            path: path.substring(root.length + 1),
+            body: fetchBlobText(parsed.owner, parsed.repo, trimString(entry.sha), token)
+        });
+    }
+    files.sort(function(a, b) {
+        return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0);
+    });
+    if (files.length === 0) throw "Loader shared files are missing";
+    return files;
 }
 
 function parseGithubTarget(url) {
@@ -318,10 +342,15 @@ function fetchRepoTree(owner, repo, ref, token) {
 function findTreeSha(tree, fullPath) {
     var wanted = normalizePath(fullPath);
     for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        if (entry != null && normalizePath(entry.path) == wanted) return trimString(entry.sha);
+        if (tree[i] != null && normalizePath(tree[i].path) == wanted) return trimString(tree[i].sha);
     }
     return "";
+}
+
+function fetchBlobText(owner, repo, sha, token) {
+    var json = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), token);
+    if (trimString(json.encoding).toLowerCase() != "base64") throw "Unsupported blob encoding";
+    return decodeBase64(trimString(json.content).replace(/\s+/g, ""));
 }
 
 function fetchJson(url, token) {
@@ -333,33 +362,19 @@ function fetchText(url, token) {
     var reader = null;
     try {
         conn = new GitLoader_URL(url).openConnection();
-        conn.setRequestProperty("User-Agent", "CustomNpc-GitHubLoaderInstaller");
+        conn.setRequestProperty("User-Agent", "CustomNpc-GitHubLoader");
         conn.setRequestProperty("Accept", "application/vnd.github+json");
-        if (hasText(token) && url.indexOf("https://api.github.com/") === 0) {
-            conn.setRequestProperty("Authorization", "Bearer " + token);
-        }
+        if (hasText(token) && url.indexOf("https://api.github.com/") === 0) conn.setRequestProperty("Authorization", "Bearer " + token);
         reader = new GitLoader_BufferedReader(new GitLoader_InputStreamReader(conn.getInputStream(), "UTF-8"));
         var out = new GitLoader_StringBuilder();
         var line;
         while ((line = reader.readLine()) != null) out.append(line).append("\n");
         return "" + out.toString();
-    } catch (e) {
-        try {
-            throw "HTTP " + conn.getResponseCode();
-        } catch (ignored) {
-            throw "" + e;
-        }
     } finally {
         try {
             if (reader != null) reader.close();
-        } catch (e2) {}
+        } catch (e) {}
     }
-}
-
-function fetchBlobText(owner, repo, sha, token) {
-    var json = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), token);
-    if (trimString(json.encoding).toLowerCase() != "base64") throw "Unsupported blob encoding";
-    return decodeBase64(trimString(json.content).replace(/\s+/g, ""));
 }
 
 function validateScript(source, label) {
@@ -370,9 +385,40 @@ function validateScript(source, label) {
     }
 }
 
+function getTag(item) {
+    try {
+        var customData = item.getMCItemStack().get(GitLoader_DataComponents.CUSTOM_DATA);
+        if (customData != null) return customData.copyTag();
+    } catch (e) {}
+    return new GitLoader_CompoundTag();
+}
+
+function writeTag(item, tag) {
+    item.getMCItemStack().set(GitLoader_DataComponents.CUSTOM_DATA, GitLoader_CustomData.of(tag));
+}
+
+function writeLastUrl(item, url) {
+    var tag = getTag(item);
+    tag.putString(ITEM_LAST_URL_KEY, url);
+    writeTag(item, tag);
+}
+
+function buildLore(lines) {
+    var lore = new GitLoader_ArrayList();
+    for (var i = 0; i < lines.length; i++) lore.add(GitLoader_Component.literal(lines[i]));
+    return lore;
+}
+
 function encodeText(text) {
     var bytes = new java.lang.String(text == null ? "" : "" + text).getBytes(GitLoader_StandardCharsets.UTF_8);
     return "" + GitLoader_Base64.getEncoder().encodeToString(bytes);
+}
+
+function decodeText(text) {
+    var clean = trimString(text);
+    if (!hasText(clean)) return "";
+    var bytes = GitLoader_Base64.getDecoder().decode(clean);
+    return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
 }
 
 function decodeBase64(text) {
