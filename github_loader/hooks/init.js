@@ -4,10 +4,15 @@ var GitLoaderInit_ItemLore = Java.type("net.minecraft.world.item.component.ItemL
 var GitLoaderInit_Component = Java.type("net.minecraft.network.chat.Component");
 var GitLoaderInit_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 var GitLoaderInit_ArrayList = Java.type("java.util.ArrayList");
+var GitLoaderInit_UUID = Java.type("java.util.UUID");
 
 var ITEM_TYPE = "github_npc_loader_tool";
-var ITEM_LAST_URL_KEY = "github_loader_last_url";
-var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
+var SESSION_ID_KEY = "github_npc_loader_session_id";
+var LAST_URL_KEY = "github_loader_last_url";
+var DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
+var INSTALLED_INIT_KEY = "github_loader_installed_init";
+var INSTALLED_INTERACT_KEY = "github_loader_installed_interact";
+var INSTALLED_SHARED_KEY = "github_loader_installed_shared";
 
 function init(event) {
     var item = event.item;
@@ -15,10 +20,12 @@ function init(event) {
 
     var tag = getTag(item);
     tag.putString("item_type", ITEM_TYPE);
-    tag.putString("github_loader_stage", "ready");
-    if (!hasText(readTag(tag, ITEM_LAST_URL_KEY))) tag.putString(ITEM_LAST_URL_KEY, "");
-    if (!hasText(readTag(tag, ITEM_DOWNLOADED_PACKAGE_KEY))) tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
-
+    if (!hasText(readTag(tag, SESSION_ID_KEY))) tag.putString(SESSION_ID_KEY, "" + GitLoaderInit_UUID.randomUUID());
+    if (!hasText(readTag(tag, LAST_URL_KEY))) tag.putString(LAST_URL_KEY, "");
+    if (!hasText(readTag(tag, DOWNLOADED_PACKAGE_KEY))) tag.putString(DOWNLOADED_PACKAGE_KEY, "");
+    if (!hasText(readTag(tag, INSTALLED_INIT_KEY))) tag.putString(INSTALLED_INIT_KEY, "");
+    if (!hasText(readTag(tag, INSTALLED_INTERACT_KEY))) tag.putString(INSTALLED_INTERACT_KEY, "");
+    if (!hasText(readTag(tag, INSTALLED_SHARED_KEY))) tag.putString(INSTALLED_SHARED_KEY, "");
     writeTag(item, tag);
     applyReadyPresentation(item);
 }
@@ -28,7 +35,7 @@ function applyReadyPresentation(item) {
     mcStack.set(GitLoaderInit_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
     mcStack.set(GitLoaderInit_DataComponents.CUSTOM_NAME, GitLoaderInit_Component.literal("GitHub NPC Loader"));
     mcStack.set(GitLoaderInit_DataComponents.LORE, new GitLoaderInit_ItemLore(buildLore([
-        "Ready loader stage.",
+        "Ready GitHub NPC loader.",
         "Right click air to download and preview NPC packages.",
         "Right click an NPC to apply the downloaded package."
     ])));

@@ -108,6 +108,7 @@ function installReadyFirmware(player, item, gui) {
     validateReadyItemRuntime(readySource);
     installReadyRuntime(item, readySource);
     writeInstalledFirmware(item, payload, repoUrl);
+    applyReadyPresentation(item);
 
     try {
         player.updatePlayerInventory();
@@ -131,6 +132,7 @@ function downloadLoaderPayload(repoUrl, token) {
     validateScript(initSource, "hooks/init.js");
     validateScript(interactSource, "hooks/interact.js");
     for (var i = 0; i < sharedFiles.length; i++) validateScript(sharedFiles[i].body, sharedFiles[i].path);
+    validateReadySources(initSource, interactSource);
 
     return {
         initSource: initSource,
@@ -166,6 +168,29 @@ function validateReadyItemRuntime(source) {
     if (runtime == null || typeof runtime.init != "function" || typeof runtime.interact != "function") {
         throw "Ready firmware is incomplete";
     }
+}
+
+function validateReadySources(initSource, interactSource) {
+    var forbiddenInit = [
+        "GitHub Loader Installer",
+        "Installer stage.",
+        "Use Install to store ready firmware into this item.",
+        "installed_runtime_source",
+        "github_loader/installer.js"
+    ];
+    var forbiddenInteract = [
+        "ensureRuntime(",
+        "buildRuntimeModule(",
+        "getInstalledRuntimeSource(",
+        "installed_runtime_source",
+        "github_loader/installer.js",
+        "locateLoaderRoot(",
+        "downloadLoaderPayload(",
+        "installReadyFirmware(",
+        "STAGE_INSTALLER"
+    ];
+    ensureForbiddenTokensAbsent(initSource, forbiddenInit, "hooks/init.js");
+    ensureForbiddenTokensAbsent(interactSource, forbiddenInteract, "hooks/interact.js");
 }
 
 function installReadyRuntime(item, source) {
@@ -217,6 +242,23 @@ function applyInstallerPresentation(item) {
     ])));
     try {
         item.setCustomName("GitHub Loader Installer");
+        item.setTexture(1, "minecraft:oak_sapling");
+        item.setMaxStackSize(1);
+        item.setDurabilityShow(false);
+    } catch (e) {}
+}
+
+function applyReadyPresentation(item) {
+    var mcStack = item.getMCItemStack();
+    mcStack.set(GitLoader_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
+    mcStack.set(GitLoader_DataComponents.CUSTOM_NAME, GitLoader_Component.literal("GitHub NPC Loader"));
+    mcStack.set(GitLoader_DataComponents.LORE, new GitLoader_ItemLore(buildLore([
+        "Ready loader stage.",
+        "Right click air to download and preview NPC packages.",
+        "Right click an NPC to apply the downloaded package."
+    ])));
+    try {
+        item.setCustomName("GitHub NPC Loader");
         item.setTexture(1, "minecraft:oak_sapling");
         item.setMaxStackSize(1);
         item.setDurabilityShow(false);
@@ -431,6 +473,12 @@ function safeUpdate(gui) {
     try {
         gui.update();
     } catch (e) {}
+}
+
+function ensureForbiddenTokensAbsent(source, tokens, label) {
+    for (var i = 0; i < tokens.length; i++) {
+        if (source.indexOf(tokens[i]) >= 0) throw "Invalid ready firmware in `" + label + "`";
+    }
 }
 
 function getCollectionSize(value) {
