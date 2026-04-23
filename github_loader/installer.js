@@ -64,9 +64,14 @@ function customGuiScroll(event) {
         if (gui == null || gui.getID() != GIT_LOADER_GUI_ID) return;
         if (scroll == null || scroll.getID() != GIT_LOADER_ACTION_SCROLL_ID) return;
 
-        var sessionId = getActiveSession(player);
+        var sessionId = resolveActiveSession(player);
         if (!hasText(sessionId)) {
-            setStatus(gui, "No active item session.");
+            setStatus(gui, [
+                "No active item session.",
+                "activeItem=" + describeItemForDebug(getActiveLoaderItem(player)),
+                "mainhand=" + describeItemForDebug(safeGetMainhandItem(player)),
+                "offhand=" + describeItemForDebug(safeGetOffhandItem(player))
+            ].join("\n"));
             safeUpdate(gui);
             return;
         }
@@ -90,7 +95,13 @@ function customGuiClosed(event) {
         var player = event.player;
         if (gui == null || gui.getID() != GIT_LOADER_GUI_ID) return;
 
-        var sessionId = getActiveSession(player);
+        var sessionId = resolveActiveSession(player);
+        if (!hasText(sessionId)) {
+            var activeItem = getCurrentLoaderItem(player);
+            if (activeItem != null && !activeItem.isEmpty()) {
+                sessionId = getSessionId(activeItem);
+            }
+        }
         if (!hasText(sessionId)) return;
 
         player.getStoreddata().put(
@@ -155,6 +166,7 @@ function handleActionScroll(player, gui, sessionId, scroll) {
 }
 
 function handleApplyAction(player, gui, sessionId) {
+    var effectiveSessionId = hasText(sessionId) ? sessionId : resolveActiveSession(player);
     var repoUrl = trimString(getGuiText(gui, GIT_LOADER_URL_FIELD_ID));
     var githubToken = trimString(getGuiText(gui, GIT_LOADER_TOKEN_FIELD_ID));
     if (!hasText(repoUrl)) {
@@ -162,16 +174,40 @@ function handleApplyAction(player, gui, sessionId) {
         return;
     }
 
-    var heldItem = getActiveLoaderItem(player);
+    var heldItem = getCurrentLoaderItem(player);
+    var debugLines = [];
+    debugLines.push("sessionId=" + sessionId);
+    debugLines.push("effectiveSessionId=" + effectiveSessionId);
+    debugLines.push("activeItem=" + describeItemForDebug(heldItem));
     if (heldItem == null || heldItem.isEmpty()) {
-        heldItem = getHeldLoaderItemForSession(player, sessionId);
-    }
-    if (heldItem == null || heldItem.isEmpty()) {
-        setStatus(gui, "Loader item not found in hands.");
+        debugLines.push("mainhand=" + describeItemForDebug(safeGetMainhandItem(player)));
+        debugLines.push("offhand=" + describeItemForDebug(safeGetOffhandItem(player)));
+        setStatus(gui, [
+            "Loader item not found.",
+            debugLines.join("\n")
+        ].join("\n"));
+        try {
+            player.message("GitHub Loader debug:\n" + debugLines.join("\n"));
+        } catch (e0) {}
         return;
     }
 
-    player.getStoreddata().put(GIT_LOADER_GUI_URL_PREFIX + sessionId, repoUrl);
+    if (!hasText(effectiveSessionId)) {
+        effectiveSessionId = getSessionId(heldItem);
+        debugLines.push("effectiveSessionFromItem=" + effectiveSessionId);
+    }
+    if (!hasText(effectiveSessionId)) {
+        setStatus(gui, [
+            "Loader session is missing on item.",
+            debugLines.join("\n")
+        ].join("\n"));
+        try {
+            player.message("GitHub Loader debug:\n" + debugLines.join("\n"));
+        } catch (e01) {}
+        return;
+    }
+
+    player.getStoreddata().put(GIT_LOADER_GUI_URL_PREFIX + effectiveSessionId, repoUrl);
     player.getStoreddata().put(GIT_LOADER_GUI_LAST_URL_KEY, repoUrl);
     player.getStoreddata().put(GIT_LOADER_GUI_TOKEN_KEY, githubToken);
 
@@ -655,6 +691,22 @@ function getHeldLoaderItemForSession(player, sessionId) {
     return null;
 }
 
+function safeGetMainhandItem(player) {
+    try {
+        return player.getMainhandItem();
+    } catch (e) {
+        return null;
+    }
+}
+
+function safeGetOffhandItem(player) {
+    try {
+        return player.getOffhandItem();
+    } catch (e) {
+        return null;
+    }
+}
+
 function rememberActiveSession(player, sessionId) {
     try {
         player.getTempdata().put(GIT_LOADER_ACTIVE_SESSION_KEY, sessionId);
@@ -675,6 +727,42 @@ function getActiveSession(player) {
     }
 }
 
+function resolveActiveSession(player) {
+    var sessionId = getActiveSession(player);
+    if (hasText(sessionId)) return sessionId;
+
+    var item = getActiveLoaderItem(player);
+    if (item != null && !item.isEmpty()) {
+        sessionId = getSessionId(item);
+        if (hasText(sessionId)) {
+            rememberActiveSession(player, sessionId);
+            return sessionId;
+        }
+    }
+
+    item = safeGetMainhandItem(player);
+    if (item != null && !item.isEmpty() && isLoaderItem(item)) {
+        sessionId = getSessionId(item);
+        if (hasText(sessionId)) {
+            rememberActiveSession(player, sessionId);
+            rememberActiveItem(player, item);
+            return sessionId;
+        }
+    }
+
+    item = safeGetOffhandItem(player);
+    if (item != null && !item.isEmpty() && isLoaderItem(item)) {
+        sessionId = getSessionId(item);
+        if (hasText(sessionId)) {
+            rememberActiveSession(player, sessionId);
+            rememberActiveItem(player, item);
+            return sessionId;
+        }
+    }
+
+    return "";
+}
+
 function getActiveLoaderItem(player) {
     try {
         var item = player.getTempdata().get(GIT_LOADER_ACTIVE_ITEM_KEY);
@@ -683,6 +771,52 @@ function getActiveLoaderItem(player) {
     } catch (e) {
         return null;
     }
+}
+
+function getCurrentLoaderItem(player) {
+    var item = getActiveLoaderItem(player);
+    if (item != null && !item.isEmpty()) return item;
+
+    item = safeGetMainhandItem(player);
+    if (item != null && !item.isEmpty() && isLoaderItem(item)) return item;
+
+    item = safeGetOffhandItem(player);
+    if (item != null && !item.isEmpty() && isLoaderItem(item)) return item;
+
+    return null;
+}
+
+function describeItemForDebug(item) {
+    if (item == null) return "null";
+
+    var parts = [];
+    try {
+        if (item.isEmpty()) {
+            parts.push("empty=true");
+        } else {
+            parts.push("empty=false");
+        }
+    } catch (e1) {
+        parts.push("empty=?");
+    }
+
+    try {
+        parts.push("loader=" + isLoaderItem(item));
+    } catch (e2) {
+        parts.push("loader=?");
+    }
+
+    try {
+        parts.push("session=" + getSessionId(item));
+    } catch (e3) {
+        parts.push("session=?");
+    }
+
+    try {
+        parts.push("name=" + trimString(item.getDisplayName()));
+    } catch (e4) {}
+
+    return parts.join(", ");
 }
 
 function getSelectedIndex(scroll) {
