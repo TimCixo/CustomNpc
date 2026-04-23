@@ -37,11 +37,7 @@ function init(event) {
     var item = event.item;
     if (item == null || item.isEmpty()) return;
 
-    ensureLoaderTag(item);
-    if (isReadyStage(item)) {
-        runReadyHandler(item, "init", event);
-        return;
-    }
+    ensureInstallerTag(item);
     applyInstallerPresentation(item);
 }
 
@@ -49,28 +45,18 @@ function interact(event) {
     var item = event.item;
     if (item == null || item.isEmpty()) return;
 
-    ensureLoaderTag(item);
-    if (isReadyStage(item)) {
-        runReadyHandler(item, "interact", event);
-        return;
-    }
-
+    ensureInstallerTag(item);
     rememberActiveItem(event.player, item);
     event.player.showCustomGui(createInstallerGui(event.player, item));
     event.setCanceled(true);
 }
 
 function customGuiScroll(event) {
-    var item = getActiveLoaderItem(event.player);
-    if (item == null || item.isEmpty()) return;
-
-    if (isReadyStage(item)) {
-        runReadyHandler(item, "customGuiScroll", event);
-        return;
-    }
-
     if (event.gui == null || event.gui.getID() != GUI_ID) return;
     if (event.scroll == null || event.scroll.getID() != ACTION_SCROLL_ID) return;
+
+    var item = getActiveLoaderItem(event.player);
+    if (item == null || item.isEmpty()) return;
 
     var selected = getSelectedIndex(event.scroll);
     if (selected === 0) {
@@ -82,15 +68,11 @@ function customGuiScroll(event) {
 }
 
 function customGuiClosed(event) {
+    if (event.gui == null || event.gui.getID() != GUI_ID) return;
+
     var item = getActiveLoaderItem(event.player);
     if (item == null || item.isEmpty()) return;
 
-    if (isReadyStage(item)) {
-        runReadyHandler(item, "customGuiClosed", event);
-        return;
-    }
-
-    if (event.gui == null || event.gui.getID() != GUI_ID) return;
     writeLastUrl(item, trimString(getGuiText(event.gui, URL_FIELD_ID)));
     event.player.getStoreddata().put(PLAYER_TOKEN_KEY, trimString(getGuiText(event.gui, TOKEN_FIELD_ID)));
 }
@@ -122,15 +104,16 @@ function installReadyFirmware(player, item, gui) {
     }
 
     var payload = downloadLoaderPayload(repoUrl, token);
+    var readySource = buildInstalledItemRuntime(payload.initSource, payload.interactSource);
+    validateReadyItemRuntime(readySource);
+    installReadyRuntime(item, readySource);
     writeInstalledFirmware(item, payload, repoUrl);
-    applyReadyPresentation(item);
 
     try {
         player.updatePlayerInventory();
     } catch (e) {}
 
     player.getStoreddata().put(PLAYER_TOKEN_KEY, token);
-    setStatus(gui, "Installed. Reopen the item.");
     player.message("GitHub Loader: ready firmware installed.");
     player.closeGui();
 }
@@ -156,6 +139,54 @@ function downloadLoaderPayload(repoUrl, token) {
     };
 }
 
+function buildInstalledItemRuntime(initSource, interactSource) {
+    return [
+        "// ready firmware",
+        initSource,
+        "",
+        interactSource,
+        ""
+    ].join("\n");
+}
+
+function validateReadyItemRuntime(source) {
+    validateScript(source, "ready item runtime");
+    var factory = (1, eval)(
+        "(function(){\n" +
+        source + "\n" +
+        "return {\n" +
+        "init:(typeof init=='function'?init:null),\n" +
+        "interact:(typeof interact=='function'?interact:null),\n" +
+        "customGuiScroll:(typeof customGuiScroll=='function'?customGuiScroll:null),\n" +
+        "customGuiClosed:(typeof customGuiClosed=='function'?customGuiClosed:null)\n" +
+        "};\n" +
+        "})"
+    );
+    var runtime = factory();
+    if (runtime == null || typeof runtime.init != "function" || typeof runtime.interact != "function") {
+        throw "Ready firmware is incomplete";
+    }
+}
+
+function installReadyRuntime(item, source) {
+    var container = getPrimaryItemScript(item);
+    container.script = source;
+    container.fullscript = source;
+    item.enabled = true;
+    item.saveScriptData();
+    item.loadScriptData();
+}
+
+function getPrimaryItemScript(item) {
+    var scripts = item.scripts;
+    var count = getCollectionSize(scripts);
+    for (var i = 0; i < count; i++) {
+        var container = getCollectionValue(scripts, i);
+        if (container != null) return container;
+    }
+    throw "Item script container is missing";
+}
+
 function writeInstalledFirmware(item, payload, repoUrl) {
     var tag = getTag(item);
     tag.putString("item_type", ITEM_TYPE);
@@ -168,42 +199,11 @@ function writeInstalledFirmware(item, payload, repoUrl) {
     writeTag(item, tag);
 }
 
-function runReadyHandler(item, name, event) {
-    var runtime = buildReadyRuntime(item);
-    if (runtime == null || typeof runtime[name] != "function") return;
-    runtime[name](event);
-}
-
-function buildReadyRuntime(item) {
-    var tag = getTag(item);
-    var initSource = decodeText(readTag(tag, ITEM_INSTALLED_INIT_KEY));
-    var interactSource = decodeText(readTag(tag, ITEM_INSTALLED_INTERACT_KEY));
-    if (!hasText(initSource) || !hasText(interactSource)) return null;
-
-    var factory = (1, eval)(
-        "(function(){\n" +
-        initSource + "\n" +
-        interactSource + "\n" +
-        "return {" +
-        "init:(typeof init=='function'?init:null)," +
-        "interact:(typeof interact=='function'?interact:null)," +
-        "customGuiScroll:(typeof customGuiScroll=='function'?customGuiScroll:null)," +
-        "customGuiClosed:(typeof customGuiClosed=='function'?customGuiClosed:null)" +
-        "};\n" +
-        "})"
-    );
-    return factory();
-}
-
-function ensureLoaderTag(item) {
+function ensureInstallerTag(item) {
     var tag = getTag(item);
     tag.putString("item_type", ITEM_TYPE);
-    if (!hasText(readTag(tag, ITEM_STAGE_KEY))) tag.putString(ITEM_STAGE_KEY, STAGE_INSTALLER);
+    tag.putString(ITEM_STAGE_KEY, STAGE_INSTALLER);
     if (!hasText(readTag(tag, ITEM_LAST_URL_KEY))) tag.putString(ITEM_LAST_URL_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_INIT_KEY))) tag.putString(ITEM_INSTALLED_INIT_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_INTERACT_KEY))) tag.putString(ITEM_INSTALLED_INTERACT_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_SHARED_KEY))) tag.putString(ITEM_INSTALLED_SHARED_KEY, "");
-    if (!hasText(readTag(tag, ITEM_DOWNLOADED_PACKAGE_KEY))) tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
     writeTag(item, tag);
 }
 
@@ -217,23 +217,6 @@ function applyInstallerPresentation(item) {
     ])));
     try {
         item.setCustomName("GitHub Loader Installer");
-        item.setTexture(1, "minecraft:oak_sapling");
-        item.setMaxStackSize(1);
-        item.setDurabilityShow(false);
-    } catch (e) {}
-}
-
-function applyReadyPresentation(item) {
-    var mcStack = item.getMCItemStack();
-    mcStack.set(GitLoader_DataComponents.MAX_STACK_SIZE, java.lang.Integer.valueOf(1));
-    mcStack.set(GitLoader_DataComponents.CUSTOM_NAME, GitLoader_Component.literal("GitHub NPC Loader"));
-    mcStack.set(GitLoader_DataComponents.LORE, new GitLoader_ItemLore(buildLore([
-        "Ready loader stage.",
-        "Right click air to download and preview NPC packages.",
-        "Right click an NPC to apply the downloaded package."
-    ])));
-    try {
-        item.setCustomName("GitHub NPC Loader");
         item.setTexture(1, "minecraft:oak_sapling");
         item.setMaxStackSize(1);
         item.setDurabilityShow(false);
@@ -259,10 +242,6 @@ function getActiveLoaderItem(player) {
         if (isLoaderItem(item)) return item;
     } catch (e2) {}
     return null;
-}
-
-function isReadyStage(item) {
-    return readTag(getTag(item), ITEM_STAGE_KEY) == STAGE_READY;
 }
 
 function isLoaderItem(item) {
@@ -414,13 +393,6 @@ function encodeText(text) {
     return "" + GitLoader_Base64.getEncoder().encodeToString(bytes);
 }
 
-function decodeText(text) {
-    var clean = trimString(text);
-    if (!hasText(clean)) return "";
-    var bytes = GitLoader_Base64.getDecoder().decode(clean);
-    return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
-}
-
 function decodeBase64(text) {
     var bytes = GitLoader_Base64.getDecoder().decode(text);
     return "" + new java.lang.String(bytes, GitLoader_StandardCharsets.UTF_8);
@@ -459,6 +431,20 @@ function safeUpdate(gui) {
     try {
         gui.update();
     } catch (e) {}
+}
+
+function getCollectionSize(value) {
+    if (value == null) return 0;
+    if (typeof value.length == "number") return value.length;
+    if (value.size != null) return value.size();
+    return 0;
+}
+
+function getCollectionValue(value, index) {
+    if (value == null) return null;
+    if (typeof value[index] != "undefined") return value[index];
+    if (value.get != null) return value.get(index);
+    return null;
 }
 
 function encodeQuery(value) {

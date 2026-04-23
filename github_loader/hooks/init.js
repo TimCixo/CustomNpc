@@ -6,11 +6,7 @@ var GitLoaderInit_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
 var GitLoaderInit_ArrayList = Java.type("java.util.ArrayList");
 
 var ITEM_TYPE = "github_npc_loader_tool";
-var ITEM_STAGE_KEY = "github_loader_stage";
 var ITEM_LAST_URL_KEY = "github_loader_last_url";
-var ITEM_INSTALLED_INIT_KEY = "github_loader_installed_init";
-var ITEM_INSTALLED_INTERACT_KEY = "github_loader_installed_interact";
-var ITEM_INSTALLED_SHARED_KEY = "github_loader_installed_shared";
 var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
 
 function init(event) {
@@ -19,11 +15,8 @@ function init(event) {
 
     var tag = getTag(item);
     tag.putString("item_type", ITEM_TYPE);
-    if (!hasText(readTag(tag, ITEM_STAGE_KEY))) tag.putString(ITEM_STAGE_KEY, "ready");
+    tag.putString("github_loader_stage", "ready");
     if (!hasText(readTag(tag, ITEM_LAST_URL_KEY))) tag.putString(ITEM_LAST_URL_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_INIT_KEY))) tag.putString(ITEM_INSTALLED_INIT_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_INTERACT_KEY))) tag.putString(ITEM_INSTALLED_INTERACT_KEY, "");
-    if (!hasText(readTag(tag, ITEM_INSTALLED_SHARED_KEY))) tag.putString(ITEM_INSTALLED_SHARED_KEY, "");
     if (!hasText(readTag(tag, ITEM_DOWNLOADED_PACKAGE_KEY))) tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
 
     writeTag(item, tag);
