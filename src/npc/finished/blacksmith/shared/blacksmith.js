@@ -116,10 +116,6 @@ function onGuiClosed(event) {
     clearSession(runtime, player);
 }
 
-function onGuiButton(event) {
-    return;
-}
-
 function beginApply(npc, player, runtime) {
     setSession(runtime, player, {
         mode: "apply",
@@ -499,7 +495,6 @@ module.exports = {
     onDialogOption: onDialogOption,
     onGuiScroll: onGuiScroll,
     onGuiClosed: onGuiClosed,
-    onGuiButton: onGuiButton,
     BLACKSMITH_RUNTIME_KEY: BLACKSMITH_RUNTIME_KEY,
     REMOVE_GUI_ID: REMOVE_GUI_ID
 };
