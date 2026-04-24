@@ -72,18 +72,6 @@ function isStoredEnchantedBookStack(mcStack) {
     return mcStack != null && !mcStack.isEmpty() && mcStack.getItem() == EnchantUtils_Items.ENCHANTED_BOOK;
 }
 
-function getPrimaryEnchantmentComponent(mcStack) {
-    return isStoredEnchantedBookStack(mcStack)
-        ? EnchantUtils_DataComponents.STORED_ENCHANTMENTS
-        : EnchantUtils_DataComponents.ENCHANTMENTS;
-}
-
-function getSecondaryEnchantmentComponent(mcStack) {
-    return isStoredEnchantedBookStack(mcStack)
-        ? EnchantUtils_DataComponents.ENCHANTMENTS
-        : EnchantUtils_DataComponents.STORED_ENCHANTMENTS;
-}
-
 function getEnchantmentsFromComponent(mcStack, componentType) {
     var map = {};
     if (mcStack == null || mcStack.isEmpty() || componentType == null) return map;
@@ -113,29 +101,12 @@ function hasEnchantments(map) {
     return false;
 }
 
-function isEnchantedBook(item) {
-    if (itemUtils.isEmptyItem(item)) return false;
-    var mcStack = itemUtils.getMcStack(item);
-    if (mcStack == null || mcStack.isEmpty()) return false;
-    try {
-        return mcStack.getItem() == EnchantUtils_Items.ENCHANTED_BOOK
-            && hasEnchantments(getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS));
-    } catch (e) {
-        return false;
-    }
+function getBookEnchantments(mcStack) {
+    return getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS);
 }
 
-function getEnchantments(item) {
-    var map = {};
-    if (itemUtils.isEmptyItem(item)) return map;
-
-    var mcStack = itemUtils.getMcStack(item);
-    if (mcStack == null || mcStack.isEmpty()) return map;
-
-    map = getEnchantmentsFromComponent(mcStack, getPrimaryEnchantmentComponent(mcStack));
-    if (hasEnchantments(map)) return map;
-
-    map = getEnchantmentsFromComponent(mcStack, getSecondaryEnchantmentComponent(mcStack));
+function getItemEnchantments(mcStack) {
+    var map = getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.ENCHANTMENTS);
     if (hasEnchantments(map)) return map;
 
     try {
@@ -155,6 +126,63 @@ function getEnchantments(item) {
     } catch (e) {}
 
     return map;
+}
+
+function buildMutableEnchantments(enchantMap) {
+    var mutable = new EnchantUtils_ItemEnchantmentsMutable(EnchantUtils_ItemEnchantments.EMPTY);
+    for (var enchantId in enchantMap) {
+        if (!enchantMap.hasOwnProperty(enchantId)) continue;
+        var holder = resolveHolder(enchantId);
+        var level = clampLevel(enchantMap[enchantId]);
+        if (holder == null || level <= 0) continue;
+        mutable.set(holder, level);
+    }
+    return mutable;
+}
+
+function setBookEnchantmentsOnMcStack(mcStack, enchantMap) {
+    if (mcStack == null || mcStack.isEmpty() || !isStoredEnchantedBookStack(mcStack)) return false;
+    try {
+        mcStack.set(EnchantUtils_DataComponents.STORED_ENCHANTMENTS, buildMutableEnchantments(enchantMap).toImmutable());
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function setItemEnchantmentsOnMcStack(mcStack, enchantMap) {
+    if (mcStack == null || mcStack.isEmpty() || isStoredEnchantedBookStack(mcStack)) return false;
+    try {
+        var immutableEnchants = buildMutableEnchantments(enchantMap).toImmutable();
+        mcStack.set(EnchantUtils_DataComponents.ENCHANTMENTS, immutableEnchants);
+        try {
+            EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, immutableEnchants);
+        } catch (e1) {}
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function isEnchantedBook(item) {
+    if (itemUtils.isEmptyItem(item)) return false;
+    var mcStack = itemUtils.getMcStack(item);
+    if (mcStack == null || mcStack.isEmpty()) return false;
+    try {
+        return isStoredEnchantedBookStack(mcStack) && hasEnchantments(getBookEnchantments(mcStack));
+    } catch (e) {
+        return false;
+    }
+}
+
+function getEnchantments(item) {
+    var map = {};
+    if (itemUtils.isEmptyItem(item)) return map;
+
+    var mcStack = itemUtils.getMcStack(item);
+    if (mcStack == null || mcStack.isEmpty()) return map;
+
+    return isStoredEnchantedBookStack(mcStack) ? getBookEnchantments(mcStack) : getItemEnchantments(mcStack);
 }
 
 function copyEnchantMap(source) {
@@ -196,34 +224,8 @@ function setEnchantments(item, enchantMap) {
 
 function setEnchantmentsOnMcStack(mcStack, enchantMap) {
     if (mcStack == null || mcStack.isEmpty()) return false;
-    try {
-        var mutable = new EnchantUtils_ItemEnchantmentsMutable(EnchantUtils_ItemEnchantments.EMPTY);
-        for (var enchantId in enchantMap) {
-            if (!enchantMap.hasOwnProperty(enchantId)) continue;
-            var holder = resolveHolder(enchantId);
-            var level = clampLevel(enchantMap[enchantId]);
-            if (holder == null || level <= 0) continue;
-            mutable.set(holder, level);
-        }
-
-        var componentType = getPrimaryEnchantmentComponent(mcStack);
-        var otherComponentType = getSecondaryEnchantmentComponent(mcStack);
-        var immutableEnchants = mutable.toImmutable();
-
-        mcStack.set(componentType, immutableEnchants);
-        try {
-            mcStack.remove(otherComponentType);
-        } catch (e1) {}
-
-        if (!isStoredEnchantedBookStack(mcStack)) {
-            try {
-                EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, immutableEnchants);
-            } catch (e2) {}
-        }
-        return true;
-    } catch (e) {
-        return false;
-    }
+    if (isStoredEnchantedBookStack(mcStack)) return setBookEnchantmentsOnMcStack(mcStack, enchantMap);
+    return setItemEnchantmentsOnMcStack(mcStack, enchantMap);
 }
 
 function removeEnchantment(item, enchantId) {
@@ -251,8 +253,10 @@ function createEnchantedBookFromMap(enchantMap) {
 
 function canApplyEnchantmentToItem(enchantId, level, targetItem) {
     var enchantment = resolveEnchantment(enchantId);
+    var holder = resolveHolder(enchantId);
     var mcStack = itemUtils.getMcStack(targetItem);
     if (enchantment == null || mcStack == null || mcStack.isEmpty()) return false;
+    if (isStoredEnchantedBookStack(mcStack)) return false;
     if (clampLevel(level) <= 0) return false;
 
     try {
@@ -262,6 +266,12 @@ function canApplyEnchantmentToItem(enchantId, level, targetItem) {
     try {
         if (enchantment.isSupportedItem(mcStack)) return true;
     } catch (e2) {}
+
+    if (holder != null) {
+        try {
+            if (mcStack.getItem().isPrimaryItemFor(mcStack, holder)) return true;
+        } catch (e3) {}
+    }
 
     return false;
 }

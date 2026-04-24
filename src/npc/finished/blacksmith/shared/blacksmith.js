@@ -5,11 +5,11 @@ var guiUtils = require("gui_utils.js");
 var Blacksmith_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 
 var BLACKSMITH_RUNTIME_KEY = "blacksmith_runtime";
+var BLACKSMITH_GUI_NPC_KEY = "blacksmith_gui_npc";
 var DIALOG_ID = 60;
 
 var REMOVE_GUI_ID = 9620;
 var REMOVE_SCROLL_ID = 9621;
-var REMOVE_CANCEL_SCROLL_ID = 9622;
 var REMOVE_STATUS_ID = 9623;
 
 function onInit(event) {
@@ -25,7 +25,7 @@ function onInteract(event) {
     if (session == null) return;
 
     if (itemUtils.isEmptyItem(itemUtils.getMainhandItem(player))) {
-        cancelSession(npc, player, runtime, session, "\u041E\u043F\u0435\u0440\u0430\u0446\u0456\u044E \u0441\u043A\u0430\u0441\u043E\u0432\u0430\u043D\u043E. \u041C\u0430\u0442\u0435\u0440\u0456\u0430\u043B\u0438 \u043F\u043E\u0432\u0435\u0440\u043D\u0435\u043D\u043E.");
+        cancelSession(npc, player, runtime, session, "Операция отменена. Материалы возвращены.");
         event.setCanceled(true);
         return;
     }
@@ -58,7 +58,7 @@ function onDialogOption(event) {
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
     if (session != null) {
-        cancelSession(npc, player, runtime, session, "\u041F\u043E\u043F\u0435\u0440\u0435\u0434\u043D\u044E \u043E\u043F\u0435\u0440\u0430\u0446\u0456\u044E \u0441\u043A\u0430\u0441\u043E\u0432\u0430\u043D\u043E. \u041C\u0430\u0442\u0435\u0440\u0456\u0430\u043B\u0438 \u043F\u043E\u0432\u0435\u0440\u043D\u0435\u043D\u043E.");
+        cancelSession(npc, player, runtime, session, "Предыдущая операция отменена. Материалы возвращены.");
     }
 
     if (service == "apply") {
@@ -82,23 +82,27 @@ function onGuiScroll(event) {
     if (gui == null || scroll == null) return;
     if (gui.getID() != REMOVE_GUI_ID) return;
 
-    var npc = event.npc;
+    var npc = resolveGuiNpc(event.player, event.npc);
+    if (npc == null) {
+        closePlayerGui(event.player);
+        return;
+    }
     var player = event.player;
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
     if (session == null || session.mode != "remove" || session.step != "gui_open") return;
 
-    if (scroll.getID() == REMOVE_CANCEL_SCROLL_ID) {
-        clearSession(runtime, player);
-        closePlayerGui(player);
-        tellPlayer(npc, player, "\u0417\u043D\u044F\u0442\u0442\u044F \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F \u0441\u043A\u0430\u0441\u043E\u0432\u0430\u043D\u043E.");
-        return;
-    }
-
     if (scroll.getID() != REMOVE_SCROLL_ID) return;
 
     var index = guiUtils.getSelectedIndex(scroll);
-    if (index < 0 || session.removeChoices == null || index >= session.removeChoices.length) return;
+    if (index < 0 || session.removeChoices == null) return;
+    if (index >= session.removeChoices.length) {
+        clearSession(runtime, player);
+        clearGuiNpc(player);
+        closePlayerGui(player);
+        tellPlayer(npc, player, "Снятие зачарования отменено.");
+        return;
+    }
 
     finalizeRemoveSelection(npc, player, runtime, session, session.removeChoices[index]);
 }
@@ -106,7 +110,9 @@ function onGuiScroll(event) {
 function onGuiClosed(event) {
     if (event.gui == null || event.gui.getID() != REMOVE_GUI_ID) return;
 
-    var npc = event.npc;
+    var npc = resolveGuiNpc(event.player, event.npc);
+    clearGuiNpc(event.player);
+    if (npc == null) return;
     var player = event.player;
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
@@ -124,7 +130,7 @@ function beginApply(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "\u0414\u0430\u0439 \u043C\u0435\u043D\u0456 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+    tellPlayer(npc, player, "Дай мне зачарованную книгу.");
 }
 
 function beginMerge(npc, player, runtime) {
@@ -135,7 +141,7 @@ function beginMerge(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "\u0414\u0430\u0439 \u043C\u0435\u043D\u0456 \u043F\u0435\u0440\u0448\u0443 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+    tellPlayer(npc, player, "Дай мне первую зачарованную книгу.");
 }
 
 function beginRemove(npc, player, runtime) {
@@ -146,7 +152,7 @@ function beginRemove(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "\u041D\u0430\u0442\u0438\u0441\u043D\u0438 \u041F\u041A\u041C \u043F\u0440\u0435\u0434\u043C\u0435\u0442\u043E\u043C, \u0437 \u044F\u043A\u043E\u0433\u043E \u0445\u043E\u0447\u0435\u0448 \u0437\u043D\u044F\u0442\u0438 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F.");
+    tellPlayer(npc, player, "Нажми ПКМ предметом, с которого хочешь снять зачарование.");
 }
 
 function handleApplyInteract(npc, player, runtime, session) {
@@ -154,26 +160,26 @@ function handleApplyInteract(npc, player, runtime, session) {
 
     if (session.step == "waiting_book") {
         if (!enchantUtils.isEnchantedBook(heldItem)) {
-            tellPlayer(npc, player, "\u0414\u0430\u0439 \u043C\u0435\u043D\u0456 \u0441\u0430\u043C\u0435 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Дай мне именно зачарованную книгу.");
             return;
         }
 
         session.heldBook = itemUtils.cloneSingleItem(heldItem);
         if (itemUtils.isEmptyItem(session.heldBook)) {
-            tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u043F\u0440\u0438\u0439\u043D\u044F\u0442\u0438 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Не удалось принять книгу.");
             clearSession(runtime, player);
             return;
         }
 
         if (!itemUtils.decrementHeldItem(player, 1)) {
             session.heldBook = null;
-            tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0437\u0430\u0431\u0440\u0430\u0442\u0438 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Не удалось забрать книгу.");
             clearSession(runtime, player);
             return;
         }
 
         session.step = "waiting_target";
-        tellPlayer(npc, player, "\u0422\u0435\u043F\u0435\u0440 \u0434\u0430\u0439 \u043F\u0440\u0435\u0434\u043C\u0435\u0442, \u043D\u0430 \u044F\u043A\u0438\u0439 \u0442\u0440\u0435\u0431\u0430 \u043D\u0430\u043A\u043B\u0430\u0441\u0442\u0438 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F.");
+        tellPlayer(npc, player, "Теперь дай предмет, на который нужно наложить зачарование.");
         return;
     }
 
@@ -181,7 +187,7 @@ function handleApplyInteract(npc, player, runtime, session) {
 
     if (itemUtils.isEmptyItem(session.heldBook)) {
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041E\u043F\u0435\u0440\u0430\u0446\u0456\u044F \u0437\u0456\u043F\u0441\u0443\u0432\u0430\u043B\u0430\u0441\u044F. \u041F\u043E\u0447\u043D\u0438 \u0449\u0435 \u0440\u0430\u0437.");
+        tellPlayer(npc, player, "Операция сбилась. Начни еще раз.");
         return;
     }
 
@@ -189,13 +195,13 @@ function handleApplyInteract(npc, player, runtime, session) {
     if (!applyResult.ok) {
         returnStoredItem(player, session.heldBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u0426\u044E \u043A\u043D\u0438\u0433\u0443 \u043D\u0435 \u043C\u043E\u0436\u043D\u0430 \u043D\u0430\u043A\u043B\u0430\u0441\u0442\u0438 \u043D\u0430 \u0446\u0435\u0439 \u043F\u0440\u0435\u0434\u043C\u0435\u0442. \u042F \u043F\u043E\u0432\u0435\u0440\u043D\u0443\u0432 \u043C\u0430\u0442\u0435\u0440\u0456\u0430\u043B\u0438.");
+        tellPlayer(npc, player, "Эту книгу нельзя наложить на этот предмет. Я вернул материалы.");
         return;
     }
 
     itemUtils.updateInventory(player);
     clearSession(runtime, player);
-    tellPlayer(npc, player, "\u0417\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F \u0443\u0441\u043F\u0456\u0448\u043D\u043E \u043D\u0430\u043A\u043B\u0430\u0434\u0435\u043D\u043E.");
+    tellPlayer(npc, player, "Зачарование успешно наложено.");
 }
 
 function handleMergeInteract(npc, player, runtime, session) {
@@ -203,39 +209,39 @@ function handleMergeInteract(npc, player, runtime, session) {
 
     if (session.step == "waiting_first_book") {
         if (!enchantUtils.isEnchantedBook(heldItem)) {
-            tellPlayer(npc, player, "\u0414\u0430\u0439 \u043C\u0435\u043D\u0456 \u043F\u0435\u0440\u0448\u0443 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Дай мне первую зачарованную книгу.");
             return;
         }
 
         session.firstBook = itemUtils.cloneSingleItem(heldItem);
         if (itemUtils.isEmptyItem(session.firstBook)) {
-            tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u043F\u0440\u0438\u0439\u043D\u044F\u0442\u0438 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Не удалось принять книгу.");
             clearSession(runtime, player);
             return;
         }
 
         if (!itemUtils.decrementHeldItem(player, 1)) {
             session.firstBook = null;
-            tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0437\u0430\u0431\u0440\u0430\u0442\u0438 \u043A\u043D\u0438\u0433\u0443.");
+            tellPlayer(npc, player, "Не удалось забрать книгу.");
             clearSession(runtime, player);
             return;
         }
 
         session.step = "waiting_second_book";
-        tellPlayer(npc, player, "\u0422\u0435\u043F\u0435\u0440 \u0434\u0430\u0439 \u043C\u0435\u043D\u0456 \u0434\u0440\u0443\u0433\u0443 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+        tellPlayer(npc, player, "Теперь дай мне вторую зачарованную книгу.");
         return;
     }
 
     if (session.step != "waiting_second_book") return;
 
     if (!enchantUtils.isEnchantedBook(heldItem)) {
-        tellPlayer(npc, player, "\u0422\u0435\u043F\u0435\u0440 \u0434\u0430\u0439 \u0441\u0430\u043C\u0435 \u0434\u0440\u0443\u0433\u0443 \u0437\u0430\u0447\u0430\u0440\u043E\u0432\u0430\u043D\u0443 \u043A\u043D\u0438\u0433\u0443.");
+        tellPlayer(npc, player, "Теперь дай именно вторую зачарованную книгу.");
         return;
     }
 
     if (itemUtils.isEmptyItem(session.firstBook)) {
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041E\u043F\u0435\u0440\u0430\u0446\u0456\u044F \u0437\u0456\u043F\u0441\u0443\u0432\u0430\u043B\u0430\u0441\u044F. \u041F\u043E\u0447\u043D\u0438 \u0449\u0435 \u0440\u0430\u0437.");
+        tellPlayer(npc, player, "Операция сбилась. Начни еще раз.");
         return;
     }
 
@@ -248,9 +254,9 @@ function handleMergeInteract(npc, player, runtime, session) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
         if (mergeResult.reason == "max_level") {
-            tellPlayer(npc, player, "\u0426\u0435 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F \u0432\u0436\u0435 \u043C\u0430\u0454 \u043C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u0438\u0439 \u0440\u0456\u0432\u0435\u043D\u044C.");
+            tellPlayer(npc, player, "Это зачарование уже имеет максимальный уровень.");
         } else {
-            tellPlayer(npc, player, "\u0426\u0456 \u043A\u043D\u0438\u0433\u0438 \u043D\u0435 \u043C\u043E\u0436\u043D\u0430 \u043A\u043E\u0440\u0435\u043A\u0442\u043D\u043E \u043E\u0431'\u0454\u0434\u043D\u0430\u0442\u0438. \u042F \u043F\u043E\u0432\u0435\u0440\u043D\u0443\u0432 \u043C\u0430\u0442\u0435\u0440\u0456\u0430\u043B\u0438.");
+            tellPlayer(npc, player, "Эти книги нельзя корректно объединить. Я вернул материалы.");
         }
         return;
     }
@@ -259,26 +265,26 @@ function handleMergeInteract(npc, player, runtime, session) {
     if (itemUtils.isEmptyItem(resultBook)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0441\u0442\u0432\u043E\u0440\u0438\u0442\u0438 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442.");
+        tellPlayer(npc, player, "Не удалось создать результат.");
         return;
     }
 
     if (!itemUtils.decrementHeldItem(player, 1)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0437\u0430\u0431\u0440\u0430\u0442\u0438 \u0434\u0440\u0443\u0433\u0443 \u043A\u043D\u0438\u0433\u0443.");
+        tellPlayer(npc, player, "Не удалось забрать вторую книгу.");
         return;
     }
 
     if (!itemUtils.giveItemOrDrop(player, resultBook)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0432\u0456\u0434\u0434\u0430\u0442\u0438 \u0440\u0435\u0437\u0443\u043B\u044C\u0442\u0443\u044E\u0447\u0443 \u043A\u043D\u0438\u0433\u0443.");
+        tellPlayer(npc, player, "Не удалось отдать результирующую книгу.");
         return;
     }
 
     clearSession(runtime, player);
-    tellPlayer(npc, player, "\u041A\u043D\u0438\u0433\u0438 \u0443\u0441\u043F\u0456\u0448\u043D\u043E \u043E\u0431'\u0454\u0434\u043D\u0430\u043D\u043E.");
+    tellPlayer(npc, player, "Книги успешно объединены.");
 }
 
 function handleRemoveInteract(npc, player, runtime, session) {
@@ -287,37 +293,39 @@ function handleRemoveInteract(npc, player, runtime, session) {
     var heldItem = itemUtils.getMainhandItem(player);
     var entries = enchantUtils.getEnchantmentEntries(heldItem);
     if (entries == null || entries.length <= 0) {
-        tellPlayer(npc, player, "\u041D\u0430 \u0446\u044C\u043E\u043C\u0443 \u043F\u0440\u0435\u0434\u043C\u0435\u0442\u0456 \u043D\u0435\u043C\u0430\u0454 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u044C.");
+        tellPlayer(npc, player, "На этом предмете нет зачарований.");
         clearSession(runtime, player);
         return;
     }
 
     session.step = "gui_open";
     session.removeChoices = entries;
+    setGuiNpc(player, npc);
 
     try {
         player.showCustomGui(createRemoveGui(player, entries));
     } catch (e) {
+        clearGuiNpc(player);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0432\u0456\u0434\u043A\u0440\u0438\u0442\u0438 \u0441\u043F\u0438\u0441\u043E\u043A \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u044C.");
+        tellPlayer(npc, player, "Не удалось открыть список зачарований.");
     }
 }
 
 function createRemoveGui(player, entries) {
-    var gui = guiUtils.createGui(REMOVE_GUI_ID, 320, 240, player);
-    gui.addLabel(1, "\u0417\u043D\u044F\u0442\u0438 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F", 10, 10, 220, 18, 0xFFFFFF);
+    var gui = guiUtils.createGui(REMOVE_GUI_ID, 320, 248, player);
+    gui.addLabel(1, "Снять зачарование", 10, 10, 220, 18, 0xFFFFFF);
     gui.addColoredLine(2, 10, 34, 300, 34, 0x8B6F47, 1.5);
-    gui.addLabel(3, "\u0412\u0438\u0431\u0435\u0440\u0438 \u043E\u0434\u043D\u0435 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F", 10, 42, 220, 14, 0xE0E0E0);
-    gui.addScroll(REMOVE_SCROLL_ID, 10, 58, 300, 124, buildRemoveEntries(entries));
-    gui.addTextArea(REMOVE_STATUS_ID, 10, 188, 300, 18);
-    gui.addScroll(REMOVE_CANCEL_SCROLL_ID, 10, 210, 300, 20, ["\u0421\u043A\u0430\u0441\u0443\u0432\u0430\u0442\u0438"]);
-    guiUtils.setGuiText(gui, REMOVE_STATUS_ID, "\u041E\u0431\u0435\u0440\u0438 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F \u0430\u0431\u043E \u0441\u043A\u0430\u0441\u0443\u0439.");
+    gui.addLabel(3, "Выбери одно зачарование", 10, 42, 220, 14, 0xE0E0E0);
+    gui.addScroll(REMOVE_SCROLL_ID, 10, 58, 300, 134, buildRemoveEntries(entries));
+    gui.addTextArea(REMOVE_STATUS_ID, 10, 198, 300, 28);
+    guiUtils.setGuiText(gui, REMOVE_STATUS_ID, "Выбери зачарование или отмени.");
     return gui;
 }
 
 function buildRemoveEntries(entries) {
     var out = [];
     for (var i = 0; i < entries.length; i++) out.push(entries[i].label);
+    out.push("Отмена");
     return out;
 }
 
@@ -326,8 +334,9 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
     var currentMap = enchantUtils.getEnchantments(heldItem);
     if (!currentMap.hasOwnProperty(selected.id)) {
         clearSession(runtime, player);
+        clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "\u0422\u0440\u0438\u043C\u0430\u0439 \u043F\u043E\u0442\u0440\u0456\u0431\u043D\u0438\u0439 \u043F\u0440\u0435\u0434\u043C\u0435\u0442 \u0443 \u0433\u043E\u043B\u043E\u0432\u043D\u0456\u0439 \u0440\u0443\u0446\u0456.");
+        tellPlayer(npc, player, "Держи нужный предмет в основной руке.");
         return;
     }
 
@@ -335,8 +344,9 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
     delete currentMap[selected.id];
     if (!enchantUtils.setEnchantments(heldItem, currentMap)) {
         clearSession(runtime, player);
+        clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0437\u043C\u0456\u043D\u0438\u0442\u0438 \u043F\u0440\u0435\u0434\u043C\u0435\u0442.");
+        tellPlayer(npc, player, "Не удалось изменить предмет.");
         return;
     }
 
@@ -344,15 +354,17 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
     if (itemUtils.isEmptyItem(book) || !itemUtils.giveItemOrDrop(player, book)) {
         enchantUtils.setEnchantments(heldItem, originalMap);
         clearSession(runtime, player);
+        clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "\u041D\u0435 \u0432\u0434\u0430\u043B\u043E\u0441\u044F \u0432\u0438\u0434\u0430\u0442\u0438 \u043A\u043D\u0438\u0433\u0443 \u0456\u0437 \u0437\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F\u043C.");
+        tellPlayer(npc, player, "Не удалось выдать книгу с зачарованием.");
         return;
     }
 
     itemUtils.updateInventory(player);
     clearSession(runtime, player);
+    clearGuiNpc(player);
     closePlayerGui(player);
-    tellPlayer(npc, player, "\u0417\u0430\u0447\u0430\u0440\u0443\u0432\u0430\u043D\u043D\u044F \u0437\u043D\u044F\u0442\u043E.");
+    tellPlayer(npc, player, "Зачарование снято.");
 }
 
 function cancelSession(npc, player, runtime, session, message) {
@@ -426,18 +438,38 @@ function clearSession(runtime, player) {
     delete runtime.sessions[itemUtils.getPlayerKey(player)];
 }
 
+function setGuiNpc(player, npc) {
+    try {
+        player.getTempdata().put(BLACKSMITH_GUI_NPC_KEY, npc);
+    } catch (e) {}
+}
+
+function clearGuiNpc(player) {
+    try {
+        player.getTempdata().remove(BLACKSMITH_GUI_NPC_KEY);
+    } catch (e1) {
+        try {
+            player.getTempdata().put(BLACKSMITH_GUI_NPC_KEY, null);
+        } catch (e2) {}
+    }
+}
+
+function resolveGuiNpc(player, fallbackNpc) {
+    try {
+        var npc = player.getTempdata().get(BLACKSMITH_GUI_NPC_KEY);
+        if (npc != null) return npc;
+    } catch (e1) {}
+
+    return fallbackNpc == null ? null : fallbackNpc;
+}
+
 function detectDialogService(event) {
     if (getDialogId(event) != DIALOG_ID) return "";
 
-    var optionName = normalizeText(getOptionName(event));
-    if (optionName.indexOf("\u043D\u0430\u043A\u043B\u0430\u0441\u0442\u0438") >= 0 || optionName.indexOf("enchant") >= 0) return "apply";
-    if (optionName.indexOf("\u043E\u0431'\u0454\u0434\u043D\u0430\u0442\u0438") >= 0 || optionName.indexOf("\u043E\u0431\u044A\u0435\u0434\u0438\u043D\u0438\u0442\u044C") >= 0 || optionName.indexOf("merge") >= 0) return "merge";
-    if (optionName.indexOf("\u0437\u043D\u044F\u0442\u0438") >= 0 || optionName.indexOf("\u0441\u043D\u044F\u0442\u044C") >= 0 || optionName.indexOf("remove") >= 0) return "remove";
-
-    var ordinal = getOptionOrdinal(event);
-    if (ordinal == 1) return "apply";
-    if (ordinal == 2) return "merge";
-    if (ordinal == 3) return "remove";
+    var slot = getOptionSlot(event);
+    if (slot == 0) return "apply";
+    if (slot == 1) return "merge";
+    if (slot == 2) return "remove";
     return "";
 }
 
@@ -453,34 +485,14 @@ function getDialogId(event) {
     return -1;
 }
 
-function getOptionName(event) {
+function getOptionSlot(event) {
     try {
-        if (event.option != null) return "" + event.option.getName();
+        if (event.option != null && event.option.getSlot != null) return parseInt("" + event.option.getSlot(), 10);
     } catch (e1) {}
 
     try {
-        if (event.option != null) return "" + event.option.name;
+        if (event.option != null && event.option.slot != null) return parseInt("" + event.option.slot, 10);
     } catch (e2) {}
-
-    return "";
-}
-
-function getOptionOrdinal(event) {
-    try {
-        if (event.option != null && event.option.getSlot != null) return parseInt("" + event.option.getSlot(), 10) + 1;
-    } catch (e1) {}
-
-    try {
-        if (event.option != null && event.option.slot != null) return parseInt("" + event.option.slot, 10) + 1;
-    } catch (e2) {}
-
-    try {
-        if (event.option != null && event.option.getId != null) return parseInt("" + event.option.getId(), 10);
-    } catch (e3) {}
-
-    try {
-        if (event.option != null && event.option.id != null) return parseInt("" + event.option.id, 10);
-    } catch (e4) {}
 
     return -1;
 }
