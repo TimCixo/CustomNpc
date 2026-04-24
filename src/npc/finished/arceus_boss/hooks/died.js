@@ -33,6 +33,14 @@ function died(event) {
         return;
     }
 
+    if (lifecycle.deathFinalLineSaid !== true) {
+        lifecycle.deathFinalLineSaid = true;
+        shared.visuals.safeSay(npc, "\u00A78\u0410\u0440\u043A\u0435\u0443\u0441 \u043F\u0430\u043B.");
+        try {
+            npc.getStoreddata().put(shared.lifecycle.ARCEUS_LIFECYCLE_KEY, JSON.stringify(lifecycle));
+        } catch (persistError) {}
+    }
+
     shared.clock.notifyClockDead(npc);
 
     try {

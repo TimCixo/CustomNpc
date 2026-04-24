@@ -24,6 +24,8 @@ function createDefaultLifecycle() {
         deathAnimStarted: false,
         deathFinalizeDone: false,
         deathFinalKillAttempted: false,
+        deathVanishLineSaid: false,
+        deathFinalLineSaid: false,
         deathMovedBelowArena: false,
         deathMoveTargetY: null,
         physicalDeathAttempts: 0,
@@ -55,6 +57,8 @@ function mergeLifecycle(raw) {
     if (base.frozenSnapshot == null) base.frozenSnapshot = [];
     if (base.whoisCache == null) base.whoisCache = {};
     if (base.deathFinalKillAttempted == null) base.deathFinalKillAttempted = false;
+    if (base.deathVanishLineSaid == null) base.deathVanishLineSaid = false;
+    if (base.deathFinalLineSaid == null) base.deathFinalLineSaid = false;
     if (base.deathMovedBelowArena == null) base.deathMovedBelowArena = false;
     if (base.deathMoveTargetY === undefined) base.deathMoveTargetY = null;
     if (base.physicalDeathAttempts == null) base.physicalDeathAttempts = 0;

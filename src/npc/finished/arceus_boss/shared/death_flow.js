@@ -62,6 +62,8 @@ function requestStart(runtime) {
     runtime.state.deathAnimStarted = false;
     runtime.state.deathFinalizeDone = false;
     runtime.state.deathFinalKillAttempted = false;
+    runtime.state.deathVanishLineSaid = false;
+    runtime.state.deathFinalLineSaid = false;
     runtime.state.deathMovedBelowArena = false;
     runtime.state.deathMoveTargetY = null;
     runtime.state.physicalDeathAttempts = 0;
@@ -105,7 +107,6 @@ function tickCustomDeath(runtime) {
 
     if (state.deathLineStage < 2 && state.customDeathTicksLeft <= halfTicks) {
         if (moveNpcBelowArena(runtime)) {
-            visuals.safeSay(npc, "\u00A75\u041C\u0438\u0440 \u0434\u0440\u043E\u0436\u0438\u0442. \u0410\u0440\u043A\u0435\u0443\u0441 \u0438\u0441\u0447\u0435\u0437\u0430\u0435\u0442 \u043F\u043E \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0439 \u0432\u043E\u043B\u0435.");
             state.deathLineStage = 2;
             state.customDeathTicksLeft = 0;
             state.mode = "death_commit_pending";
@@ -163,9 +164,14 @@ function commitCustomDeath(runtime) {
         runtimeModule.persistRuntimeState(runtime);
     }
 
+    if (!runtime.state.deathVanishLineSaid) {
+        runtime.state.deathVanishLineSaid = true;
+        visuals.safeSay(npc, "\u00A75\u041C\u0438\u0440 \u0434\u0440\u043E\u0436\u0438\u0442. \u0410\u0440\u043A\u0435\u0443\u0441 \u0438\u0441\u0447\u0435\u0437\u0430\u0435\u0442 \u043F\u043E \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0439 \u0432\u043E\u043B\u0435.");
+        runtimeModule.persistRuntimeState(runtime);
+    }
+
     if (!runtime.state.deathFinalizeDone) {
         runtime.state.deathFinalizeDone = true;
-        visuals.safeSay(npc, "\u00A78\u0410\u0440\u043A\u0435\u0443\u0441 \u043F\u0430\u043B.");
         spawnDeathExplosion(runtime);
         runtimeModule.persistRuntimeState(runtime);
     }
