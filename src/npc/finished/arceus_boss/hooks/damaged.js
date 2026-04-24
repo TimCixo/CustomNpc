@@ -32,14 +32,33 @@ var ARCEUS_PHASE3_GEMS = [
     "cobblemon:ground_gem"
 ];
 
+function requireShared(event) {
+    var npc = event.npc;
+    var data = npc.getStoreddata();
+    var factorySource = "" + data.get("__shared");
+    var factory = null;
+
+    if (factorySource == null || factorySource == "" || factorySource == "null" || factorySource == "undefined") {
+        throw "Shared coordinator `__shared` is missing in npc storeddata. Reapply the package with the loader item.";
+    }
+
+    factory = (1, eval)(factorySource);
+    if (typeof factory != "function") {
+        throw "Shared coordinator `__shared` is invalid. Reapply the package with the loader item.";
+    }
+
+    return factory(event);
+}
+
 function damaged(event) {
-    var runtime = ensureArceusRuntime(event.npc);
+    var shared = requireShared(event);
+    var runtime = shared.runtime.ensureArceusRuntime(event.npc);
     attachCombatSubsystem(runtime);
 
     try {
         runtime.combat.onDamaged(event);
     } catch (e) {
-        markRuntimeError(runtime, "damaged", e);
+        shared.runtime.markRuntimeError(runtime, "damaged", e);
         try {
             cancelDamage(event);
         } catch (e2) {}

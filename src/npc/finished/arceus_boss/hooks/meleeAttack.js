@@ -8,14 +8,33 @@ var ARCEUS_LIFECYCLE_KEY = "arceus_lifecycle_json";
 var ARCEUS_CONFIG_VERSION = 12;
 var ARCEUS_WHOIS_CACHE_MS = 1200;
 
+function requireShared(event) {
+    var npc = event.npc;
+    var data = npc.getStoreddata();
+    var factorySource = "" + data.get("__shared");
+    var factory = null;
+
+    if (factorySource == null || factorySource == "" || factorySource == "null" || factorySource == "undefined") {
+        throw "Shared coordinator `__shared` is missing in npc storeddata. Reapply the package with the loader item.";
+    }
+
+    factory = (1, eval)(factorySource);
+    if (typeof factory != "function") {
+        throw "Shared coordinator `__shared` is invalid. Reapply the package with the loader item.";
+    }
+
+    return factory(event);
+}
+
 function meleeAttack(event) {
-    var runtime = ensureArceusRuntime(event.npc);
+    var shared = requireShared(event);
+    var runtime = shared.runtime.ensureArceusRuntime(event.npc);
     attachCombatSubsystem(runtime);
 
     try {
         runtime.combat.onMeleeAttack(event);
     } catch (e) {
-        markRuntimeError(runtime, "meleeAttack", e);
+        shared.runtime.markRuntimeError(runtime, "meleeAttack", e);
     }
 }
 
