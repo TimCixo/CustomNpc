@@ -11,5 +11,6 @@ module.exports = {
     damage: "damage.js",
     timers: "timers.js",
     deathFlow: "death_flow.js",
-    leaderboard: "leaderboard.js"
+    leaderboard: "leaderboard.js",
+    attacks: "attacks.js"
 };
