@@ -63,7 +63,7 @@ function createDefaultConfig() {
         debugIntervalTicks: 20,
         baseTitle: "",
         clockMainUuid: "",
-        clockRespawnSeconds: 300
+        clockRespawnSeconds: 86400
     };
 }
 
