@@ -88,6 +88,7 @@ function tickDeathPath(runtime) {
 function tickCustomDeath(runtime) {
     var npc = runtime.npc;
     var state = runtime.state;
+    var halfTicks = Math.floor(utils.parseIntSafe(runtime.config.customDeathTicks, 80) / 2);
 
     forceDeathSafeHealthFloorLive(runtime);
     visuals.setEntityInvulnerable(npc, true);
@@ -102,10 +103,15 @@ function tickCustomDeath(runtime) {
 
     tickDeathSpin(runtime);
 
-    if (state.deathLineStage < 2 && state.customDeathTicksLeft <= Math.floor(utils.parseIntSafe(runtime.config.customDeathTicks, 80) / 2)) {
+    if (state.deathLineStage < 2 && state.customDeathTicksLeft <= halfTicks) {
         if (moveNpcBelowArena(runtime)) {
             visuals.safeSay(npc, "\u00A75\u041C\u0438\u0440 \u0434\u0440\u043E\u0436\u0438\u0442. \u0410\u0440\u043A\u0435\u0443\u0441 \u0438\u0441\u0447\u0435\u0437\u0430\u0435\u0442 \u043F\u043E \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0439 \u0432\u043E\u043B\u0435.");
             state.deathLineStage = 2;
+            state.customDeathTicksLeft = 0;
+            state.mode = "death_commit_pending";
+            runtimeModule.persistRuntimeState(runtime);
+            commitCustomDeath(runtime);
+            return;
         } else {
             setDeathDebug(runtime, "death_move", "move down failed");
         }
