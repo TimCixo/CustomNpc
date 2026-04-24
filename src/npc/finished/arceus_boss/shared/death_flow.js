@@ -54,6 +54,9 @@ function requestStart(runtime) {
     runtime.state.deathLineStage = 0;
     runtime.state.deathAnimStarted = false;
     runtime.state.deathFinalizeDone = false;
+    runtime.state.deathFinalKillAttempted = false;
+    runtime.state.deathMovedBelowArena = false;
+    runtime.state.deathMoveTargetY = null;
     setRewardDebug(runtime, "-");
     if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "-");
     runtimeModule.persistRuntimeState(runtime);
@@ -101,7 +104,6 @@ function tickCustomDeath(runtime) {
         state.deathFinalizeDone = true;
         startDeathAnimationOnce(runtime);
         spawnDeathExplosion(runtime);
-        moveNpcBelowArena(npc);
         visuals.safeSay(npc, "\u00A78\u0410\u0440\u043A\u0435\u0443\u0441 \u043F\u0430\u043B.");
     }
     state.mode = "death_commit_pending";
@@ -132,21 +134,37 @@ function startDeathAnimationOnce(runtime) {
 
 function commitCustomDeath(runtime) {
     var npc = runtime.npc;
-    prepareNpcForDeathCommit(npc);
     restartDeathTimer(runtime);
+
+    if (!runtime.state.leaderboardAnnounced) {
+        leaderboard.freezeSnapshot(runtime);
+        leaderboard.announceFrozenSnapshot(runtime, visuals);
+        runtimeModule.persistRuntimeState(runtime);
+    }
+
+    if (!runtime.state.rewardsGiven) {
+        runtime.state.rewardCursor = utils.parseIntSafe(runtime.state.rewardCursor, 0);
+        distributeFrozenSnapshotRewards(runtime);
+        runtimeModule.persistRuntimeState(runtime);
+    }
+
+    prepareNpcForDeathCommit(npc);
+    if (!moveNpcBelowArena(runtime)) {
+        if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death move down failed");
+    }
+
     runtime.state.deathCommitted = true;
+    runtime.state.deathFinalKillAttempted = true;
     runtimeModule.persistRuntimeState(runtime);
-    leaderboard.freezeSnapshot(runtime);
+
     if (!damageNpcWithCommand(npc)) {
-        runtime.state.deathCommitted = false;
+        runtime.state.deathFinalKillAttempted = false;
         if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death commit damage command failed");
         runtimeModule.persistRuntimeState(runtime);
+        restartDeathTimer(runtime);
         return;
     }
 
-    leaderboard.announceFrozenSnapshot(runtime, visuals);
-    runtime.state.rewardCursor = 0;
-    distributeFrozenSnapshotRewards(runtime);
     handleCommittedDeath(runtime);
 }
 
@@ -276,21 +294,41 @@ function spawnDeathExplosion(runtime) {
     } catch (e2) {}
 }
 
-function moveNpcBelowArena(npc) {
+function moveNpcBelowArena(runtime) {
+    var npc = runtime.npc;
+    var state = runtime.state;
     var x = npc.getX();
-    var y = npc.getY() - 10;
     var z = npc.getZ();
+    var hasStoredTargetY = state.deathMoveTargetY !== null && state.deathMoveTargetY !== undefined && ("" + state.deathMoveTargetY) != "";
+    var targetY = utils.parseFloatSafe(state.deathMoveTargetY, 0);
+
+    if (state.deathMovedBelowArena === true && hasStoredTargetY) {
+        return applyNpcMove(npc, x, targetY, z);
+    }
+
+    targetY = npc.getY() - 10;
+    if (!applyNpcMove(npc, x, targetY, z)) return false;
+
+    state.deathMoveTargetY = targetY;
+    state.deathMovedBelowArena = true;
+    runtimeModule.persistRuntimeState(runtime);
+    return true;
+}
+
+function applyNpcMove(npc, x, y, z) {
     try {
         npc.setPosition(x, y, z);
-        return;
+        return true;
     } catch (e) {}
     try {
         npc.setPos(x, y, z);
-        return;
+        return true;
     } catch (e2) {}
     try {
         npc.getMCEntity().setPos(x, y, z);
+        return true;
     } catch (e3) {}
+    return false;
 }
 
 function damageNpcWithCommand(npc) {

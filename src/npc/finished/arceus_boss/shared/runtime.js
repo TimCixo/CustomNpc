@@ -65,6 +65,9 @@ function initBoss(npc) {
 
     lifecycle.writeLifecycle(npc, state);
     clearLegacyArceusKeys(npc.getStoreddata());
+    try {
+        npc.getTempdata().remove(ARCEUS_BASE_MELEE_DELAY_KEY);
+    } catch (clearDelayError) {}
     npc.getTempdata().put(ARCEUS_RUNTIME_KEY, createBootstrapRuntime(npc, config, state));
 
     applyPhaseMeleeDelay(npc, config, 1);
@@ -92,6 +95,9 @@ function resetBoss(npc, runtime) {
 
     lifecycle.writeLifecycle(npc, state);
     npc.getTempdata().remove(ARCEUS_RUNTIME_KEY);
+    try {
+        npc.getTempdata().remove(ARCEUS_BASE_MELEE_DELAY_KEY);
+    } catch (clearDelayError) {}
 
     try {
         npc.setHealth(npc.getMaxHealth());
