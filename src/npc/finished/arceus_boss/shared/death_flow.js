@@ -43,6 +43,13 @@ function setRewardDebug(runtime, message) {
     debug.lastRewardError = utils.hasText(message) ? "" + message : "-";
 }
 
+function setDeathDebug(runtime, hook, message) {
+    var debug = ensureDebug(runtime);
+    if (debug == null) return;
+    debug.lastErrorHook = utils.hasText(hook) ? "" + hook : "-";
+    debug.lastErrorMessage = utils.hasText(message) ? "" + message : "-";
+}
+
 function requestStart(runtime) {
     if (runtime.state.mode != "live") return;
     runtime.state.mode = "custom_death_start";
@@ -58,6 +65,7 @@ function requestStart(runtime) {
     runtime.state.deathMovedBelowArena = false;
     runtime.state.deathMoveTargetY = null;
     setRewardDebug(runtime, "-");
+    setDeathDebug(runtime, "-", "-");
     if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "-");
     runtimeModule.persistRuntimeState(runtime);
 }
@@ -92,20 +100,18 @@ function tickCustomDeath(runtime) {
     tickDeathSpin(runtime);
 
     if (state.deathLineStage < 2 && state.customDeathTicksLeft <= Math.floor(utils.parseIntSafe(runtime.config.customDeathTicks, 80) / 2)) {
-        visuals.safeSay(npc, "\u00A75\u041C\u0438\u0440 \u0434\u0440\u043E\u0436\u0438\u0442. \u0410\u0440\u043A\u0435\u0443\u0441 \u0438\u0441\u0447\u0435\u0437\u0430\u0435\u0442 \u043F\u043E \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0439 \u0432\u043E\u043B\u0435.");
-        state.deathLineStage = 2;
+        if (moveNpcBelowArena(runtime)) {
+            visuals.safeSay(npc, "\u00A75\u041C\u0438\u0440 \u0434\u0440\u043E\u0436\u0438\u0442. \u0410\u0440\u043A\u0435\u0443\u0441 \u0438\u0441\u0447\u0435\u0437\u0430\u0435\u0442 \u043F\u043E \u0441\u043E\u0431\u0441\u0442\u0432\u0435\u043D\u043D\u043E\u0439 \u0432\u043E\u043B\u0435.");
+            state.deathLineStage = 2;
+        } else {
+            setDeathDebug(runtime, "death_move", "move down failed");
+        }
     }
 
     state.customDeathTicksLeft -= utils.parseIntSafe(runtime.config.deathTimerTicks, 1);
     if (state.customDeathTicksLeft > 0) return;
 
     state.customDeathTicksLeft = 0;
-    if (!state.deathFinalizeDone) {
-        state.deathFinalizeDone = true;
-        startDeathAnimationOnce(runtime);
-        spawnDeathExplosion(runtime);
-        visuals.safeSay(npc, "\u00A78\u0410\u0440\u043A\u0435\u0443\u0441 \u043F\u0430\u043B.");
-    }
     state.mode = "death_commit_pending";
 }
 
@@ -148,10 +154,14 @@ function commitCustomDeath(runtime) {
         runtimeModule.persistRuntimeState(runtime);
     }
 
-    prepareNpcForDeathCommit(npc);
-    if (!moveNpcBelowArena(runtime)) {
-        if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death move down failed");
+    if (!runtime.state.deathFinalizeDone) {
+        runtime.state.deathFinalizeDone = true;
+        visuals.safeSay(npc, "\u00A78\u0410\u0440\u043A\u0435\u0443\u0441 \u043F\u0430\u043B.");
+        spawnDeathExplosion(runtime);
+        runtimeModule.persistRuntimeState(runtime);
     }
+
+    prepareNpcForDeathCommit(npc);
 
     runtime.state.deathCommitted = true;
     runtime.state.deathFinalKillAttempted = true;
@@ -159,6 +169,7 @@ function commitCustomDeath(runtime) {
 
     if (!damageNpcWithCommand(npc)) {
         runtime.state.deathFinalKillAttempted = false;
+        setDeathDebug(runtime, "death_kill", "final kill command failed");
         if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death commit damage command failed");
         runtimeModule.persistRuntimeState(runtime);
         restartDeathTimer(runtime);

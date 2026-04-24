@@ -269,6 +269,10 @@ function announceArceusRespawn(npc, config) {
     broadcastBossMessage(npc, "§f" + title + " §aвозродился.");
 }
 
+function announceArceusRespawn(npc, config) {
+    broadcastBossMessage(npc, "\u00A7e\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u043E\u0437\u0440\u043E\u0434\u0438\u043B\u0441\u044F [\u0422\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F]");
+}
+
 module.exports = {
     ensureHideDeadBody: ensureHideDeadBody,
     setNoAiState: setNoAiState,
