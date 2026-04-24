@@ -199,6 +199,33 @@ function broadcastBossMessage(npc, message) {
     } catch (e) {}
 }
 
+function stripLeadingSlash(command) {
+    var text = utils.trimString(command);
+    return text.indexOf("/") === 0 ? text.substring(1) : text;
+}
+
+function runServerCommand(npc, command) {
+    try {
+        var server = npc.getMCEntity().level().getServer();
+        var source = server.createCommandSourceStack().withPermission(4);
+        server.getCommands().performPrefixedCommand(source, stripLeadingSlash(command));
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function buildRespawnTeleportTellrawJson() {
+    return '[{"text":"Аркеус возродился ","color":"yellow"},'
+        + '{"text":"[Телепортироваться]","color":"green","underlined":true,'
+        + '"clickEvent":{"action":"run_command","value":"/warp arceus_coliseum"},'
+        + '"hoverEvent":{"action":"show_text","contents":"Телепортироваться к Аркеусу"}}]';
+}
+
+function broadcastRespawnTeleportMessage(npc) {
+    return runServerCommand(npc, 'tellraw @a ' + buildRespawnTeleportTellrawJson());
+}
+
 function readNpcTitle(npc) {
     try {
         if (npc.getDisplay && npc.getDisplay() && npc.getDisplay().getTitle) {
@@ -270,7 +297,8 @@ function announceArceusRespawn(npc, config) {
 }
 
 function announceArceusRespawn(npc, config) {
-    broadcastBossMessage(npc, "\u00A7e\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u043E\u0437\u0440\u043E\u0434\u0438\u043B\u0441\u044F [\u0422\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F]");
+    if (broadcastRespawnTeleportMessage(npc)) return;
+    broadcastBossMessage(npc, "\u00A7e\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u043E\u0437\u0440\u043E\u0434\u0438\u043B\u0441\u044F \u00A7a[\u0422\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C\u0441\u044F]");
 }
 
 module.exports = {
@@ -286,6 +314,9 @@ module.exports = {
     playSoundForAllPlayers: playSoundForAllPlayers,
     safeSay: safeSay,
     broadcastBossMessage: broadcastBossMessage,
+    runServerCommand: runServerCommand,
+    buildRespawnTeleportTellrawJson: buildRespawnTeleportTellrawJson,
+    broadcastRespawnTeleportMessage: broadcastRespawnTeleportMessage,
     spawnPhaseWindChargeBurst: spawnPhaseWindChargeBurst,
     launchNearbyPlayersOnPhaseStart: launchNearbyPlayersOnPhaseStart,
     launchPlayerFromNpc: launchPlayerFromNpc,

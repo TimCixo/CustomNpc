@@ -26,20 +26,29 @@ function interact(event) {
     var player = event.player;
     var item = player.getMainhandItem();
     var shared = requireShared(event);
+    var isOp = shared.utils.isOperator(player);
     var runtime = shared.runtime.ensureArceusRuntime(npc);
 
     if (isRespawnClockLinker(item)) {
+        if (!isOp) {
+            player.message("§cНедостаточно прав.");
+            event.setCanceled(true);
+            return;
+        }
         bindClockLinker(npc, player, item, runtime, shared);
         event.setCanceled(true);
         return;
     }
 
     if (player.isSneaking()) {
+        if (!isOp) return;
         shared.runtime.resetBoss(npc, runtime);
         player.message("§aАркеус сброшен в runtime-состояние.");
         event.setCanceled(true);
         return;
     }
+
+    if (!isOp) return;
 
     var state = runtime.state;
     player.message(
@@ -61,8 +70,8 @@ function interact(event) {
         + "§f | msg: §e" + state.debug.lastErrorMessage
     );
     player.message(
-        "В§7RewardDbg В§f| reward: В§e" + state.debug.lastRewardError
-        + "В§f | leaderboard: В§e" + state.debug.lastLeaderboardError
+        "§7RewardDbg §f| reward: §e" + state.debug.lastRewardError
+        + "§f | leaderboard: §e" + state.debug.lastLeaderboardError
     );
     event.setCanceled(true);
 }

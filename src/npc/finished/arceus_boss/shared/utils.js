@@ -1,3 +1,5 @@
+var OP_PERMISSION_LEVEL = 2;
+
 function trimString(value) {
     return ("" + value).replace(/^\s+|\s+$/g, "");
 }
@@ -43,12 +45,48 @@ function positiveFloat(value, fallback) {
     return parsed > 0 ? parsed : fallback;
 }
 
+function escapeJsonString(value) {
+    var text = value == null ? "" : "" + value;
+    return text
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, "\\\"")
+        .replace(/\r/g, "\\r")
+        .replace(/\n/g, "\\n")
+        .replace(/\t/g, "\\t");
+}
+
+function isOperator(player) {
+    if (player == null) return false;
+
+    try {
+        var mcPlayer = player.getMCEntity();
+        if (mcPlayer != null && mcPlayer.hasPermissions && mcPlayer.hasPermissions(OP_PERMISSION_LEVEL)) return true;
+    } catch (e) {}
+
+    try {
+        var server = player.getMCEntity().level().getServer();
+        var profile = player.getMCEntity().getGameProfile();
+        if (server != null && server.getPlayerList && profile != null) {
+            if (server.getPlayerList().isOp(profile)) return true;
+        }
+    } catch (e2) {}
+
+    try {
+        if (player.hasPermission && player.hasPermission(OP_PERMISSION_LEVEL)) return true;
+    } catch (e3) {}
+
+    return false;
+}
+
 module.exports = {
+    OP_PERMISSION_LEVEL: OP_PERMISSION_LEVEL,
     trimString: trimString,
     hasText: hasText,
     parseJsonSafe: parseJsonSafe,
     parseIntSafe: parseIntSafe,
     parseFloatSafe: parseFloatSafe,
     clampPositiveInt: clampPositiveInt,
-    positiveFloat: positiveFloat
+    positiveFloat: positiveFloat,
+    escapeJsonString: escapeJsonString,
+    isOperator: isOperator
 };
