@@ -36,7 +36,7 @@ var PREVIEW_BACK_ID = 9335;
 
 var SHARED_CHUNK_SIZE = 12000;
 var PREVIEW_MAX_CHARS = 12000;
-var HOOK_ORDER = ["init", "interact", "customGuiScroll", "customGuiClosed", "timer", "target", "attack", "damaged", "meleeAttack", "killed", "kills", "died", "collide"];
+var HOOK_ORDER = ["init", "interact", "dialogOption", "customGuiScroll", "customGuiClosed", "timer", "target", "attack", "damaged", "meleeAttack", "killed", "kills", "died", "collide"];
 
 function interact(event) {
     var item = event.item;
