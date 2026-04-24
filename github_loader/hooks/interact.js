@@ -2,6 +2,7 @@ var GitLoader_NpcAPI = Java.type("noppes.npcs.api.NpcAPI");
 var GitLoader_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var GitLoader_CustomData = Java.type("net.minecraft.world.item.component.CustomData");
 var GitLoader_CompoundTag = Java.type("net.minecraft.nbt.CompoundTag");
+var GitLoader_ListTag = Java.type("net.minecraft.nbt.ListTag");
 var GitLoader_URL = Java.type("java.net.URL");
 var GitLoader_URLEncoder = Java.type("java.net.URLEncoder");
 var GitLoader_InputStreamReader = Java.type("java.io.InputStreamReader");
@@ -235,19 +236,9 @@ function applyPackageToNpc(player, npc, item) {
 
     var storeddataWritten = false;
     var hooksStored = 0;
-    var scriptResult = { attempted: false, written: 0, error: "" };
+    var scriptResult = { attempted: false, written: 0, total: 0, error: "", namesWritten: [], skipped: [], usedNbt: false };
     try {
-        var data = npc.getStoreddata();
-        data.put("__github_loader_package", JSON.stringify({
-            sourceUrl: pkg.sourceUrl,
-            owner: pkg.owner,
-            repo: pkg.repo,
-            ref: pkg.ref,
-            rootPath: pkg.rootPath
-        }));
-        data.put(NPC_SHARED_SOURCES_KEY, JSON.stringify(buildSharedSourceMap(pkg.shared)));
-        data.put("__shared", buildNpcSharedFactory(pkg.shared));
-        writeNpcHooks(data, pkg.hooks);
+        writeNpcStoreddataPackage(npc, pkg);
         storeddataWritten = true;
         hooksStored = pkg.hooks.length;
     } catch (e) {
@@ -256,6 +247,13 @@ function applyPackageToNpc(player, npc, item) {
     }
 
     scriptResult = writeNpcScriptTabs(npc, pkg.hooks);
+    if (scriptResult.usedNbt) {
+        try {
+            writeNpcStoreddataPackage(npc, pkg);
+        } catch (e1) {
+            if (!hasText(scriptResult.error)) scriptResult.error = "storeddata restore failed after NBT write: " + e1;
+        }
+    }
     try {
         npc.updateClient();
     } catch (e) {}
@@ -264,8 +262,8 @@ function applyPackageToNpc(player, npc, item) {
     if (storeddataWritten) parts.push("storeddata written");
     if (hooksStored > 0) parts.push("hooks=" + hooksStored);
     if (scriptResult.attempted) {
-        if (scriptResult.written > 0) {
-            parts.push("script tabs written=" + scriptResult.written);
+        if (scriptResult.written > 0 && scriptResult.total > 0) {
+            parts.push("script tabs written=" + scriptResult.written + "/" + scriptResult.total);
         } else {
             parts.push("script tabs not written");
         }
@@ -273,9 +271,29 @@ function applyPackageToNpc(player, npc, item) {
         parts.push("Script tabs unavailable");
     }
     player.message("GitHub Loader: " + parts.join(", ") + ".");
+    if (scriptResult.namesWritten != null && scriptResult.namesWritten.length > 0) {
+        player.message("GitHub Loader: written: " + scriptResult.namesWritten.join(", "));
+    }
+    if (scriptResult.skipped != null && scriptResult.skipped.length > 0) {
+        player.message("GitHub Loader: skipped: " + scriptResult.skipped.join(", "));
+    }
     if (scriptResult.attempted && hasText(scriptResult.error)) {
         player.message("GitHub Loader: script tab error: " + scriptResult.error);
     }
+}
+
+function writeNpcStoreddataPackage(npc, pkg) {
+    var data = npc.getStoreddata();
+    data.put("__github_loader_package", JSON.stringify({
+        sourceUrl: pkg.sourceUrl,
+        owner: pkg.owner,
+        repo: pkg.repo,
+        ref: pkg.ref,
+        rootPath: pkg.rootPath
+    }));
+    data.put(NPC_SHARED_SOURCES_KEY, JSON.stringify(buildSharedSourceMap(pkg.shared)));
+    data.put("__shared", buildNpcSharedFactory(pkg.shared));
+    writeNpcHooks(data, pkg.hooks);
 }
 
 function writeNpcHooks(data, hooks) {
@@ -294,30 +312,37 @@ function writeNpcHooks(data, hooks) {
 }
 
 function writeNpcScriptTabs(npc, hooks) {
-    var result = { attempted: false, written: 0, error: "" };
+    var result = { attempted: false, written: 0, total: hooks == null ? 0 : hooks.length, error: "", namesWritten: [], skipped: [], usedNbt: false };
     try {
         var handler = getNpcScriptHandler(npc);
         if (handler == null || handler.scripts == null) {
-            result.error = "script tabs unavailable";
-            return result;
+            return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
         var scripts = handler.scripts;
         var scriptCount = getCollectionSize(scripts);
         if (scriptCount <= 0) {
-            result.error = "script tabs unavailable";
-            return result;
+            return writeNpcScriptTabsViaNbt(npc, hooks, result);
+        }
+        var requiredCount = getRequiredScriptCount(hooks);
+        if (scriptCount < requiredCount) {
+            return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
         result.attempted = true;
         for (var i = 0; i < hooks.length; i++) {
             var slot = hookIndex(hooks[i].hook);
-            if (slot < 0) continue;
-            if (slot >= scriptCount) continue;
+            if (slot < 0) {
+                result.skipped.push(hooks[i].hook);
+                continue;
+            }
             var container = typeof scripts[slot] != "undefined" ? scripts[slot] : null;
             if (container == null && scripts.get != null) container = scripts.get(slot);
-            if (container == null) continue;
+            if (container == null) {
+                return writeNpcScriptTabsViaNbt(npc, hooks, result);
+            }
             container.script = hooks[i].body;
             container.fullscript = hooks[i].body;
             result.written++;
+            result.namesWritten.push(hooks[i].hook);
         }
         handler.enabled = true;
         if (handler.saveScriptData != null) handler.saveScriptData();
@@ -327,6 +352,92 @@ function writeNpcScriptTabs(npc, hooks) {
         result.error = "" + e;
     }
     return result;
+}
+
+function writeNpcScriptTabsViaNbt(npc, hooks, result) {
+    var nbt = getNpcNbt(npc);
+    if (nbt == null) {
+        result.error = "npc nbt is unavailable";
+        return result;
+    }
+
+    result.attempted = true;
+    result.usedNbt = true;
+    try {
+        nbt.mcSetTag("Scripts", buildScriptsMcTag(hooks));
+        nbt.setBoolean("ScriptEnabled", true);
+        nbt.putString("ScriptLanguage", "ECMAScript");
+        setNpcNbt(npc, nbt);
+        for (var i = 0; i < hooks.length; i++) {
+            if (hookIndex(hooks[i].hook) < 0) {
+                result.skipped.push(hooks[i].hook);
+                continue;
+            }
+            result.written++;
+            result.namesWritten.push(hooks[i].hook);
+        }
+        return result;
+    } catch (e) {
+        result.error = "" + e;
+        return result;
+    }
+}
+
+function buildScriptsMcTag(hooks) {
+    var scriptsTag = new GitLoader_ListTag();
+    var hookMap = {};
+    for (var i = 0; i < hooks.length; i++) {
+        if (hooks[i] != null && hasText(hooks[i].hook)) hookMap[hooks[i].hook] = hooks[i];
+    }
+    for (var j = 0; j < HOOK_ORDER.length; j++) {
+        var hookName = HOOK_ORDER[j];
+        scriptsTag.add(createRootScriptEntry(hookMap[hookName], hookName));
+    }
+    return scriptsTag;
+}
+
+function createRootScriptEntry(hookFile, hookName) {
+    var rootTag = new GitLoader_CompoundTag();
+    var body = hookFile == null || hookFile.body == null ? "" : "" + hookFile.body;
+    rootTag.putString("Script", body);
+    rootTag.put("Console", new GitLoader_ListTag());
+    rootTag.put("ScriptList", new GitLoader_ListTag());
+    rootTag.putString("GitHubHook", hookName == null ? "" : "" + hookName);
+    rootTag.putString("GitHubPath", hookFile == null || hookFile.relativePath == null ? "" : "" + hookFile.relativePath);
+    return rootTag;
+}
+
+function getRequiredScriptCount(hooks) {
+    var maxIndex = 0;
+    for (var i = 0; i < hooks.length; i++) {
+        var index = hookIndex(hooks[i].hook);
+        if (index > maxIndex) maxIndex = index;
+    }
+    return maxIndex + 1;
+}
+
+function getNpcNbt(npc) {
+    try {
+        if (npc.getEntityNbt != null) return npc.getEntityNbt();
+    } catch (e) {}
+    try {
+        if (typeof npc.nBT != "undefined") return npc.nBT;
+    } catch (e1) {}
+    return null;
+}
+
+function setNpcNbt(npc, nbt) {
+    try {
+        if (npc.setEntityNbt != null) {
+            npc.setEntityNbt(nbt);
+            return;
+        }
+    } catch (e) {}
+    try {
+        npc.nBT = nbt;
+        return;
+    } catch (e1) {}
+    throw "npc nbt write is unavailable";
 }
 
 function buildNpcSharedFactory(sharedFiles) {
