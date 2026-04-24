@@ -7,6 +7,8 @@ var EnchantUtils_ItemEnchantmentsMutable = Java.type("net.minecraft.world.item.e
 var EnchantUtils_BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
 var EnchantUtils_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var EnchantUtils_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
+var EnchantUtils_ResourceKey = Java.type("net.minecraft.resources.ResourceKey");
+var EnchantUtils_Registries = Java.type("net.minecraft.core.registries.Registries");
 var EnchantUtils_Items = Java.type("net.minecraft.world.item.Items");
 var EnchantUtils_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
 
@@ -24,9 +26,24 @@ function clampLevel(value) {
     return level > MAX_ENCHANT_LEVEL ? MAX_ENCHANT_LEVEL : level;
 }
 
-function resolveEnchantment(id) {
+function resolveResourceLocation(id) {
     try {
-        return EnchantUtils_BuiltInRegistries.ENCHANTMENT.get(EnchantUtils_ResourceLocation.parse(id));
+        return EnchantUtils_ResourceLocation.parse(id);
+    } catch (e1) {
+        try {
+            return EnchantUtils_ResourceLocation.tryParse(id);
+        } catch (e2) {
+            return null;
+        }
+    }
+}
+
+function resolveEnchantment(id) {
+    var location = resolveResourceLocation(id);
+    if (location == null) return null;
+
+    try {
+        return EnchantUtils_BuiltInRegistries.ENCHANTMENT.get(location);
     } catch (e) {
         return null;
     }
@@ -35,9 +52,24 @@ function resolveEnchantment(id) {
 function resolveHolder(id) {
     var enchantment = resolveEnchantment(id);
     if (enchantment == null) return null;
+
+    try {
+        if (enchantment.builtInRegistryHolder != null) {
+            return enchantment.builtInRegistryHolder();
+        }
+    } catch (e1) {}
+
+    try {
+        var key = EnchantUtils_ResourceKey.create(
+            EnchantUtils_Registries.ENCHANTMENT,
+            resolveResourceLocation(id)
+        );
+        return EnchantUtils_BuiltInRegistries.ENCHANTMENT.getHolderOrThrow(key);
+    } catch (e2) {}
+
     try {
         return EnchantUtils_BuiltInRegistries.ENCHANTMENT.wrapAsHolder(enchantment);
-    } catch (e) {
+    } catch (e3) {
         return null;
     }
 }
@@ -72,12 +104,45 @@ function isStoredEnchantedBookStack(mcStack) {
     return mcStack != null && !mcStack.isEmpty() && mcStack.getItem() == EnchantUtils_Items.ENCHANTED_BOOK;
 }
 
+function getPrimaryEnchantmentComponent(mcStack) {
+    return isStoredEnchantedBookStack(mcStack)
+        ? EnchantUtils_DataComponents.STORED_ENCHANTMENTS
+        : EnchantUtils_DataComponents.ENCHANTMENTS;
+}
+
+function getSecondaryEnchantmentComponent(mcStack) {
+    return isStoredEnchantedBookStack(mcStack)
+        ? EnchantUtils_DataComponents.ENCHANTMENTS
+        : EnchantUtils_DataComponents.STORED_ENCHANTMENTS;
+}
+
 function getEnchantmentsFromComponent(mcStack, componentType) {
     var map = {};
     if (mcStack == null || mcStack.isEmpty() || componentType == null) return map;
 
     try {
         var itemEnchants = mcStack.get(componentType);
+        if (itemEnchants == null || itemEnchants.isEmpty()) return map;
+
+        var iterator = itemEnchants.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            var id = getEnchantmentIdFromEntryKey(entry.getKey());
+            var level = clampLevel(entry.getValue());
+            if (!itemUtils.hasText(id) || level <= 0) continue;
+            map[id] = level;
+        }
+    } catch (e) {}
+
+    return map;
+}
+
+function getEnchantmentsFromHelper(mcStack) {
+    var map = {};
+    if (mcStack == null || mcStack.isEmpty()) return map;
+
+    try {
+        var itemEnchants = EnchantUtils_EnchantmentHelper.getEnchantments(mcStack);
         if (itemEnchants == null || itemEnchants.isEmpty()) return map;
 
         var iterator = itemEnchants.entrySet().iterator();
@@ -101,50 +166,110 @@ function hasEnchantments(map) {
     return false;
 }
 
-function getBookEnchantments(mcStack) {
-    return getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS);
+function countEnchantments(map) {
+    var count = 0;
+    for (var key in map) {
+        if (!map.hasOwnProperty(key)) continue;
+        if (clampLevel(map[key]) <= 0) continue;
+        count++;
+    }
+    return count;
 }
 
-function getItemEnchantments(mcStack) {
-    var map = getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.ENCHANTMENTS);
+function sanitizeEnchantMap(source) {
+    var out = {};
+    if (source == null) return out;
+
+    for (var key in source) {
+        if (!source.hasOwnProperty(key)) continue;
+        var id = itemUtils.trimString(key);
+        var level = clampLevel(source[key]);
+        if (!itemUtils.hasText(id) || level <= 0) continue;
+        out[id] = level;
+    }
+
+    return out;
+}
+
+function copyEnchantMap(source) {
+    return sanitizeEnchantMap(source);
+}
+
+function areEnchantMapsEqual(left, right) {
+    var leftMap = sanitizeEnchantMap(left);
+    var rightMap = sanitizeEnchantMap(right);
+
+    if (countEnchantments(leftMap) != countEnchantments(rightMap)) return false;
+
+    for (var key in leftMap) {
+        if (!leftMap.hasOwnProperty(key)) continue;
+        if (!rightMap.hasOwnProperty(key)) return false;
+        if (clampLevel(leftMap[key]) != clampLevel(rightMap[key])) return false;
+    }
+
+    return true;
+}
+
+function getEnchantmentsFromMcStack(mcStack) {
+    var map = {};
+    if (mcStack == null || mcStack.isEmpty()) return map;
+
+    map = getEnchantmentsFromHelper(mcStack);
     if (hasEnchantments(map)) return map;
 
-    try {
-        var itemEnchants = EnchantUtils_EnchantmentHelper.getEnchantments(mcStack);
-        if (itemEnchants == null || itemEnchants.isEmpty()) return map;
+    map = getEnchantmentsFromComponent(mcStack, getPrimaryEnchantmentComponent(mcStack));
+    if (hasEnchantments(map)) return map;
 
-        var iterator = itemEnchants.entrySet().iterator();
-        while (iterator.hasNext()) {
-            var entry = iterator.next();
-            var enchantment = entry.getKey();
-            var level = clampLevel(entry.getValue());
-            var id = getEnchantmentIdFromEntryKey(enchantment);
-            if (!itemUtils.hasText(id)) id = getEnchantmentId(enchantment);
-            if (!itemUtils.hasText(id) || level <= 0) continue;
-            map[id] = level;
-        }
-    } catch (e) {}
-
-    return map;
+    return getEnchantmentsFromComponent(mcStack, getSecondaryEnchantmentComponent(mcStack));
 }
 
-function buildMutableEnchantments(enchantMap) {
+function buildEnchantmentsResult(enchantMap) {
+    var expected = sanitizeEnchantMap(enchantMap);
     var mutable = new EnchantUtils_ItemEnchantmentsMutable(EnchantUtils_ItemEnchantments.EMPTY);
-    for (var enchantId in enchantMap) {
-        if (!enchantMap.hasOwnProperty(enchantId)) continue;
+    var missing = [];
+
+    for (var enchantId in expected) {
+        if (!expected.hasOwnProperty(enchantId)) continue;
+
         var holder = resolveHolder(enchantId);
-        var level = clampLevel(enchantMap[enchantId]);
-        if (holder == null || level <= 0) continue;
-        mutable.set(holder, level);
+        var level = expected[enchantId];
+        if (holder == null || level <= 0) {
+            missing.push(enchantId);
+            continue;
+        }
+
+        try {
+            mutable.set(holder, level);
+        } catch (e) {
+            missing.push(enchantId);
+        }
     }
-    return mutable;
+
+    return {
+        ok: missing.length <= 0,
+        expected: expected,
+        immutable: mutable.toImmutable(),
+        missing: missing
+    };
+}
+
+function clearSecondaryComponent(mcStack) {
+    try {
+        mcStack.remove(getSecondaryEnchantmentComponent(mcStack));
+    } catch (e) {}
 }
 
 function setBookEnchantmentsOnMcStack(mcStack, enchantMap) {
     if (mcStack == null || mcStack.isEmpty() || !isStoredEnchantedBookStack(mcStack)) return false;
+
+    var built = buildEnchantmentsResult(enchantMap);
+    if (!built.ok) return false;
+    if (!hasEnchantments(built.expected)) return false;
+
     try {
-        mcStack.set(EnchantUtils_DataComponents.STORED_ENCHANTMENTS, buildMutableEnchantments(enchantMap).toImmutable());
-        return true;
+        EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, built.immutable);
+        clearSecondaryComponent(mcStack);
+        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
     } catch (e) {
         return false;
     }
@@ -152,14 +277,21 @@ function setBookEnchantmentsOnMcStack(mcStack, enchantMap) {
 
 function setItemEnchantmentsOnMcStack(mcStack, enchantMap) {
     if (mcStack == null || mcStack.isEmpty() || isStoredEnchantedBookStack(mcStack)) return false;
+
+    var built = buildEnchantmentsResult(enchantMap);
+    if (!built.ok) return false;
+
     try {
-        var immutableEnchants = buildMutableEnchantments(enchantMap).toImmutable();
-        mcStack.set(EnchantUtils_DataComponents.ENCHANTMENTS, immutableEnchants);
-        try {
-            EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, immutableEnchants);
-        } catch (e1) {}
-        return true;
-    } catch (e) {
+        EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, built.immutable);
+        clearSecondaryComponent(mcStack);
+        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
+    } catch (e1) {}
+
+    try {
+        mcStack.set(EnchantUtils_DataComponents.ENCHANTMENTS, built.immutable);
+        clearSecondaryComponent(mcStack);
+        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
+    } catch (e2) {
         return false;
     }
 }
@@ -168,30 +300,13 @@ function isEnchantedBook(item) {
     if (itemUtils.isEmptyItem(item)) return false;
     var mcStack = itemUtils.getMcStack(item);
     if (mcStack == null || mcStack.isEmpty()) return false;
-    try {
-        return isStoredEnchantedBookStack(mcStack) && hasEnchantments(getBookEnchantments(mcStack));
-    } catch (e) {
-        return false;
-    }
+
+    return isStoredEnchantedBookStack(mcStack) && hasEnchantments(getEnchantmentsFromMcStack(mcStack));
 }
 
 function getEnchantments(item) {
-    var map = {};
-    if (itemUtils.isEmptyItem(item)) return map;
-
-    var mcStack = itemUtils.getMcStack(item);
-    if (mcStack == null || mcStack.isEmpty()) return map;
-
-    return isStoredEnchantedBookStack(mcStack) ? getBookEnchantments(mcStack) : getItemEnchantments(mcStack);
-}
-
-function copyEnchantMap(source) {
-    var out = {};
-    for (var key in source) {
-        if (!source.hasOwnProperty(key)) continue;
-        out[key] = clampLevel(source[key]);
-    }
-    return out;
+    if (itemUtils.isEmptyItem(item)) return {};
+    return getEnchantmentsFromMcStack(itemUtils.getMcStack(item));
 }
 
 function getEnchantmentEntries(item) {
@@ -242,38 +357,67 @@ function createEnchantedBook(enchantId, level) {
 }
 
 function createEnchantedBookFromMap(enchantMap) {
+    var expected = sanitizeEnchantMap(enchantMap);
+    if (!hasEnchantments(expected)) return null;
+
     try {
         var bookStack = new EnchantUtils_MCItemStack(EnchantUtils_Items.ENCHANTED_BOOK);
-        if (!setEnchantmentsOnMcStack(bookStack, enchantMap)) return null;
-        return itemUtils.wrapMcStack(bookStack);
+        if (bookStack == null || bookStack.isEmpty()) return null;
+        if (!setBookEnchantmentsOnMcStack(bookStack, expected)) return null;
+
+        var wrapped = itemUtils.wrapMcStack(bookStack);
+        if (itemUtils.isEmptyItem(wrapped)) return null;
+        if (!isEnchantedBook(wrapped)) return null;
+        if (!areEnchantMapsEqual(getEnchantments(wrapped), expected)) return null;
+        return wrapped;
     } catch (e) {
         return null;
     }
 }
 
-function canApplyEnchantmentToItem(enchantId, level, targetItem) {
-    var enchantment = resolveEnchantment(enchantId);
-    var holder = resolveHolder(enchantId);
-    var mcStack = itemUtils.getMcStack(targetItem);
+function supportsEnchantmentOnItem(enchantment, mcStack) {
     if (enchantment == null || mcStack == null || mcStack.isEmpty()) return false;
-    if (isStoredEnchantedBookStack(mcStack)) return false;
-    if (clampLevel(level) <= 0) return false;
 
     try {
-        if (enchantment.canEnchant(mcStack)) return true;
+        if (!EnchantUtils_EnchantmentHelper.canHaveEnchantments(mcStack)) return false;
     } catch (e1) {}
 
     try {
         if (enchantment.isSupportedItem(mcStack)) return true;
     } catch (e2) {}
 
-    if (holder != null) {
-        try {
-            if (mcStack.getItem().isPrimaryItemFor(mcStack, holder)) return true;
-        } catch (e3) {}
-    }
+    try {
+        if (enchantment.isPrimaryItem(mcStack)) return true;
+    } catch (e3) {}
+
+    try {
+        if (enchantment.canEnchant(mcStack)) return true;
+    } catch (e4) {}
 
     return false;
+}
+
+function canApplyEnchantmentToItem(enchantId, level, targetItem) {
+    var enchantment = resolveEnchantment(enchantId);
+    var mcStack = itemUtils.getMcStack(targetItem);
+    if (enchantment == null || mcStack == null || mcStack.isEmpty()) return false;
+    if (isStoredEnchantedBookStack(mcStack)) return false;
+
+    var incomingLevel = clampLevel(level);
+    if (incomingLevel <= 0) return false;
+    if (!supportsEnchantmentOnItem(enchantment, mcStack)) return false;
+
+    var currentMap = getEnchantments(targetItem);
+    if (!canCoexistWithMap(enchantId, currentMap)) return false;
+
+    var oldLevel = currentMap.hasOwnProperty(enchantId) ? clampLevel(currentMap[enchantId]) : 0;
+    var newLevel = computeMergedLevel(oldLevel, incomingLevel);
+    if (newLevel <= oldLevel) return false;
+
+    var verifyCopy = mcStack.copy();
+    var verifyMap = copyEnchantMap(currentMap);
+    verifyMap[enchantId] = newLevel;
+    return setItemEnchantmentsOnMcStack(verifyCopy, verifyMap);
 }
 
 function canEnchantmentsCoexist(enchantA, enchantB) {
@@ -310,6 +454,19 @@ function computeMergedLevel(existingLevel, incomingLevel) {
 }
 
 function applyBookToTarget(bookItem, targetItem) {
+    if (!isEnchantedBook(bookItem)) {
+        return { ok: false, reason: "invalid_book", applied: [], skipped: [] };
+    }
+
+    if (itemUtils.isEmptyItem(targetItem)) {
+        return { ok: false, reason: "invalid_target", applied: [], skipped: [] };
+    }
+
+    var targetMcStack = itemUtils.getMcStack(targetItem);
+    if (targetMcStack == null || targetMcStack.isEmpty() || isStoredEnchantedBookStack(targetMcStack)) {
+        return { ok: false, reason: "invalid_target", applied: [], skipped: [] };
+    }
+
     var bookMap = getEnchantments(bookItem);
     var targetMap = getEnchantments(targetItem);
     var resultMap = copyEnchantMap(targetMap);
@@ -318,9 +475,9 @@ function applyBookToTarget(bookItem, targetItem) {
 
     for (var enchantId in bookMap) {
         if (!bookMap.hasOwnProperty(enchantId)) continue;
+
         var incomingLevel = clampLevel(bookMap[enchantId]);
         var oldLevel = resultMap.hasOwnProperty(enchantId) ? clampLevel(resultMap[enchantId]) : 0;
-
         if (!canApplyEnchantmentToItem(enchantId, incomingLevel, targetItem)) {
             skipped.push(enchantId);
             continue;
@@ -345,7 +502,11 @@ function applyBookToTarget(bookItem, targetItem) {
         return { ok: false, reason: "incompatible", applied: [], skipped: skipped };
     }
 
-    if (!setEnchantments(targetItem, resultMap)) {
+    if (!setItemEnchantmentsOnMcStack(targetMcStack, resultMap)) {
+        return { ok: false, reason: "write_failed", applied: [], skipped: skipped };
+    }
+
+    if (!areEnchantMapsEqual(getEnchantments(targetItem), resultMap)) {
         return { ok: false, reason: "write_failed", applied: [], skipped: skipped };
     }
 
@@ -354,13 +515,18 @@ function applyBookToTarget(bookItem, targetItem) {
 
 function mergeBookEnchantments(firstMap, secondMap) {
     var resultMap = copyEnchantMap(firstMap);
+    var incomingMap = copyEnchantMap(secondMap);
     var changed = [];
     var hadConflict = false;
     var maxLevelBlocked = false;
 
-    for (var enchantId in secondMap) {
-        if (!secondMap.hasOwnProperty(enchantId)) continue;
-        var incomingLevel = clampLevel(secondMap[enchantId]);
+    if (!hasEnchantments(resultMap) || !hasEnchantments(incomingMap)) {
+        return { ok: false, reason: "no_change", map: resultMap };
+    }
+
+    for (var enchantId in incomingMap) {
+        if (!incomingMap.hasOwnProperty(enchantId)) continue;
+        var incomingLevel = clampLevel(incomingMap[enchantId]);
         var oldLevel = resultMap.hasOwnProperty(enchantId) ? clampLevel(resultMap[enchantId]) : 0;
 
         if (oldLevel > 0) {

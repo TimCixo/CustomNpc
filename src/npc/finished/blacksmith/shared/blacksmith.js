@@ -87,15 +87,16 @@ function onGuiScroll(event) {
         closePlayerGui(event.player);
         return;
     }
+
     var player = event.player;
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
     if (session == null || session.mode != "remove" || session.step != "gui_open") return;
-
     if (scroll.getID() != REMOVE_SCROLL_ID) return;
 
     var index = guiUtils.getSelectedIndex(scroll);
     if (index < 0 || session.removeChoices == null) return;
+
     if (index >= session.removeChoices.length) {
         clearSession(runtime, player);
         clearGuiNpc(player);
@@ -113,6 +114,7 @@ function onGuiClosed(event) {
     var npc = resolveGuiNpc(event.player, event.npc);
     clearGuiNpc(event.player);
     if (npc == null) return;
+
     var player = event.player;
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
@@ -206,6 +208,7 @@ function handleApplyInteract(npc, player, runtime, session) {
 
 function handleMergeInteract(npc, player, runtime, session) {
     var heldItem = itemUtils.getMainhandItem(player);
+    var secondBookCopy = null;
 
     if (session.step == "waiting_first_book") {
         if (!enchantUtils.isEnchantedBook(heldItem)) {
@@ -262,10 +265,18 @@ function handleMergeInteract(npc, player, runtime, session) {
     }
 
     var resultBook = enchantUtils.createEnchantedBookFromMap(mergeResult.map);
-    if (itemUtils.isEmptyItem(resultBook)) {
+    if (itemUtils.isEmptyItem(resultBook) || !enchantUtils.isEnchantedBook(resultBook)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
         tellPlayer(npc, player, "Не удалось создать результат.");
+        return;
+    }
+
+    secondBookCopy = itemUtils.cloneSingleItem(heldItem);
+    if (itemUtils.isEmptyItem(secondBookCopy)) {
+        returnStoredItem(player, session.firstBook);
+        clearSession(runtime, player);
+        tellPlayer(npc, player, "Не удалось подготовить вторую книгу к объединению.");
         return;
     }
 
@@ -278,11 +289,14 @@ function handleMergeInteract(npc, player, runtime, session) {
 
     if (!itemUtils.giveItemOrDrop(player, resultBook)) {
         returnStoredItem(player, session.firstBook);
+        returnStoredItem(player, secondBookCopy);
+        itemUtils.updateInventory(player);
         clearSession(runtime, player);
         tellPlayer(npc, player, "Не удалось отдать результирующую книгу.");
         return;
     }
 
+    itemUtils.updateInventory(player);
     clearSession(runtime, player);
     tellPlayer(npc, player, "Книги успешно объединены.");
 }
@@ -340,6 +354,15 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
         return;
     }
 
+    var book = enchantUtils.createEnchantedBook(selected.id, selected.level);
+    if (itemUtils.isEmptyItem(book) || !enchantUtils.isEnchantedBook(book)) {
+        clearSession(runtime, player);
+        clearGuiNpc(player);
+        closePlayerGui(player);
+        tellPlayer(npc, player, "Не удалось создать валидную книгу с зачарованием.");
+        return;
+    }
+
     var originalMap = enchantUtils.copyEnchantMap(currentMap);
     delete currentMap[selected.id];
     if (!enchantUtils.setEnchantments(heldItem, currentMap)) {
@@ -350,9 +373,20 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
         return;
     }
 
-    var book = enchantUtils.createEnchantedBook(selected.id, selected.level);
-    if (itemUtils.isEmptyItem(book) || !itemUtils.giveItemOrDrop(player, book)) {
+    var updatedMap = enchantUtils.getEnchantments(heldItem);
+    if (updatedMap.hasOwnProperty(selected.id)) {
         enchantUtils.setEnchantments(heldItem, originalMap);
+        itemUtils.updateInventory(player);
+        clearSession(runtime, player);
+        clearGuiNpc(player);
+        closePlayerGui(player);
+        tellPlayer(npc, player, "Зачарование не снялось с предмета.");
+        return;
+    }
+
+    if (!itemUtils.giveItemOrDrop(player, book)) {
+        enchantUtils.setEnchantments(heldItem, originalMap);
+        itemUtils.updateInventory(player);
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
