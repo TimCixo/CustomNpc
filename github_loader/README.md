@@ -1,146 +1,172 @@
 # GitHub NPC Loader
 
-Scripted Item для загрузки hook-скриптов NPC напрямую из GitHub-папки.
+Scripted item firmware for loading CustomNPCs packages from GitHub into NPC script tabs.
 
-## Структура loader-пакета
+## Firmware Stages
 
-Теперь пакет разделён на две роли:
+The loader item has two stages:
 
-- `init.js` и `interact.js` — тонкий bootstrap/installer предмета
-- `runtime.js` — основной runtime loader, который bootstrap подтягивает из репозитория
+### 1. Installer firmware
 
-Внутри `github_loader/` также есть папка `shared/`:
+Installer firmware is responsible only for installing ready firmware into the item.
 
-- `shared/main_ui.js` — главное окно loader-а
-- `shared/preview_ui.js` — отдельное окно preview
-- `shared/git_runtime.js` — GitHub URL parsing, HTTP и сборка пакета
-- `shared/__shared.js` — карта модулей для дальнейшей унификации структуры
+Responsibilities:
 
-Практический нюанс:
+- open installer GUI
+- read GitHub URL and optional token
+- download loader ready firmware from `github_loader/`
+- validate that downloaded firmware is ready-only
+- write ready firmware into the item
+- switch item presentation from installer to ready mode
 
-- bootstrap остаётся маленьким и живёт прямо в item hook
-- основной функционал loader-а больше не обязан лежать внутри installer-скрипта
-- runtime кэшируется у игрока после первого использования и периодически обновляется с `github_loader/runtime.js`
-- `shared/` используется как source-разбиение по ответственности для поддержки runtime-кода
+Installer firmware is not the runtime used after installation.
 
-## Что изменено
+### 2. Ready firmware
 
-Теперь предмет ориентирован не на "любую папку с любыми `.js`", а на один явный NPC-пакет.
+Ready firmware is the actual loader item used by players after installation.
 
-- URL в GUI должен указывать на папку одного NPC.
-- Для каждого hook допускается только один файл.
-- Если в папке найдено несколько файлов для одного и того же hook, loader останавливается с ошибкой.
-- Приоритет layout теперь детерминированный:
-  - `hooks/<hook>.js` — рекомендованный формат
-  - `<hook>.js` — совместимость
-  - `<hook>/<hook>.js` — совместимость со старым layout
+Ready item behavior:
 
-## Рекомендуемая структура папки
+- right click air opens the ready GUI
+- right click NPC applies the current package to that NPC
+- item name is `GitHub NPC Loader`
+- item lore describes Update/Preview/Apply usage
 
-Рекомендуемый layout пакета, который нужно отдавать предмету:
+## Current Ready Flow
+
+### Update
+
+`Update` reads GitHub metadata and stores only a compact package manifest in item `CUSTOM_DATA`.
+
+The item does not store full hook bodies or shared source bodies.
+
+Stored manifest includes:
+
+- repository identity
+- resolved ref
+- package root path
+- hook file list with `sha`, path, size, and hook name
+- shared file list with `sha`, path, and size
+- total file count
+- total estimated size
+
+### Preview
+
+Preview uses the stored manifest and downloads only the selected file body on demand.
+
+Preview body is temporary:
+
+- it is not stored in item `CUSTOM_DATA`
+- it may live in GUI state or player temp cache only for the preview session
+
+### Apply
+
+Apply reads the manifest, downloads the required files by blob `sha`, builds the package in memory, and writes it directly to the NPC.
+
+Apply behavior:
+
+- hooks are written into separate NPC script tabs
+- shared files are written into NPC storeddata/memory
+- hooks remain raw hook files
+- shared bootstrap is not injected into hook bodies
+
+## Supported Package Layout
+
+Recommended package layout:
 
 ```text
-<npc_package>/
-  README.md
+package/
   hooks/
     init.js
     interact.js
     timer.js
-    target.js
-    attack.js
     damaged.js
-    meleeAttack.js
-    killed.js
-    kills.js
     died.js
-    collide.js
+    attack.js
+    meleeAttack.js
+    ...
+  shared/
+    __shared.js
+    *.js
 ```
 
-Можно хранить только нужные hooks. Пустые hooks не обязательны.
+Shared requirements:
 
-Если нужен старый layout, loader всё ещё понимает:
+- `shared/__shared.js` exports alias-to-file mappings
+- shared modules use CommonJS-like `module.exports`
+- hooks call `requireShared(event)` themselves
 
-```text
-<npc_package>/
-  init.js
-  timer.js
-  interact/
-    interact.js
-```
+## Item Storage Model
 
-Но смешивать несколько вариантов для одного hook не надо. Например, нельзя одновременно держать:
+Current item storage is manifest-only.
 
-- `hooks/init.js`
-- `init.js`
-- `init/init.js`
+The loader item keeps:
 
-Это считается дублем `init`.
+- firmware metadata
+- last GitHub URL
+- ready firmware source for the loader itself
+- compact package manifest for the selected NPC package
 
-## Какой URL вставлять в предмет
+The loader item does not keep:
 
-Нужно вставлять URL именно папки NPC-пакета, а не всего репозитория, если внутри репозитория несколько NPC.
+- full downloaded package source
+- preview file bodies
+- combined hook bundles
 
-Примеры:
+This keeps item NBT small enough for large packages.
 
-```text
-https://github.com/<owner>/<repo>/tree/main/npc/technical/respawn_clock/clock
-https://github.com/<owner>/<repo>/tree/main/npc/finished/arceus_boss
-```
+## NPC Write Model
 
-Если вставить слишком широкую папку, где лежат скрипты нескольких NPC или ролей, loader теперь корректно свалится на дублях hook-файлов вместо случайного выбора.
+When applying a package:
 
-## Порядок hooks в NPC
+- hook files are mapped to separate NPC script tabs
+- shared files are stored in NPC storeddata
+- large shared source bodies may be chunked in storeddata
+- a stored shared factory reconstructs modules from chunked sources
 
-При записи в NPC предмет раскладывает hooks в таком порядке:
+Canonical shared-related NPC keys include:
 
-1. `init`
-2. `interact`
-3. `timer`
-4. `target`
-5. `attack`
-6. `damaged`
-7. `meleeAttack`
-8. `killed`
-9. `kills`
-10. `died`
-11. `collide`
+- `__shared`
+- `github_npc_loader_shared_sources_manifest`
+- `github_npc_loader_shared_source_<id>_chunk_count`
+- `github_npc_loader_shared_source_<id>_chunk_<n>`
 
-Именно в таком порядке лучше мыслить структуру пакета и проверять итоговый набор скриптов в NPC.
+Canonical hook-related NPC keys include:
 
-## Как пользоваться
+- `github_loader_hook_count`
+- `github_loader_hook_<n>_name`
+- `github_loader_hook_<n>_path`
+- `github_loader_hook_<n>_body`
 
-1. Дай предмету `init.js` и `interact.js` из этой папки.
-2. ПКМ по воздуху открой GUI.
-3. Вставь URL GitHub-папки одного NPC-пакета.
-4. Нажми `Load`.
-5. Проверь summary: loader покажет layout, выбранные hook-файлы и итоговый порядок.
-6. ПКМ по NPC этим предметом, чтобы записать scripts в NBT NPC.
+## Troubleshooting
 
-## Практическая рекомендация по репозиторию
+### Item still opens installer GUI
 
-Если в проекте у одного механизма несколько ролей NPC, лучше хранить их раздельно:
+The item is still on installer firmware or ready firmware was not installed correctly.
 
-```text
-npc/
-  technical/
-    respawn_clock/
-      clock/
-        hooks/
-          init.js
-          interact.js
-          timer.js
-      target/
-        hooks/
-          init.js
-          interact.js
-          died.js
-```
+### Preview opens but file body is missing
 
-Тогда на каждый URL loader получает ровно один NPC-пакет без конфликтов.
+Check:
 
-## Ограничения
+- package manifest exists
+- GitHub token is valid for private repos
+- file still exists at the stored `sha`
 
-- Loader загружает только поддерживаемые NPC hook-файлы.
-- Вспомогательные `.js`, которые не являются hook-файлами, попадают в ignored.
-- Если итоговый bundle превышает лимит hook-вкладки CustomNPCs, загрузка будет остановлена.
-- Диалоговые файлы вроде `dialog.js` и `dialogOption.js` этот предмет не раскладывает в NPC hooks.
+### Apply writes storeddata but not script tabs
+
+Direct script tab access may be unavailable on the target NPC at runtime.
+The loader treats storeddata write as canonical and uses best-effort script-tab injection.
+
+### Large package disconnects the client
+
+Current loader avoids storing full package source in the item.
+If this still happens, inspect item `CUSTOM_DATA` growth and manifest size rather than package body size.
+
+### Shared module alias is undefined in hooks
+
+Check:
+
+- `shared/__shared.js` exists
+- alias points to the correct file
+- shared file exports through `module.exports`
+- hook calls `requireShared(event)` and uses the exported alias
