@@ -38,31 +38,58 @@ function interact(event) {
 function isExchangeCurrency(item) {
     if (item == null || item.isEmpty()) return false;
 
-    var itemId = getItemId(item);
-    if (itemId != "minecraft:iron_nugget"
-        && itemId != "silentgems:silver_nugget"
-        && itemId != "minecraft:gold_nugget") {
-        return false;
-    }
-
-    return getCurrencyUnitPrice(item) > 0;
+    return getCurrencyMetadata(item) != null;
 }
 
 function getCurrencyUnitPrice(item) {
-    try {
-        var customData = item.getMCItemStack().get(DataComponents.CUSTOM_DATA);
-        if (customData != null) {
-            var tag = customData.copyTag();
-            var price = tag.getInt("currency_exchange_unit_price");
-            if (price > 0) return price;
-        }
-    } catch (e) {}
+    var metadata = getCurrencyMetadata(item);
+    return metadata == null ? 0 : metadata.unitPrice;
+}
 
-    var itemId = getItemId(item);
+function getCurrencyMetadata(item) {
+    if (item == null || item.isEmpty()) return null;
+
+    try {
+        var itemId = getItemId(item);
+        var customData = item.getMCItemStack().get(DataComponents.CUSTOM_DATA);
+        if (customData == null) return null;
+
+        var tag = customData.copyTag();
+        if (tag == null) return null;
+
+        var storedItemId = readTagString(tag, "currency_exchange_item_id");
+        var unitPrice = tag.getInt("currency_exchange_unit_price");
+        if (!hasText(storedItemId) || unitPrice <= 0) return null;
+        if (storedItemId != itemId) return null;
+        if (getExpectedCurrencyUnitPrice(itemId) != unitPrice) return null;
+
+        return {
+            itemId: itemId,
+            unitPrice: unitPrice,
+            label: readTagString(tag, "currency_exchange_label")
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function getExpectedCurrencyUnitPrice(itemId) {
     if (itemId == "minecraft:iron_nugget") return 5;
     if (itemId == "silentgems:silver_nugget") return 20;
     if (itemId == "minecraft:gold_nugget") return 100;
     return 0;
+}
+
+function readTagString(tag, key) {
+    try {
+        return "" + tag.getString(key);
+    } catch (e) {
+        return "";
+    }
+}
+
+function hasText(value) {
+    return value != null && ("" + value).replace(/^\s+|\s+$/g, "").length > 0;
 }
 
 function getItemId(item) {
