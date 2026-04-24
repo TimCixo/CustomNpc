@@ -7,6 +7,7 @@ var clock = require("clock_link.js");
 var ARCEUS_TIMER_ID = 1;
 var ARCEUS_DEATH_TIMER_ID = 2;
 var ARCEUS_RUNTIME_KEY = "arceus_runtime";
+var ARCEUS_BASE_MELEE_DELAY_KEY = "arceus_base_melee_delay";
 
 function createBootstrapRuntime(npc, config, state) {
     return {
@@ -35,17 +36,22 @@ function ensureArceusRuntime(npc) {
     }
 
     var config = configModule.mergeConfig(utils.parseJsonSafe(npc.getStoreddata().get(configModule.ARCEUS_CONFIG_KEY)));
-    var state = lifecycle.mergeLifecycle(utils.parseJsonSafe(npc.getStoreddata().get(lifecycle.ARCEUS_LIFECYCLE_KEY)));
 
     if (runtime == null || runtime.version != configModule.ARCEUS_CONFIG_VERSION) {
-        runtime = createBootstrapRuntime(npc, config, state);
+        runtime = createBootstrapRuntime(
+            npc,
+            config,
+            lifecycle.mergeLifecycle(utils.parseJsonSafe(npc.getStoreddata().get(lifecycle.ARCEUS_LIFECYCLE_KEY)))
+        );
         temp.put(ARCEUS_RUNTIME_KEY, runtime);
         return runtime;
     }
 
     runtime.npc = npc;
     runtime.config = config;
-    runtime.state = state;
+    if (runtime.state == null) {
+        runtime.state = lifecycle.mergeLifecycle(utils.parseJsonSafe(npc.getStoreddata().get(lifecycle.ARCEUS_LIFECYCLE_KEY)));
+    }
     return runtime;
 }
 
@@ -108,11 +114,40 @@ function applyPhaseMeleeDelay(npc, config, phase) {
         var stats = npc.getStats();
         if (stats == null || stats.getMelee == null) return;
         var melee = stats.getMelee();
-        var currentDelay = melee.getDelay();
-        var baseDelay = currentDelay >= 1 ? currentDelay : 12;
+        var baseDelay = captureBaseMeleeDelay(npc);
         var multiplier = getPhaseMeleeDelayMultiplier(config, phase);
         melee.setDelay(Math.max(1, Math.round(baseDelay * multiplier)));
     } catch (e) {}
+}
+
+function getBaseMeleeDelay(npc) {
+    try {
+        var value = npc.getTempdata().get(ARCEUS_BASE_MELEE_DELAY_KEY);
+        var parsed = utils.parseIntSafe(value, 0);
+        return parsed > 0 ? parsed : 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function captureBaseMeleeDelay(npc) {
+    var stored = getBaseMeleeDelay(npc);
+    if (stored > 0) return stored;
+
+    var baseDelay = 12;
+    try {
+        var stats = npc.getStats();
+        if (stats != null && stats.getMelee != null) {
+            var melee = stats.getMelee();
+            baseDelay = utils.parseIntSafe(melee.getDelay(), 12);
+        }
+    } catch (e) {}
+
+    if (baseDelay <= 0) baseDelay = 12;
+    try {
+        npc.getTempdata().put(ARCEUS_BASE_MELEE_DELAY_KEY, baseDelay);
+    } catch (e2) {}
+    return baseDelay;
 }
 
 function getPhaseMeleeDelayMultiplier(config, phase) {
@@ -144,10 +179,13 @@ module.exports = {
     ARCEUS_TIMER_ID: ARCEUS_TIMER_ID,
     ARCEUS_DEATH_TIMER_ID: ARCEUS_DEATH_TIMER_ID,
     ARCEUS_RUNTIME_KEY: ARCEUS_RUNTIME_KEY,
+    ARCEUS_BASE_MELEE_DELAY_KEY: ARCEUS_BASE_MELEE_DELAY_KEY,
     createBootstrapRuntime: createBootstrapRuntime,
     ensureArceusRuntime: ensureArceusRuntime,
     initBoss: initBoss,
     resetBoss: resetBoss,
+    getBaseMeleeDelay: getBaseMeleeDelay,
+    captureBaseMeleeDelay: captureBaseMeleeDelay,
     applyPhaseMeleeDelay: applyPhaseMeleeDelay,
     persistRuntimeState: persistRuntimeState,
     markRuntimeError: markRuntimeError

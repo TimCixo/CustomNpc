@@ -29,7 +29,6 @@ function tickTimerCore(runtime, timerId) {
 
     if (timerId == runtimeModule.ARCEUS_DEATH_TIMER_ID) {
         deathFlow.tickDeathPath(runtime);
-        runtimeModule.persistRuntimeState(runtime);
         return;
     }
 
@@ -50,7 +49,6 @@ function tickTimerCore(runtime, timerId) {
         deathFlow.stopDeathTimer(runtime);
     }
 
-    runtimeModule.persistRuntimeState(runtime);
 }
 
 function tickTransition(runtime) {
@@ -68,6 +66,7 @@ function tickTransition(runtime) {
     state.mode = "live";
     visuals.setEntityInvulnerable(npc, false);
     visuals.clearEntityDamageVisuals(npc);
+    runtimeModule.persistRuntimeState(runtime);
 }
 
 function tickPhaseRegen(runtime) {

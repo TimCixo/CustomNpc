@@ -4,6 +4,7 @@ var phases = require("phases.js");
 var rewards = require("rewards.js");
 var damage = require("damage.js");
 var visuals = require("visuals.js");
+var deathFlow = require("death_flow.js");
 
 var Combat_System = Java.type("java.lang.System");
 
@@ -91,20 +92,11 @@ function damagedCore(event, runtime) {
     if (phase >= 3 && hpAfterHit <= deathThreshold) {
         damage.cancelDamage(event);
         visuals.setEntityInvulnerable(npc, true);
-        state.mode = "custom_death_start";
-        state.customDeathTicksLeft = config.customDeathTicks;
-        state.leaderboardAnnounced = false;
-        state.rewardsGiven = false;
-        state.rewardCursor = 0;
-        state.deathCommitted = false;
-        state.deathLineStage = 0;
-        state.deathAnimStarted = false;
-        state.deathFinalizeDone = false;
+        deathFlow.requestStart(runtime);
         damage.setNpcHealthSafe(npc, deathThreshold);
         phases.forceDeathSafeHealthFloor(npc, config);
         phases.stopCombatForDeath(npc);
         rewards.dropRandomGems(npc, rewards.getStageDropCountToThreshold(runtime, 3, currentHp, deathThreshold, maxHp), config);
-        runtimeModule.persistRuntimeState(runtime);
         return;
     }
 
@@ -119,7 +111,6 @@ function damagedCore(event, runtime) {
         rewards.dropRandomGems(npc, rewards.getStageDropCountForHit(runtime, 3, currentHp, hpAfterHit, maxHp), config);
     }
 
-    runtimeModule.persistRuntimeState(runtime);
 }
 
 function recordDamageContribution(attacker, damageAmount, runtime) {

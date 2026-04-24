@@ -44,6 +44,7 @@ function requestStart(runtime) {
     runtime.state.deathLineStage = 0;
     runtime.state.deathAnimStarted = false;
     runtime.state.deathFinalizeDone = false;
+    runtimeModule.persistRuntimeState(runtime);
 }
 
 function tickDeathPath(runtime) {
@@ -121,7 +122,13 @@ function commitCustomDeath(runtime) {
     var npc = runtime.npc;
     prepareNpcForDeathCommit(npc);
     restartDeathTimer(runtime);
-    if (!damageNpcWithCommand(npc)) return;
+    runtime.state.deathCommitted = true;
+    runtimeModule.persistRuntimeState(runtime);
+    if (!damageNpcWithCommand(npc)) {
+        runtime.state.deathCommitted = false;
+        runtimeModule.persistRuntimeState(runtime);
+        return;
+    }
 
     leaderboard.freezeSnapshot(runtime);
     leaderboard.announceFrozenSnapshot(runtime, visuals);
@@ -147,6 +154,7 @@ function distributeFrozenSnapshotRewards(runtime) {
         runtime.state.rewardCursor = i + 1;
     }
     runtime.state.rewardsGiven = true;
+    runtimeModule.persistRuntimeState(runtime);
 }
 
 function grantRankReward(runtime, entry, rank, playerOrNull) {
@@ -169,6 +177,7 @@ function handleCommittedDeath(runtime) {
 
     stopDeathTimer(runtime);
     stopBossTimer(runtime);
+    runtimeModule.persistRuntimeState(runtime);
 }
 
 function restartDeathTimer(runtime) {
