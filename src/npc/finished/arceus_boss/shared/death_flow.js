@@ -64,6 +64,9 @@ function requestStart(runtime) {
     runtime.state.deathFinalKillAttempted = false;
     runtime.state.deathMovedBelowArena = false;
     runtime.state.deathMoveTargetY = null;
+    runtime.state.physicalDeathAttempts = 0;
+    runtime.state.physicalDeathLastMethod = "-";
+    runtime.state.physicalDeathLastError = "-";
     setRewardDebug(runtime, "-");
     setDeathDebug(runtime, "-", "-");
     if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "-");
@@ -167,15 +170,25 @@ function commitCustomDeath(runtime) {
     runtime.state.deathFinalKillAttempted = true;
     runtimeModule.persistRuntimeState(runtime);
 
-    if (!damageNpcWithCommand(npc)) {
+    var killResult = killNpcPhysically(runtime);
+    if (!killResult.ok) {
         runtime.state.deathFinalKillAttempted = false;
-        setDeathDebug(runtime, "death_kill", "final kill command failed");
-        if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death commit damage command failed");
+        runtime.state.physicalDeathAttempts = utils.parseIntSafe(runtime.state.physicalDeathAttempts, 0) + 1;
+        runtime.state.physicalDeathLastMethod = utils.hasText(killResult.method) ? killResult.method : "-";
+        runtime.state.physicalDeathLastError = utils.hasText(killResult.reason) ? killResult.reason : "final kill failed";
+        setDeathDebug(runtime, "death_kill", runtime.state.physicalDeathLastError);
+        if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, runtime.state.physicalDeathLastError);
+        if (runtime.config.debugRuntime && runtime.state.physicalDeathLastError != "-") {
+            visuals.safeSay(npc, "§c[ArceusDebug] final kill failed: " + runtime.state.physicalDeathLastError);
+        }
         runtimeModule.persistRuntimeState(runtime);
         restartDeathTimer(runtime);
         return;
     }
 
+    runtime.state.physicalDeathLastMethod = killResult.method;
+    runtime.state.physicalDeathLastError = "-";
+    setDeathDebug(runtime, "-", "-");
     handleCommittedDeath(runtime);
 }
 
@@ -273,12 +286,121 @@ function stopDeathTimer(runtime) {
 
 function prepareNpcForDeathCommit(npc) {
     try {
+        visuals.setNoAiState(npc, true);
+    } catch (noAiError) {}
+    try {
         npc.getMCEntity().removeEffect(DeathFlow_MobEffects.REGENERATION);
     } catch (e) {}
     try {
         npc.getMCEntity().setInvulnerable(false);
     } catch (e2) {}
     visuals.clearEntityDamageVisuals(npc);
+}
+
+function killNpcPhysically(runtime) {
+    var npc = runtime.npc;
+    prepareNpcForDeathCommit(npc);
+
+    var result = tryNpcKillApi(npc);
+    if (result.ok) return result;
+
+    result = trySetHealthZero(npc);
+    if (result.ok) return result;
+
+    result = tryMcEntityKill(npc);
+    if (result.ok) return result;
+
+    result = tryMcEntityHurtKill(npc);
+    if (result.ok) return result;
+
+    result = tryCommandKill(npc);
+    if (result.ok) return result;
+
+    result = tryDiscardKill(npc);
+    if (result.ok) return result;
+
+    return {
+        ok: false,
+        method: result.method,
+        reason: result.reason
+    };
+}
+
+function tryNpcKillApi(npc) {
+    try {
+        if (npc.kill) npc.kill();
+    } catch (e) {
+        return { ok: false, method: "npc.kill", reason: "npc.kill failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "npc.kill", reason: "-" };
+    return { ok: false, method: "npc.kill", reason: "npc.kill did not kill npc" };
+}
+
+function trySetHealthZero(npc) {
+    try {
+        npc.setHealth(0);
+    } catch (e) {
+        return { ok: false, method: "npc.setHealth(0)", reason: "npc.setHealth(0) failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "npc.setHealth(0)", reason: "-" };
+    return { ok: false, method: "npc.setHealth(0)", reason: "npc.setHealth(0) did not kill npc" };
+}
+
+function tryMcEntityKill(npc) {
+    try {
+        var mcEntity = npc.getMCEntity();
+        if (mcEntity != null && mcEntity.kill) mcEntity.kill();
+    } catch (e) {
+        return { ok: false, method: "mcEntity.kill", reason: "mcEntity.kill failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "mcEntity.kill", reason: "-" };
+    return { ok: false, method: "mcEntity.kill", reason: "mcEntity.kill did not kill npc" };
+}
+
+function tryMcEntityHurtKill(npc) {
+    try {
+        var mcEntity = npc.getMCEntity();
+        var damageSources = mcEntity.damageSources();
+        if (damageSources.genericKill) {
+            mcEntity.hurt(damageSources.genericKill(), 1000000);
+        } else if (damageSources.outOfBorder) {
+            mcEntity.hurt(damageSources.outOfBorder(), 1000000);
+        } else if (damageSources.generic) {
+            mcEntity.hurt(damageSources.generic(), 1000000);
+        } else {
+            return { ok: false, method: "mcEntity.hurt", reason: "no supported damage source" };
+        }
+    } catch (e) {
+        return { ok: false, method: "mcEntity.hurt", reason: "mcEntity.hurt failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "mcEntity.hurt", reason: "-" };
+    return { ok: false, method: "mcEntity.hurt", reason: "mcEntity.hurt did not kill npc" };
+}
+
+function tryCommandKill(npc) {
+    var typeId = getNpcEntityTypeId(npc);
+    if (!utils.hasText(typeId)) return { ok: false, method: "command", reason: "npc entity type missing" };
+
+    var selector = "@e[type=" + typeId + ",distance=..3,limit=1,sort=nearest]";
+    var command = "execute positioned " + formatCoord(npc.getX()) + " " + formatCoord(npc.getY()) + " " + formatCoord(npc.getZ())
+        + " run damage " + selector + " 1000000 minecraft:generic_kill";
+
+    if (!runServerCommand(npc, command)) {
+        return { ok: false, method: "command", reason: "damage command failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "command", reason: "-" };
+    return { ok: false, method: "command", reason: "damage command did not kill npc" };
+}
+
+function tryDiscardKill(npc) {
+    try {
+        var mcEntity = npc.getMCEntity();
+        if (mcEntity != null && mcEntity.discard) mcEntity.discard();
+    } catch (e) {
+        return { ok: false, method: "discard", reason: "discard failed" };
+    }
+    if (isNpcActuallyDead(npc)) return { ok: true, method: "discard", reason: "-" };
+    return { ok: false, method: "discard", reason: "discard did not remove npc" };
 }
 
 function forceDeathSafeHealthFloorLive(runtime) {
@@ -340,18 +462,6 @@ function applyNpcMove(npc, x, y, z) {
         return true;
     } catch (e3) {}
     return false;
-}
-
-function damageNpcWithCommand(npc) {
-    var typeId = getNpcEntityTypeId(npc);
-    if (!utils.hasText(typeId)) return false;
-
-    var selector = "@e[type=" + typeId + ",distance=..0.25,limit=1,sort=nearest]";
-    var command = "execute positioned " + formatCoord(npc.getX()) + " " + formatCoord(npc.getY()) + " " + formatCoord(npc.getZ())
-        + " run damage " + selector + " 1000000 minecraft:generic_kill";
-
-    if (!runServerCommand(npc, command)) return false;
-    return isNpcActuallyDead(npc);
 }
 
 function getNpcEntityTypeId(npc) {
@@ -718,6 +828,7 @@ module.exports = {
     stopDeathTimer: stopDeathTimer,
     handleCommittedDeath: handleCommittedDeath,
     isNpcActuallyDead: isNpcActuallyDead,
+    killNpcPhysically: killNpcPhysically,
     giveRewardPokemon: giveRewardPokemon,
     createRewardPokemonEntity: createRewardPokemonEntity,
     addRewardPokemonToParty: addRewardPokemonToParty
