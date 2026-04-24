@@ -27,7 +27,9 @@ function createDefaultLifecycle() {
         whoisCache: {},
         debug: {
             lastErrorHook: "-",
-            lastErrorMessage: "-"
+            lastErrorMessage: "-",
+            lastRewardError: "-",
+            lastLeaderboardError: "-"
         }
     };
 }
@@ -46,7 +48,9 @@ function mergeLifecycle(raw) {
     if (base.liveSnapshot == null) base.liveSnapshot = [];
     if (base.frozenSnapshot == null) base.frozenSnapshot = [];
     if (base.whoisCache == null) base.whoisCache = {};
-    if (base.debug == null) base.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+    if (base.debug == null) base.debug = { lastErrorHook: "-", lastErrorMessage: "-", lastRewardError: "-", lastLeaderboardError: "-" };
+    if (base.debug.lastRewardError == null) base.debug.lastRewardError = "-";
+    if (base.debug.lastLeaderboardError == null) base.debug.lastLeaderboardError = "-";
     return base;
 }
 

@@ -33,6 +33,16 @@ var SUPER_RARE_REWARD_POOL = null;
 var NORMAL_REWARD_POOL = null;
 var REWARD_POOLS_ATTEMPTED = false;
 
+function ensureDebug(runtime) {
+    return leaderboard.ensureDebug ? leaderboard.ensureDebug(runtime) : null;
+}
+
+function setRewardDebug(runtime, message) {
+    var debug = ensureDebug(runtime);
+    if (debug == null) return;
+    debug.lastRewardError = utils.hasText(message) ? "" + message : "-";
+}
+
 function requestStart(runtime) {
     if (runtime.state.mode != "live") return;
     runtime.state.mode = "custom_death_start";
@@ -44,6 +54,8 @@ function requestStart(runtime) {
     runtime.state.deathLineStage = 0;
     runtime.state.deathAnimStarted = false;
     runtime.state.deathFinalizeDone = false;
+    setRewardDebug(runtime, "-");
+    if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "-");
     runtimeModule.persistRuntimeState(runtime);
 }
 
@@ -124,13 +136,14 @@ function commitCustomDeath(runtime) {
     restartDeathTimer(runtime);
     runtime.state.deathCommitted = true;
     runtimeModule.persistRuntimeState(runtime);
+    leaderboard.freezeSnapshot(runtime);
     if (!damageNpcWithCommand(npc)) {
         runtime.state.deathCommitted = false;
+        if (leaderboard.setLeaderboardDebug) leaderboard.setLeaderboardDebug(runtime, "death commit damage command failed");
         runtimeModule.persistRuntimeState(runtime);
         return;
     }
 
-    leaderboard.freezeSnapshot(runtime);
     leaderboard.announceFrozenSnapshot(runtime, visuals);
     runtime.state.rewardCursor = 0;
     distributeFrozenSnapshotRewards(runtime);
@@ -141,27 +154,58 @@ function distributeFrozenSnapshotRewards(runtime) {
     if (runtime.state.rewardsGiven) return;
     warmRewardPools();
     if (!areRewardPoolsLoaded()) {
+        setRewardDebug(runtime, "reward pools failed to load");
         runtime.state.rewardsGiven = true;
+        runtimeModule.persistRuntimeState(runtime);
         return;
     }
 
     var entries = runtime.state.frozenSnapshot;
+    if (entries == null || entries.length <= 0) {
+        setRewardDebug(runtime, "frozen snapshot empty");
+        runtime.state.rewardsGiven = true;
+        runtimeModule.persistRuntimeState(runtime);
+        return;
+    }
+
     var players = leaderboard.getOnlinePlayers(runtime.npc);
+    var hadRewardFailure = false;
     for (var i = runtime.state.rewardCursor; i < entries.length; i++) {
         var entry = entries[i];
         var player = leaderboard.resolveRewardPlayer(runtime.npc, entry, players);
-        grantRankReward(runtime, entry, i, player);
+        var result = grantRankReward(runtime, entry, i, player);
+        if (result != null && result.ok === false) hadRewardFailure = true;
         runtime.state.rewardCursor = i + 1;
     }
     runtime.state.rewardsGiven = true;
+    if (hadRewardFailure) {
+        visuals.safeSay(runtime.npc, "§7Награды выданы не полностью. Причина сохранена в debug.");
+    } else {
+        setRewardDebug(runtime, "-");
+    }
     runtimeModule.persistRuntimeState(runtime);
 }
 
 function grantRankReward(runtime, entry, rank, playerOrNull) {
-    if (playerOrNull == null) return;
+    if (entry == null) {
+        setRewardDebug(runtime, "reward entry missing at rank=" + rank);
+        return { ok: false, reason: "entry missing" };
+    }
+    if (playerOrNull == null) {
+        setRewardDebug(runtime, "reward player unresolved for " + (utils.hasText(entry.name) ? entry.name : entry.uuid));
+        return { ok: false, reason: "player unresolved" };
+    }
     var species = pickRewardSpeciesForPlace(rank);
     var ivs = getRewardIvStringForPlace(rank);
-    giveRewardPokemon(playerOrNull, species, ivs);
+    if (!utils.hasText(species)) {
+        setRewardDebug(runtime, "reward species missing for " + playerOrNull.getName() + " rank=" + rank);
+        return { ok: false, reason: "species missing" };
+    }
+    var result = giveRewardPokemon(playerOrNull, species, ivs);
+    if (!result.ok) {
+        setRewardDebug(runtime, result.reason + " for " + playerOrNull.getName() + " species=" + species);
+    }
+    return result;
 }
 
 function handleCommittedDeath(runtime) {
@@ -341,34 +385,35 @@ function randomIntInclusive(min, max) {
 }
 
 function giveRewardPokemon(player, speciesId, ivString) {
-    if (player == null || speciesId == null || speciesId == "") return false;
+    if (player == null) return { ok: false, reason: "reward player missing" };
+    if (speciesId == null || speciesId == "") return { ok: false, reason: "reward species missing" };
     var reward = createRewardPokemonEntity(speciesId, ivString);
-    if (!reward.ok) return false;
-    return addRewardPokemonToParty(player, reward.pokemon);
+    if (!reward.ok) return reward;
+    return addRewardPokemonToParty(player, reward.pokemon, speciesId);
 }
 
 function createRewardPokemonEntity(speciesId, ivString) {
     var props = parsePokemonProperties(speciesId);
-    if (props == null || !utils.hasText("" + props.getSpecies())) return { ok: false, reason: "parse properties" };
+    if (props == null || !utils.hasText("" + props.getSpecies())) return { ok: false, reason: "pokemon creation failed: parse properties", species: speciesId };
     try {
         props.setLevel(randomIntInclusive(10, 20));
         props.setShiny(Math.random() < 0.10);
     } catch (e0) {
-        return { ok: false, reason: "set level/shiny" };
+        return { ok: false, reason: "pokemon creation failed: set level/shiny", species: speciesId };
     }
     try {
         props.setIvs(buildStatsBlock(new Reward_IVs(), ivString, 0, 31));
     } catch (e) {
-        return { ok: false, reason: "set ivs" };
+        return { ok: false, reason: "pokemon creation failed: set ivs", species: speciesId };
     }
     var pokemon;
     try {
         pokemon = props.create();
     } catch (e2) {
-        return { ok: false, reason: "create pokemon" };
+        return { ok: false, reason: "pokemon creation failed: create()", species: speciesId };
     }
-    if (pokemon == null) return { ok: false, reason: "pokemon null" };
-    return { ok: true, pokemon: pokemon };
+    if (pokemon == null) return { ok: false, reason: "pokemon creation failed: null pokemon", species: speciesId };
+    return { ok: true, pokemon: pokemon, species: speciesId };
 }
 
 function buildStatsBlock(statsObject, rawValue, min, max) {
@@ -397,13 +442,14 @@ function parsePokemonProperties(speciesId) {
     }
 }
 
-function addRewardPokemonToParty(player, pokemon) {
+function addRewardPokemonToParty(player, pokemon, speciesId) {
     var party = getRewardPlayerParty(player);
-    if (party == null || pokemon == null) return false;
+    if (party == null || pokemon == null) return { ok: false, reason: "party add failed", species: speciesId };
     try {
-        return party.add(pokemon);
+        if (party.add(pokemon)) return { ok: true, species: speciesId };
+        return { ok: false, reason: "party add failed", species: speciesId };
     } catch (e) {
-        return false;
+        return { ok: false, reason: "party add failed", species: speciesId };
     }
 }
 
@@ -622,5 +668,8 @@ module.exports = {
     stopBossTimer: stopBossTimer,
     stopDeathTimer: stopDeathTimer,
     handleCommittedDeath: handleCommittedDeath,
-    isNpcActuallyDead: isNpcActuallyDead
+    isNpcActuallyDead: isNpcActuallyDead,
+    giveRewardPokemon: giveRewardPokemon,
+    createRewardPokemonEntity: createRewardPokemonEntity,
+    addRewardPokemonToParty: addRewardPokemonToParty
 };

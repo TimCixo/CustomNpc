@@ -1,5 +1,26 @@
 var utils = require("utils.js");
 
+function ensureDebug(runtime) {
+    if (runtime == null || runtime.state == null) return null;
+    if (runtime.state.debug == null) {
+        runtime.state.debug = {
+            lastErrorHook: "-",
+            lastErrorMessage: "-",
+            lastRewardError: "-",
+            lastLeaderboardError: "-"
+        };
+    }
+    if (runtime.state.debug.lastLeaderboardError == null) runtime.state.debug.lastLeaderboardError = "-";
+    if (runtime.state.debug.lastRewardError == null) runtime.state.debug.lastRewardError = "-";
+    return runtime.state.debug;
+}
+
+function setLeaderboardDebug(runtime, message) {
+    var debug = ensureDebug(runtime);
+    if (debug == null) return;
+    debug.lastLeaderboardError = utils.hasText(message) ? "" + message : "-";
+}
+
 function recordDamageToRuntime(runtime, player, amount) {
     if (player == null || amount <= 0) return;
     var uuid = "" + player.getUUID();
@@ -72,6 +93,7 @@ function announceFrozenSnapshot(runtime, visuals) {
 
     var snapshot = runtime.state.frozenSnapshot;
     if (snapshot == null || snapshot.length <= 0) {
+        setLeaderboardDebug(runtime, "leaderboard announce skipped: frozen snapshot empty");
         runtime.state.leaderboardAnnounced = true;
         return;
     }
@@ -86,6 +108,7 @@ function announceFrozenSnapshot(runtime, visuals) {
     }
 
     runtime.state.leaderboardAnnounced = true;
+    setLeaderboardDebug(runtime, "-");
 }
 
 function resolveRewardPlayer(npc, entry, players) {
@@ -165,4 +188,6 @@ module.exports = {
     samePlayerName: samePlayerName,
     getOnlinePlayers: getOnlinePlayers,
     formatDamage: formatDamage
+    ,ensureDebug: ensureDebug
+    ,setLeaderboardDebug: setLeaderboardDebug
 };

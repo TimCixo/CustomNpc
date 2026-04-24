@@ -31,6 +31,9 @@ function createDefaultConfig() {
         phase1MeleeDelayMult: 1.0,
         phase2MeleeDelayMult: 0.7,
         phase3MeleeDelayMult: 0.5,
+        phaseTransitionLaunchRadius: 18.0,
+        phaseTransitionLaunchPush: 1.85,
+        phaseTransitionLaunchVertical: 1.15,
         reflectArrowSpeed: 2.2,
         reflectArrowInaccuracy: 0.2,
         customDeathTicks: 80,
@@ -123,6 +126,9 @@ function migrateLegacyConfig(npc, config) {
     config.phase1MeleeDelayMult = legacyFloat(data, "arceus_phase1_melee_delay_mult", config.phase1MeleeDelayMult);
     config.phase2MeleeDelayMult = legacyFloat(data, "arceus_phase2_melee_delay_mult", config.phase2MeleeDelayMult);
     config.phase3MeleeDelayMult = legacyFloat(data, "arceus_phase3_melee_delay_mult", config.phase3MeleeDelayMult);
+    config.phaseTransitionLaunchRadius = legacyFloat(data, "arceus_phase_transition_launch_radius", config.phaseTransitionLaunchRadius);
+    config.phaseTransitionLaunchPush = legacyFloat(data, "arceus_phase_transition_launch_push", config.phaseTransitionLaunchPush);
+    config.phaseTransitionLaunchVertical = legacyFloat(data, "arceus_phase_transition_launch_vertical", config.phaseTransitionLaunchVertical);
     config.reflectArrowSpeed = legacyFloat(data, "arceus_reflect_arrow_speed", config.reflectArrowSpeed);
     config.reflectArrowInaccuracy = legacyFloat(data, "arceus_reflect_arrow_inaccuracy", config.reflectArrowInaccuracy);
     config.customDeathTicks = legacyInt(data, "arceus_custom_death_ticks", config.customDeathTicks);

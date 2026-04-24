@@ -60,6 +60,10 @@ function interact(event) {
         + "§f | err: §e" + state.debug.lastErrorHook
         + "§f | msg: §e" + state.debug.lastErrorMessage
     );
+    player.message(
+        "В§7RewardDbg В§f| reward: В§e" + state.debug.lastRewardError
+        + "В§f | leaderboard: В§e" + state.debug.lastLeaderboardError
+    );
     event.setCanceled(true);
 }
 

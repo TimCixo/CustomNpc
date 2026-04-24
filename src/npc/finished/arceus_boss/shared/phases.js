@@ -43,8 +43,20 @@ function applyPhaseVisuals(npc, runtime) {
     if (utils.hasText(effect.line)) visuals.safeSay(npc, effect.line);
     visuals.applyBossBarColor(npc, effect.bossBarColor);
     visuals.playSoundForAllPlayers(npc, effect.soundId, 1.2, 1.0);
+    visuals.spawnPhaseWindChargeBurst(npc, runtime.config);
+    visuals.launchNearbyPlayersOnPhaseStart(npc, runtime.config);
     runtimeModule.applyPhaseMeleeDelay(npc, runtime.config, effect.phase);
     runtime.state.pendingPhaseEffect = null;
+}
+
+function getTransitionCompleteLine(phase) {
+    if (phase == 2) {
+        return "§eВторая стадия началась. Аркеус восстанавливает силы в бою.";
+    }
+    if (phase >= 3) {
+        return "§cТретья стадия началась. Самоцветы теперь выбиваются из него ударами.";
+    }
+    return "";
 }
 
 function forcePhaseTransitionHealthFloor(npc, config, phase) {
@@ -84,5 +96,6 @@ module.exports = {
     forcePhaseTransitionHealthFloor: forcePhaseTransitionHealthFloor,
     forceDeathSafeHealthFloor: forceDeathSafeHealthFloor,
     getArceusDeathThresholdHp: getArceusDeathThresholdHp,
+    getTransitionCompleteLine: getTransitionCompleteLine,
     stopCombatForDeath: stopCombatForDeath
 };

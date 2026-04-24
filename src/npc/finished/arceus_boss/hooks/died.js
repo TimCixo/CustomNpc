@@ -24,7 +24,7 @@ function died(event) {
         try {
             var runtime = npc.getTempdata().get(shared.runtime.ARCEUS_RUNTIME_KEY);
             if (runtime != null && runtime.state != null) {
-                if (runtime.state.debug == null) runtime.state.debug = { lastErrorHook: "-", lastErrorMessage: "-" };
+                if (runtime.state.debug == null) runtime.state.debug = { lastErrorHook: "-", lastErrorMessage: "-", lastRewardError: "-", lastLeaderboardError: "-" };
                 runtime.state.debug.lastErrorHook = "died_unexpected";
                 runtime.state.debug.lastErrorMessage = "unexpected died hook";
                 shared.lifecycle.persistRuntimeState(runtime);

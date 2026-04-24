@@ -97,6 +97,88 @@ function playSoundForAllPlayers(npc, soundId, volume, pitch) {
     } catch (e) {}
 }
 
+function spawnPhaseWindChargeBurst(npc, config) {
+    var world = null;
+    try {
+        world = npc.getWorld();
+    } catch (e) {}
+    if (world == null) return;
+
+    var x = npc.getX();
+    var y = npc.getY() + 1.2;
+    var z = npc.getZ();
+    try {
+        world.spawnParticle("minecraft:gust", x, y, z, 1.2, 0.7, 1.2, 0.02, 36);
+    } catch (e1) {}
+    try {
+        world.spawnParticle("minecraft:cloud", x, y, z, 1.4, 0.5, 1.4, 0.03, 48);
+    } catch (e2) {}
+    try {
+        world.spawnParticle("minecraft:poof", x, y, z, 1.0, 0.5, 1.0, 0.02, 24);
+    } catch (e3) {}
+    playSoundForAllPlayers(npc, "minecraft:entity.wind_charge.wind_burst", 1.15, 1.0);
+}
+
+function launchNearbyPlayersOnPhaseStart(npc, config) {
+    var players = null;
+    var radius = config == null ? 18.0 : utils.parseFloatSafe(config.phaseTransitionLaunchRadius, 18.0);
+    var push = config == null ? 1.85 : utils.parseFloatSafe(config.phaseTransitionLaunchPush, 1.85);
+    var vertical = config == null ? 1.15 : utils.parseFloatSafe(config.phaseTransitionLaunchVertical, 1.15);
+    if (radius <= 0 || push <= 0) return;
+
+    try {
+        players = npc.getWorld().getAllPlayers();
+    } catch (e) {
+        players = null;
+    }
+    if (players == null) return;
+
+    var radiusSq = radius * radius;
+    for (var i = 0; i < players.length; i++) {
+        var player = players[i];
+        if (player == null) continue;
+        var dx = player.getX() - npc.getX();
+        var dz = player.getZ() - npc.getZ();
+        if (dx * dx + dz * dz > radiusSq) continue;
+        launchPlayerFromNpc(npc, player, push, vertical);
+    }
+}
+
+function launchPlayerFromNpc(npc, player, push, vertical) {
+    if (player == null) return;
+
+    var dx = player.getX() - npc.getX();
+    var dz = player.getZ() - npc.getZ();
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 0.001) {
+        dx = 0;
+        dz = 1;
+        dist = 1;
+    }
+
+    var mx = dx / dist * push;
+    var mz = dz / dist * push;
+    var my = vertical <= 0 ? 0.6 : vertical;
+
+    try {
+        var mcPlayer = player.getMCEntity();
+        mcPlayer.push(mx, my, mz);
+        try {
+            mcPlayer.hurtMarked = true;
+        } catch (e0) {}
+        return;
+    } catch (e1) {}
+    try {
+        player.setMotionX(mx);
+        player.setMotionY(my);
+        player.setMotionZ(mz);
+        return;
+    } catch (e2) {}
+    try {
+        player.knockback(push, -dx / dist, -dz / dist);
+    } catch (e3) {}
+}
+
 function safeSay(npc, line) {
     if (!utils.hasText(line)) return;
     try {
@@ -200,6 +282,9 @@ module.exports = {
     playSoundForAllPlayers: playSoundForAllPlayers,
     safeSay: safeSay,
     broadcastBossMessage: broadcastBossMessage,
+    spawnPhaseWindChargeBurst: spawnPhaseWindChargeBurst,
+    launchNearbyPlayersOnPhaseStart: launchNearbyPlayersOnPhaseStart,
+    launchPlayerFromNpc: launchPlayerFromNpc,
     readNpcTitle: readNpcTitle,
     getNpcDisplayName: getNpcDisplayName,
     getNpcUuid: getNpcUuid,

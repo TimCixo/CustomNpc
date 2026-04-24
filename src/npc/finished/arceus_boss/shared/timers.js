@@ -66,6 +66,8 @@ function tickTransition(runtime) {
     state.mode = "live";
     visuals.setEntityInvulnerable(npc, false);
     visuals.clearEntityDamageVisuals(npc);
+    var followupLine = phases.getTransitionCompleteLine(state.phase);
+    if (utils.hasText(followupLine)) visuals.safeSay(npc, followupLine);
     runtimeModule.persistRuntimeState(runtime);
 }
 
