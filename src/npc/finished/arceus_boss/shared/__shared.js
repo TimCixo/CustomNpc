@@ -8,5 +8,8 @@ module.exports = {
     combat: "combat.js",
     phases: "phases.js",
     rewards: "rewards.js",
-    damage: "damage.js"
+    damage: "damage.js",
+    timers: "timers.js",
+    deathFlow: "death_flow.js",
+    leaderboard: "leaderboard.js"
 };
