@@ -115,6 +115,13 @@ function resetBoss(npc, runtime) {
     } catch (e2) {}
 }
 
+function ensureCombatReady(npc, runtime) {
+    if (runtime == null || runtime.state == null) return;
+    if (runtime.state.mode != "live") return;
+    visuals.setNoAiState(npc, false);
+    visuals.setEntityInvulnerable(npc, false);
+}
+
 function applyPhaseMeleeDelay(npc, config, phase) {
     try {
         var stats = npc.getStats();
@@ -193,6 +200,7 @@ module.exports = {
     getBaseMeleeDelay: getBaseMeleeDelay,
     captureBaseMeleeDelay: captureBaseMeleeDelay,
     applyPhaseMeleeDelay: applyPhaseMeleeDelay,
+    ensureCombatReady: ensureCombatReady,
     persistRuntimeState: persistRuntimeState,
     markRuntimeError: markRuntimeError
 };

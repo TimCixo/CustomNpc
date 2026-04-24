@@ -40,6 +40,8 @@ function tickTimerCore(runtime, timerId) {
     if (runtime.state.mode == "phase_transition") {
         tickTransition(runtime);
     } else if (runtime.state.mode == "live") {
+        runtimeModule.ensureCombatReady(npc, runtime);
+        tickTargetAcquisition(runtime);
         tickRecentAggro(runtime);
         tickPhaseRegen(runtime);
     } else if (runtime.state.mode == "custom_death_start" || runtime.state.mode == "death_commit_pending") {
@@ -64,11 +66,23 @@ function tickTransition(runtime) {
 
     state.transitionTicksLeft = 0;
     state.mode = "live";
+    runtimeModule.ensureCombatReady(npc, runtime);
     visuals.setEntityInvulnerable(npc, false);
     visuals.clearEntityDamageVisuals(npc);
     var followupLine = phases.getTransitionCompleteLine(state.phase);
     if (utils.hasText(followupLine)) visuals.safeSay(npc, followupLine);
     runtimeModule.persistRuntimeState(runtime);
+}
+
+function tickTargetAcquisition(runtime) {
+    if (runtime == null || runtime.state == null) return;
+    if (runtime.state.mode != "live") return;
+    if (hasLivePlayerTarget(runtime.npc)) return;
+
+    var radius = utils.parseFloatSafe(runtime.config.aggroRadius, 32);
+    var target = findNearestPlayerTarget(runtime.npc, radius);
+    if (target == null) return;
+    setAttackTargetSafe(runtime.npc, target);
 }
 
 function tickPhaseRegen(runtime) {
@@ -153,14 +167,83 @@ function tickRecentAggro(runtime) {
         if (current != null && leaderboard.samePlayerUuid(current, best.uuid)) return;
     } catch (e) {}
 
-    try {
-        runtime.npc.setAttackTarget(best.player);
-        return;
-    } catch (e2) {}
+    setAttackTargetSafe(runtime.npc, best.player);
+}
 
+function hasLivePlayerTarget(npc) {
+    var current = null;
     try {
-        runtime.npc.getMCEntity().setTarget(best.player.getMCEntity());
+        current = npc.getAttackTarget();
+    } catch (e) {
+        current = null;
+    }
+    if (current != null) {
+        if (!isPlayerTarget(current)) return false;
+        try {
+            if (current.getHealth && current.getHealth() <= 0) return false;
+        } catch (e2) {}
+        return true;
+    }
+    try {
+        var mcTarget = npc.getMCEntity().getTarget();
+        return isPlayerTarget(mcTarget);
+    } catch (e3) {
+        return false;
+    }
+}
+
+function isPlayerTarget(target) {
+    if (target == null) return false;
+    try {
+        if (target.getType && target.getType() == 1) return true;
+    } catch (e) {}
+    try {
+        var className = "" + target.getClass().getName();
+        if (className.indexOf("Player") >= 0 || className.indexOf("player") >= 0) return true;
+    } catch (e2) {}
+    try {
+        if (target.getUUID && target.getGameProfile) return true;
     } catch (e3) {}
+    return false;
+}
+
+function findNearestPlayerTarget(npc, radius) {
+    var players = leaderboard.getOnlinePlayers(npc);
+    if (players == null || players.length <= 0) return null;
+    var maxDistanceSq = radius <= 0 ? 32 * 32 : radius * radius;
+    var best = null;
+    var bestDistanceSq = maxDistanceSq + 1;
+
+    for (var i = 0; i < players.length; i++) {
+        var player = players[i];
+        if (player == null) continue;
+        var distanceSq = getDistanceSq(npc, player);
+        if (distanceSq > maxDistanceSq) continue;
+        if (distanceSq >= bestDistanceSq) continue;
+        best = player;
+        bestDistanceSq = distanceSq;
+    }
+    return best;
+}
+
+function getDistanceSq(npc, player) {
+    var dx = player.getX() - npc.getX();
+    var dy = player.getY() - npc.getY();
+    var dz = player.getZ() - npc.getZ();
+    return dx * dx + dy * dy + dz * dz;
+}
+
+function setAttackTargetSafe(npc, player) {
+    if (npc == null || player == null) return false;
+    try {
+        npc.setAttackTarget(player);
+        return true;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setTarget(player.getMCEntity());
+        return true;
+    } catch (e2) {}
+    return false;
 }
 
 function processRespawnVisualReset(runtime) {
@@ -180,7 +263,11 @@ module.exports = {
     onTimer: onTimer,
     tickTimerCore: tickTimerCore,
     tickTransition: tickTransition,
+    tickTargetAcquisition: tickTargetAcquisition,
     tickPhaseRegen: tickPhaseRegen,
     tickRecentAggro: tickRecentAggro,
-    processRespawnVisualReset: processRespawnVisualReset
+    processRespawnVisualReset: processRespawnVisualReset,
+    getDistanceSq: getDistanceSq,
+    findNearestPlayerTarget: findNearestPlayerTarget,
+    setAttackTargetSafe: setAttackTargetSafe
 };
