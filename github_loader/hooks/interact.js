@@ -13,17 +13,20 @@ var GitLoader_StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
 
 var ITEM_TYPE = "github_npc_loader_tool";
 var ITEM_LAST_URL_KEY = "github_loader_last_url";
-var ITEM_DOWNLOADED_PACKAGE_KEY = "github_loader_downloaded_package";
+var ITEM_PACKAGE_MANIFEST_KEY = "github_loader_downloaded_package";
 var PLAYER_ACTIVE_ITEM_KEY = "github_loader_active_item";
 var PLAYER_TOKEN_KEY = "github_loader_token";
-var NPC_SHARED_SOURCES_KEY = "github_npc_loader_shared_sources";
+var PLAYER_PREVIEW_CACHE_KEY = "github_loader_preview_cache";
+
+var NPC_SHARED_MANIFEST_KEY = "github_npc_loader_shared_sources_manifest";
+var NPC_SHARED_CHUNK_PREFIX = "github_npc_loader_shared_source_";
 
 var GUI_ID = 9321;
 var ACTION_SCROLL_ID = 9322;
 var URL_FIELD_ID = 9323;
 var STATUS_ID = 9324;
 var TOKEN_FIELD_ID = 9326;
-var ACTIONS = ["Download", "Preview", "Clear"];
+var ACTIONS = ["Update", "Preview", "Clear"];
 
 var PREVIEW_GUI_ID = 9331;
 var PREVIEW_SCROLL_ID = 9332;
@@ -31,6 +34,8 @@ var PREVIEW_CODE_ID = 9333;
 var PREVIEW_STATUS_ID = 9334;
 var PREVIEW_BACK_ID = 9335;
 
+var SHARED_CHUNK_SIZE = 12000;
+var PREVIEW_MAX_CHARS = 12000;
 var HOOK_ORDER = ["init", "interact", "timer", "target", "attack", "damaged", "meleeAttack", "killed", "kills", "died", "collide"];
 
 function interact(event) {
@@ -39,7 +44,6 @@ function interact(event) {
     if (!isLoaderItem(item)) return;
 
     rememberActiveItem(player, item);
-
     if (isNpcTarget(event.target)) {
         applyPackageToNpc(player, event.target, item);
         event.setCanceled(true);
@@ -67,37 +71,45 @@ function customGuiScroll(event) {
 }
 
 function customGuiClosed(event) {
-    if (event.gui == null || event.gui.getID() != GUI_ID) return;
-    var item = getActiveLoaderItem(event.player);
-    if (item == null || item.isEmpty()) return;
+    if (event.gui == null) return;
 
-    writeLastUrl(item, trimString(getGuiText(event.gui, URL_FIELD_ID)));
-    event.player.getStoreddata().put(PLAYER_TOKEN_KEY, trimString(getGuiText(event.gui, TOKEN_FIELD_ID)));
+    if (event.gui.getID() == GUI_ID) {
+        var item = getActiveLoaderItem(event.player);
+        if (item == null || item.isEmpty()) return;
+        writeLastUrl(item, trimString(getGuiText(event.gui, URL_FIELD_ID)));
+        event.player.getStoreddata().put(PLAYER_TOKEN_KEY, trimString(getGuiText(event.gui, TOKEN_FIELD_ID)));
+        return;
+    }
+
+    if (event.gui.getID() == PREVIEW_GUI_ID) {
+        clearPreviewCache(event.player);
+    }
 }
 
 function createMainGui(player, item) {
-    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GUI_ID, 380, 286, false, player);
-    var pkg = getDownloadedPackage(item);
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(GUI_ID, 390, 294, false, player);
+    var manifest = getDownloadedManifest(item);
 
     gui.addLabel(1, "GitHub NPC Loader", 10, 10, 220, 18, 0xFFFFFF);
-    gui.addColoredLine(2, 10, 34, 360, 34, 0x5C8DFF, 1.5);
+    gui.addColoredLine(2, 10, 34, 370, 34, 0x5C8DFF, 1.5);
     gui.addLabel(10, "GitHub URL", 10, 42, 100, 14, 0xE0E0E0);
-    gui.addTextField(URL_FIELD_ID, 10, 58, 360, 20);
+    gui.addTextField(URL_FIELD_ID, 10, 58, 370, 20);
     gui.addLabel(11, "GitHub Token", 10, 84, 100, 14, 0xE0E0E0);
-    gui.addTextField(TOKEN_FIELD_ID, 10, 100, 360, 20);
+    gui.addTextField(TOKEN_FIELD_ID, 10, 100, 370, 20);
     gui.addLabel(12, "Actions", 10, 130, 80, 14, 0xE0E0E0);
     gui.addScroll(ACTION_SCROLL_ID, 10, 146, 104, 82, ACTIONS);
     gui.addLabel(13, "Status", 124, 130, 80, 14, 0xE0E0E0);
-    gui.addTextArea(STATUS_ID, 124, 146, 246, 112);
+    gui.addTextArea(STATUS_ID, 124, 146, 256, 124);
 
     setGuiText(gui, URL_FIELD_ID, readTag(getTag(item), ITEM_LAST_URL_KEY));
     setGuiText(gui, TOKEN_FIELD_ID, trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY)));
-    setStatus(gui, buildPackageStatus(pkg));
+    setStatus(gui, buildManifestStatus(manifest));
     return gui;
 }
 
 function handleMainScroll(player, gui, scroll) {
     if (scroll == null || scroll.getID() != ACTION_SCROLL_ID) return true;
+
     var item = getActiveLoaderItem(player);
     if (item == null || item.isEmpty()) {
         setStatus(gui, "Loader item is missing.");
@@ -106,19 +118,22 @@ function handleMainScroll(player, gui, scroll) {
 
     var selected = getSelectedIndex(scroll);
     if (selected === 0) {
-        downloadNpcPackage(player, item, gui);
+        updateNpcPackageManifest(player, item, gui);
         return true;
-    } else if (selected === 1) {
+    }
+    if (selected === 1) {
         return openPreviewGui(player, item, gui);
-    } else if (selected === 2) {
-        clearDownloadedPackage(item, player);
-        setStatus(gui, "Downloaded package cleared.");
+    }
+    if (selected === 2) {
+        clearDownloadedManifest(item, player);
+        clearPreviewCache(player);
+        setStatus(gui, "Updated package cleared.");
         return true;
     }
     return true;
 }
 
-function downloadNpcPackage(player, item, gui) {
+function updateNpcPackageManifest(player, item, gui) {
     var url = trimString(getGuiText(gui, URL_FIELD_ID));
     var token = trimString(getGuiText(gui, TOKEN_FIELD_ID));
     if (!hasText(url)) {
@@ -126,59 +141,65 @@ function downloadNpcPackage(player, item, gui) {
         return;
     }
 
-    var pkg = loadNpcPackage(url, token);
-    writeDownloadedPackage(item, pkg, url);
+    var manifest = loadNpcPackageManifest(url, token);
+    writeDownloadedManifest(item, manifest, url);
     player.getStoreddata().put(PLAYER_TOKEN_KEY, token);
-    setStatus(gui, buildPackageStatus(pkg));
-    player.message("GitHub Loader: package downloaded.");
+    clearPreviewCache(player);
+    setStatus(gui, buildManifestStatus(manifest));
+    player.message("GitHub Loader: package manifest updated.");
 }
 
 function openPreviewGui(player, item, gui) {
-    var pkg = getDownloadedPackage(item);
-    if (pkg == null) {
-        setStatus(gui, "Download a package first.");
+    var manifest = getDownloadedManifest(item);
+    if (manifest == null) {
+        setStatus(gui, "Update a package first.");
         return true;
     }
-    player.showCustomGui(createPreviewGui(player, pkg));
+    clearPreviewCache(player);
+    player.showCustomGui(createPreviewGui(player, item, manifest));
     return false;
 }
 
-function createPreviewGui(player, pkg) {
-    var gui = GitLoader_NpcAPI.Instance().createCustomGui(PREVIEW_GUI_ID, 540, 310, false, player);
+function createPreviewGui(player, item, manifest) {
+    var gui = GitLoader_NpcAPI.Instance().createCustomGui(PREVIEW_GUI_ID, 560, 320, false, player);
     gui.addLabel(1, "Package Preview", 10, 10, 220, 18, 0xFFFFFF);
-    gui.addColoredLine(2, 10, 34, 520, 34, 0x5C8DFF, 1.5);
+    gui.addColoredLine(2, 10, 34, 540, 34, 0x5C8DFF, 1.5);
     gui.addLabel(10, "Files", 10, 42, 80, 14, 0xE0E0E0);
-    gui.addScroll(PREVIEW_SCROLL_ID, 10, 58, 190, 206, buildPreviewEntries(pkg));
-    gui.addScroll(PREVIEW_BACK_ID, 10, 272, 190, 24, ["Back"]);
-    gui.addLabel(11, "Code", 210, 42, 80, 14, 0xE0E0E0);
-    gui.addTextArea(PREVIEW_STATUS_ID, 210, 58, 320, 28);
-    gui.addTextArea(PREVIEW_CODE_ID, 210, 92, 320, 204);
-    renderPreview(gui, pkg, 0);
+    gui.addScroll(PREVIEW_SCROLL_ID, 10, 58, 200, 214, buildPreviewEntries(manifest));
+    gui.addScroll(PREVIEW_BACK_ID, 10, 280, 200, 24, ["Back"]);
+    gui.addLabel(11, "Code", 220, 42, 80, 14, 0xE0E0E0);
+    gui.addTextArea(PREVIEW_STATUS_ID, 220, 58, 330, 32);
+    gui.addTextArea(PREVIEW_CODE_ID, 220, 96, 330, 208);
+    renderPreview(player, item, gui, manifest, 0);
     return gui;
 }
 
 function handlePreviewScroll(player, gui, scroll) {
     if (scroll == null) return true;
+
     if (scroll.getID() == PREVIEW_BACK_ID) {
         var item = getActiveLoaderItem(player);
+        clearPreviewCache(player);
         if (item != null && !item.isEmpty()) player.showCustomGui(createMainGui(player, item));
         return false;
     }
+
     if (scroll.getID() != PREVIEW_SCROLL_ID) return true;
 
     var item = getActiveLoaderItem(player);
-    var pkg = item == null ? null : getDownloadedPackage(item);
-    if (pkg == null) {
-        setPreviewStatus(gui, "No downloaded package.");
+    var manifest = item == null ? null : getDownloadedManifest(item);
+    if (manifest == null) {
+        setPreviewStatus(gui, "No updated package.");
         setPreviewCode(gui, "");
         return true;
     }
-    renderPreview(gui, pkg, getSelectedIndex(scroll));
+
+    renderPreview(player, item, gui, manifest, getSelectedIndex(scroll));
     return true;
 }
 
-function renderPreview(gui, pkg, index) {
-    var files = getPreviewFiles(pkg);
+function renderPreview(player, item, gui, manifest, index) {
+    var files = getManifestFiles(manifest);
     if (files.length === 0) {
         setPreviewStatus(gui, "Preview is empty.");
         setPreviewCode(gui, "");
@@ -187,37 +208,32 @@ function renderPreview(gui, pkg, index) {
 
     if (index < 0 || index >= files.length) index = 0;
     var file = files[index];
-    var code = file.body == null ? "" : "" + file.body;
-    setPreviewStatus(gui, file.kind + " | " + file.relativePath + " | chars=" + code.length);
-    setPreviewCode(gui, code.length > 12000 ? code.substring(0, 12000) + "\n\n// --- preview truncated ---" : (hasText(code) ? code : "// Empty file"));
-}
-
-function buildPreviewEntries(pkg) {
-    var files = getPreviewFiles(pkg);
-    var entries = [];
-    for (var i = 0; i < files.length; i++) {
-        var file = files[i];
-        entries.push("[" + file.kind + "] " + file.relativePath);
+    var body = "";
+    try {
+        body = fetchPreviewBody(player, file, manifest);
+    } catch (e) {
+        setPreviewStatus(gui, "Preview failed: " + e);
+        setPreviewCode(gui, "");
+        return;
     }
-    return entries.length > 0 ? entries : ["No files"];
-}
 
-function getPreviewFiles(pkg) {
-    var out = [];
-    appendPreviewFiles(out, pkg == null ? null : pkg.hooks, "hook");
-    appendPreviewFiles(out, pkg == null ? null : pkg.shared, "shared");
-    return out;
-}
-
-function appendPreviewFiles(out, files, kind) {
-    if (files == null) return;
-    for (var i = 0; i < files.length; i++) {
-        out.push({
-            kind: kind,
-            relativePath: files[i].relativePath,
-            body: files[i].body
-        });
+    setPreviewStatus(gui, file.kind + " | " + file.relativePath + " | size=" + file.size + " | sha=" + shortenSha(file.sha));
+    if (!hasText(body)) {
+        setPreviewCode(gui, "// Empty file");
+        return;
     }
+    setPreviewCode(gui, body.length > PREVIEW_MAX_CHARS ? body.substring(0, PREVIEW_MAX_CHARS) + "\n\n// --- preview truncated ---" : body);
+}
+
+function fetchPreviewBody(player, file, manifest) {
+    var cache = getPreviewCache(player);
+    if (cache[file.sha] != null) return "" + cache[file.sha];
+
+    var token = trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY));
+    var body = fetchBlobText(manifest.owner, manifest.repo, file.sha, token);
+    cache[file.sha] = body;
+    writePreviewCache(player, cache);
+    return body;
 }
 
 function applyPackageToNpc(player, npc, item) {
@@ -228,21 +244,31 @@ function applyPackageToNpc(player, npc, item) {
         return;
     }
 
-    var pkg = getDownloadedPackage(item);
-    if (pkg == null) {
-        player.message("GitHub Loader: download a package first.");
+    var manifest = getDownloadedManifest(item);
+    if (manifest == null) {
+        player.message("GitHub Loader: update a package first.");
+        return;
+    }
+
+    var token = trimString(player.getStoreddata().get(PLAYER_TOKEN_KEY));
+    var pkg = null;
+    try {
+        pkg = materializePackage(manifest, token);
+    } catch (e) {
+        player.message("GitHub Loader: package download failed: " + e);
         return;
     }
 
     var storeddataWritten = false;
     var hooksStored = 0;
     var scriptResult = { attempted: false, written: 0, total: 0, error: "", namesWritten: [], skipped: [], usedNbt: false };
+
     try {
         writeNpcStoreddataPackage(npc, pkg);
         storeddataWritten = true;
         hooksStored = pkg.hooks.length;
-    } catch (e) {
-        player.message("GitHub Loader: failed to write NPC storeddata: " + e);
+    } catch (e1) {
+        player.message("GitHub Loader: failed to write NPC storeddata: " + e1);
         return;
     }
 
@@ -250,22 +276,25 @@ function applyPackageToNpc(player, npc, item) {
     if (scriptResult.usedNbt) {
         try {
             writeNpcStoreddataPackage(npc, pkg);
-        } catch (e1) {
-            if (!hasText(scriptResult.error)) scriptResult.error = "storeddata restore failed after NBT write: " + e1;
+        } catch (e2) {
+            if (!hasText(scriptResult.error)) scriptResult.error = "storeddata restore failed after NBT write: " + e2;
         }
     }
+
     try {
         npc.updateClient();
-    } catch (e) {}
+    } catch (e3) {}
 
     var parts = [];
     if (storeddataWritten) parts.push("storeddata written");
-    if (hooksStored > 0) parts.push("hooks=" + hooksStored);
+    parts.push("hooks=" + hooksStored);
     if (scriptResult.attempted) {
         if (scriptResult.written > 0 && scriptResult.total > 0) {
             parts.push("script tabs written=" + scriptResult.written + "/" + scriptResult.total);
-        } else {
+        } else if (hasText(scriptResult.error)) {
             parts.push("script tabs not written");
+        } else {
+            parts.push("Script tabs unavailable");
         }
     } else {
         parts.push("Script tabs unavailable");
@@ -277,9 +306,50 @@ function applyPackageToNpc(player, npc, item) {
     if (scriptResult.skipped != null && scriptResult.skipped.length > 0) {
         player.message("GitHub Loader: skipped: " + scriptResult.skipped.join(", "));
     }
-    if (scriptResult.attempted && hasText(scriptResult.error)) {
+    if (scriptResult.attempted && hasText(scriptResult.error) && scriptResult.error != "script tabs unavailable") {
         player.message("GitHub Loader: script tab error: " + scriptResult.error);
     }
+}
+
+function materializePackage(manifest, token) {
+    var hooks = [];
+    var shared = [];
+    var i;
+
+    for (i = 0; i < manifest.hooks.length; i++) {
+        hooks.push(materializeManifestFile(manifest, manifest.hooks[i], "hook", token));
+    }
+    for (i = 0; i < manifest.shared.length; i++) {
+        shared.push(materializeManifestFile(manifest, manifest.shared[i], "shared", token));
+    }
+
+    sortHooks(hooks);
+    return {
+        sourceUrl: manifest.sourceUrl,
+        owner: manifest.owner,
+        repo: manifest.repo,
+        ref: manifest.ref,
+        rootPath: manifest.rootPath,
+        totalFiles: manifest.totalFiles,
+        totalSize: manifest.totalSize,
+        hooks: hooks,
+        shared: shared
+    };
+}
+
+function materializeManifestFile(manifest, file, kind, token) {
+    var body = fetchBlobText(manifest.owner, manifest.repo, file.sha, token);
+    var compacted = compactSource(body);
+    validateScript(compacted, file.relativePath);
+    var out = {
+        path: file.path,
+        relativePath: file.relativePath,
+        sha: file.sha,
+        size: file.size,
+        body: compacted
+    };
+    if (kind == "hook") out.hook = file.hook;
+    return out;
 }
 
 function writeNpcStoreddataPackage(npc, pkg) {
@@ -289,24 +359,76 @@ function writeNpcStoreddataPackage(npc, pkg) {
         owner: pkg.owner,
         repo: pkg.repo,
         ref: pkg.ref,
-        rootPath: pkg.rootPath
+        rootPath: pkg.rootPath,
+        totalFiles: pkg.totalFiles,
+        totalSize: pkg.totalSize
     }));
-    data.put(NPC_SHARED_SOURCES_KEY, JSON.stringify(buildSharedSourceMap(pkg.shared)));
-    data.put("__shared", buildNpcSharedFactory(pkg.shared));
+    writeNpcSharedSources(data, pkg.shared);
+    data.put("__shared", buildNpcSharedFactory());
     writeNpcHooks(data, pkg.hooks);
+}
+
+function writeNpcSharedSources(data, sharedFiles) {
+    clearNpcSharedSourceChunks(data);
+
+    var manifest = [];
+    for (var i = 0; i < sharedFiles.length; i++) {
+        var file = sharedFiles[i];
+        var sourceId = makeSharedSourceId(file.relativePath, i);
+        var chunks = splitIntoChunks(file.body, SHARED_CHUNK_SIZE);
+        var chunkCount = chunks.length;
+        manifest.push({
+            id: sourceId,
+            path: normalizePath(file.path == null ? file.relativePath : file.path),
+            relativePath: normalizePath(file.relativePath),
+            chunkCount: chunkCount,
+            size: file.body.length
+        });
+        data.put(NPC_SHARED_CHUNK_PREFIX + sourceId + "_chunk_count", "" + chunkCount);
+        for (var j = 0; j < chunkCount; j++) {
+            data.put(NPC_SHARED_CHUNK_PREFIX + sourceId + "_chunk_" + j, chunks[j]);
+        }
+    }
+
+    data.put(NPC_SHARED_MANIFEST_KEY, JSON.stringify(manifest));
+    try {
+        data.remove("github_npc_loader_shared_sources");
+    } catch (e) {}
+}
+
+function clearNpcSharedSourceChunks(data) {
+    var oldManifest = parseJsonSafe(data.get(NPC_SHARED_MANIFEST_KEY));
+    if (oldManifest == null || !isArray(oldManifest)) {
+        try {
+            data.remove(NPC_SHARED_MANIFEST_KEY);
+        } catch (e) {}
+        return;
+    }
+
+    for (var i = 0; i < oldManifest.length; i++) {
+        var entry = oldManifest[i];
+        if (entry == null || !hasText(entry.id)) continue;
+        var chunkCount = parseIntSafe(entry.chunkCount, 0);
+        data.remove(NPC_SHARED_CHUNK_PREFIX + entry.id + "_chunk_count");
+        for (var j = 0; j < chunkCount; j++) {
+            data.remove(NPC_SHARED_CHUNK_PREFIX + entry.id + "_chunk_" + j);
+        }
+    }
+    data.remove(NPC_SHARED_MANIFEST_KEY);
 }
 
 function writeNpcHooks(data, hooks) {
     var oldCount = parseIntSafe(data.get("github_loader_hook_count"), 0);
-    for (var i = 0; i < oldCount; i++) {
+    var i;
+    for (i = 0; i < oldCount; i++) {
         data.remove("github_loader_hook_" + i + "_name");
         data.remove("github_loader_hook_" + i + "_path");
         data.remove("github_loader_hook_" + i + "_body");
     }
-    for (var j = 0; j < hooks.length; j++) {
-        data.put("github_loader_hook_" + j + "_name", hooks[j].hook);
-        data.put("github_loader_hook_" + j + "_path", hooks[j].relativePath);
-        data.put("github_loader_hook_" + j + "_body", hooks[j].body);
+    for (i = 0; i < hooks.length; i++) {
+        data.put("github_loader_hook_" + i + "_name", hooks[i].hook);
+        data.put("github_loader_hook_" + i + "_path", hooks[i].relativePath);
+        data.put("github_loader_hook_" + i + "_body", hooks[i].body);
     }
     data.put("github_loader_hook_count", "" + hooks.length);
 }
@@ -316,17 +438,22 @@ function writeNpcScriptTabs(npc, hooks) {
     try {
         var handler = getNpcScriptHandler(npc);
         if (handler == null || handler.scripts == null) {
+            result.error = "script tabs unavailable";
             return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
+
         var scripts = handler.scripts;
         var scriptCount = getCollectionSize(scripts);
         if (scriptCount <= 0) {
+            result.error = "script tabs unavailable";
             return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
+
         var requiredCount = getRequiredScriptCount(hooks);
         if (scriptCount < requiredCount) {
             return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
+
         result.attempted = true;
         for (var i = 0; i < hooks.length; i++) {
             var slot = hookIndex(hooks[i].hook);
@@ -334,30 +461,34 @@ function writeNpcScriptTabs(npc, hooks) {
                 result.skipped.push(hooks[i].hook);
                 continue;
             }
-            var container = typeof scripts[slot] != "undefined" ? scripts[slot] : null;
-            if (container == null && scripts.get != null) container = scripts.get(slot);
+
+            var container = getCollectionValue(scripts, slot);
             if (container == null) {
                 return writeNpcScriptTabsViaNbt(npc, hooks, result);
             }
+
             container.script = hooks[i].body;
             container.fullscript = hooks[i].body;
             result.written++;
             result.namesWritten.push(hooks[i].hook);
         }
+
         handler.enabled = true;
         if (handler.saveScriptData != null) handler.saveScriptData();
         if (handler.loadScriptData != null) handler.loadScriptData();
         return result;
     } catch (e) {
+        result.attempted = true;
         result.error = "" + e;
+        return result;
     }
-    return result;
 }
 
 function writeNpcScriptTabsViaNbt(npc, hooks, result) {
     var nbt = getNpcNbt(npc);
     if (nbt == null) {
-        result.error = "npc nbt is unavailable";
+        result.attempted = false;
+        result.error = "script tabs unavailable";
         return result;
     }
 
@@ -368,6 +499,7 @@ function writeNpcScriptTabsViaNbt(npc, hooks, result) {
         nbt.setBoolean("ScriptEnabled", true);
         nbt.putString("ScriptLanguage", "ECMAScript");
         setNpcNbt(npc, nbt);
+
         for (var i = 0; i < hooks.length; i++) {
             if (hookIndex(hooks[i].hook) < 0) {
                 result.skipped.push(hooks[i].hook);
@@ -376,6 +508,8 @@ function writeNpcScriptTabsViaNbt(npc, hooks, result) {
             result.written++;
             result.namesWritten.push(hooks[i].hook);
         }
+
+        if (!hasText(result.error)) result.error = "";
         return result;
     } catch (e) {
         result.error = "" + e;
@@ -407,49 +541,34 @@ function createRootScriptEntry(hookFile, hookName) {
     return rootTag;
 }
 
-function getRequiredScriptCount(hooks) {
-    var maxIndex = 0;
-    for (var i = 0; i < hooks.length; i++) {
-        var index = hookIndex(hooks[i].hook);
-        if (index > maxIndex) maxIndex = index;
-    }
-    return maxIndex + 1;
-}
-
-function getNpcNbt(npc) {
-    try {
-        if (npc.getEntityNbt != null) return npc.getEntityNbt();
-    } catch (e) {}
-    try {
-        if (typeof npc.nBT != "undefined") return npc.nBT;
-    } catch (e1) {}
-    return null;
-}
-
-function setNpcNbt(npc, nbt) {
-    try {
-        if (npc.setEntityNbt != null) {
-            npc.setEntityNbt(nbt);
-            return;
-        }
-    } catch (e) {}
-    try {
-        npc.nBT = nbt;
-        return;
-    } catch (e1) {}
-    throw "npc nbt write is unavailable";
-}
-
-function buildNpcSharedFactory(sharedFiles) {
+function buildNpcSharedFactory() {
     var source = "(function(event){\n";
     source += "var npc=event==null?null:event.npc;\n";
     source += "if(npc==null||npc.getStoreddata==null)throw 'Shared coordinator `__shared` is missing';\n";
     source += "var data=npc.getStoreddata();\n";
-    source += "var rawSources=''+data.get(" + JSON.stringify(NPC_SHARED_SOURCES_KEY) + ");\n";
-    source += "if(rawSources==null||rawSources==''||rawSources=='null'||rawSources=='undefined')throw 'Shared coordinator `__shared` is missing';\n";
-    source += "var sourceMap=JSON.parse(rawSources);\n";
+    source += "var manifestRaw=''+data.get(" + JSON.stringify(NPC_SHARED_MANIFEST_KEY) + ");\n";
+    source += "if(manifestRaw==null||manifestRaw==''||manifestRaw=='null'||manifestRaw=='undefined')throw 'Shared coordinator `__shared` is missing';\n";
+    source += "var manifest=JSON.parse(manifestRaw);\n";
+    source += "var sourceMap={};\n";
     source += "var moduleCache={};\n";
     source += "function normalizeSharedPath(path){return (''+path).replace(/\\\\/g,'/').replace(/^\\/+|\\/+$/g,'').replace(/^shared\\//,'');}\n";
+    source += "function rebuildChunks(entry){\n";
+    source += "var base=" + JSON.stringify(NPC_SHARED_CHUNK_PREFIX) + "+entry.id;\n";
+    source += "var count=parseInt(''+data.get(base+'_chunk_count'),10);\n";
+    source += "if(isNaN(count))count=parseInt(entry.chunkCount,10);\n";
+    source += "var out='';\n";
+    source += "for(var i=0;i<count;i++)out+=''+data.get(base+'_chunk_'+i);\n";
+    source += "return out;\n";
+    source += "}\n";
+    source += "for(var i=0;i<manifest.length;i++){\n";
+    source += "var entry=manifest[i];\n";
+    source += "var relative=normalizeSharedPath(entry.relativePath);\n";
+    source += "var full=normalizeSharedPath(entry.path);\n";
+    source += "var body=rebuildChunks(entry);\n";
+    source += "sourceMap[relative]=body;\n";
+    source += "sourceMap[full]=body;\n";
+    source += "if(full.indexOf('shared/')===0)sourceMap[full.substring('shared/'.length)]=body;\n";
+    source += "}\n";
     source += "function resolveSharedSource(path){\n";
     source += "var normalized=normalizeSharedPath(path);\n";
     source += "var candidates=[normalized,'shared/'+normalized,'/'+normalized,'/shared/'+normalized];\n";
@@ -474,33 +593,26 @@ function buildNpcSharedFactory(sharedFiles) {
     return source;
 }
 
-function buildSharedSourceMap(sharedFiles) {
-    var map = {};
-    for (var i = 0; i < sharedFiles.length; i++) {
-        var path = normalizePath(sharedFiles[i].relativePath);
-        map[path] = sharedFiles[i].body;
-        var shortPath = path.indexOf("shared/") === 0 ? path.substring("shared/".length) : path;
-        map[shortPath] = sharedFiles[i].body;
-    }
-    return map;
-}
-
-function loadNpcPackage(url, token) {
+function loadNpcPackageManifest(url, token) {
     var parsed = parseGithubTarget(url);
     var ref = resolveGithubRef(parsed, token);
     var tree = fetchRepoTree(parsed.owner, parsed.repo, ref, token);
     var rootPath = resolvePackageRoot(parsed.path, tree);
-    var hooks = collectPackageFiles(parsed.owner, parsed.repo, token, tree, rootPath, "hooks/");
-    var shared = collectPackageFiles(parsed.owner, parsed.repo, token, tree, rootPath, "shared/");
+    var hooks = collectPackageManifestFiles(tree, rootPath, "hooks/");
+    var shared = collectPackageManifestFiles(tree, rootPath, "shared/");
+    var totalSize = 0;
+    var i;
 
     if (hooks.length === 0) throw "Package has no hook files";
-    for (var i = 0; i < hooks.length; i++) {
+
+    for (i = 0; i < hooks.length; i++) {
         hooks[i].hook = detectHookName(hooks[i].relativePath);
         if (!hasText(hooks[i].hook)) throw "Unsupported hook file: " + hooks[i].relativePath;
-        validateScript(hooks[i].body, hooks[i].relativePath);
+        totalSize += parseIntSafe(hooks[i].size, 0);
     }
     sortHooks(hooks);
-    for (var j = 0; j < shared.length; j++) validateScript(shared[j].body, shared[j].relativePath);
+
+    for (i = 0; i < shared.length; i++) totalSize += parseIntSafe(shared[i].size, 0);
 
     return {
         sourceUrl: url,
@@ -509,8 +621,31 @@ function loadNpcPackage(url, token) {
         ref: ref,
         rootPath: rootPath,
         hooks: hooks,
-        shared: shared
+        shared: shared,
+        totalFiles: hooks.length + shared.length,
+        totalSize: totalSize
     };
+}
+
+function collectPackageManifestFiles(tree, rootPath, folder) {
+    var files = [];
+    var prefix = hasText(rootPath) ? (rootPath + "/" + folder) : folder;
+    for (var i = 0; i < tree.length; i++) {
+        var entry = tree[i];
+        var path = entry == null ? "" : normalizePath(entry.path);
+        if (trimString(entry == null ? "" : entry.type) != "blob") continue;
+        if (path.indexOf(prefix) !== 0 || !/\.js$/i.test(path)) continue;
+        files.push({
+            path: path,
+            relativePath: hasText(rootPath) ? path.substring(rootPath.length + 1) : path,
+            sha: trimString(entry.sha),
+            size: parseIntSafe(entry.size, 0)
+        });
+    }
+    files.sort(function(a, b) {
+        return a.relativePath < b.relativePath ? -1 : (a.relativePath > b.relativePath ? 1 : 0);
+    });
+    return files;
 }
 
 function resolvePackageRoot(requestedPath, tree) {
@@ -532,73 +667,78 @@ function resolvePackageRoot(requestedPath, tree) {
     return "";
 }
 
-function collectPackageFiles(owner, repo, token, tree, rootPath, folder) {
-    var files = [];
-    var prefix = hasText(rootPath) ? (rootPath + "/" + folder) : folder;
-    for (var i = 0; i < tree.length; i++) {
-        var entry = tree[i];
-        var path = entry == null ? "" : normalizePath(entry.path);
-        if (trimString(entry == null ? "" : entry.type) != "blob") continue;
-        if (path.indexOf(prefix) !== 0 || !/\.js$/i.test(path)) continue;
-        files.push({
-            relativePath: hasText(rootPath) ? path.substring(rootPath.length + 1) : path,
-            body: fetchBlobText(owner, repo, trimString(entry.sha), token)
+function buildManifestStatus(manifest) {
+    if (manifest == null) return "Updated: no";
+
+    var lines = [
+        "Updated: yes",
+        "Repo: " + manifest.owner + "/" + manifest.repo + "@" + manifest.ref,
+        "Path: " + (hasText(manifest.rootPath) ? manifest.rootPath : "/"),
+        "Hooks: " + manifest.hooks.length,
+        "Shared: " + manifest.shared.length,
+        "Files: " + manifest.totalFiles,
+        "Total size: " + manifest.totalSize + " bytes"
+    ];
+
+    var list = getManifestFiles(manifest);
+    var maxList = list.length > 5 ? 5 : list.length;
+    if (maxList > 0) {
+        lines.push("List:");
+        for (var i = 0; i < maxList; i++) {
+            lines.push("- " + list[i].relativePath);
+        }
+        if (list.length > maxList) lines.push("- ... +" + (list.length - maxList) + " more");
+    }
+    return lines.join("\n");
+}
+
+function buildPreviewEntries(manifest) {
+    var files = getManifestFiles(manifest);
+    var entries = [];
+    for (var i = 0; i < files.length; i++) {
+        entries.push("[" + files[i].kind + "] " + files[i].relativePath);
+    }
+    return entries.length > 0 ? entries : ["No files"];
+}
+
+function getManifestFiles(manifest) {
+    var out = [];
+    appendManifestFiles(out, manifest == null ? null : manifest.hooks, "hook");
+    appendManifestFiles(out, manifest == null ? null : manifest.shared, "shared");
+    return out;
+}
+
+function appendManifestFiles(out, files, kind) {
+    if (files == null) return;
+    for (var i = 0; i < files.length; i++) {
+        out.push({
+            kind: kind,
+            path: files[i].path,
+            relativePath: files[i].relativePath,
+            sha: files[i].sha,
+            size: files[i].size,
+            hook: files[i].hook
         });
     }
-    files.sort(function(a, b) {
-        return a.relativePath < b.relativePath ? -1 : (a.relativePath > b.relativePath ? 1 : 0);
-    });
-    return files;
 }
 
-function sortHooks(hooks) {
-    hooks.sort(function(a, b) {
-        return hookIndex(a.hook) - hookIndex(b.hook);
-    });
-}
-
-function detectHookName(relativePath) {
-    var match = normalizePath(relativePath).match(/^hooks\/([^\/]+)\.js$/i);
-    if (match == null) return "";
-    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i].toLowerCase() == trimString(match[1]).toLowerCase()) return HOOK_ORDER[i];
-    return "";
-}
-
-function hookIndex(name) {
-    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i] == name) return i;
-    return -1;
-}
-
-function buildPackageStatus(pkg) {
-    if (pkg == null) {
-        return "Downloaded: no";
-    }
-    return [
-        "Downloaded: yes",
-        "Repo: " + pkg.owner + "/" + pkg.repo + "@" + pkg.ref,
-        "Path: " + (hasText(pkg.rootPath) ? pkg.rootPath : "/"),
-        "Hooks: " + pkg.hooks.length,
-        "Shared: " + pkg.shared.length
-    ].join("\n");
-}
-
-function writeDownloadedPackage(item, pkg, url) {
+function writeDownloadedManifest(item, manifest, url) {
     var tag = getTag(item);
     tag.putString(ITEM_LAST_URL_KEY, url);
-    tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, encodeText(JSON.stringify(pkg)));
+    tag.putString(ITEM_PACKAGE_MANIFEST_KEY, encodeText(JSON.stringify(manifest)));
     writeTag(item, tag);
 }
 
-function getDownloadedPackage(item) {
+function getDownloadedManifest(item) {
     if (item == null || item.isEmpty()) return null;
-    var encoded = readTag(getTag(item), ITEM_DOWNLOADED_PACKAGE_KEY);
+    var encoded = readTag(getTag(item), ITEM_PACKAGE_MANIFEST_KEY);
     if (!hasText(encoded)) return null;
     return JSON.parse(decodeText(encoded));
 }
 
-function clearDownloadedPackage(item, player) {
+function clearDownloadedManifest(item, player) {
     var tag = getTag(item);
-    tag.putString(ITEM_DOWNLOADED_PACKAGE_KEY, "");
+    tag.putString(ITEM_PACKAGE_MANIFEST_KEY, "");
     writeTag(item, tag);
     try {
         player.updatePlayerInventory();
@@ -630,6 +770,28 @@ function getActiveLoaderItem(player) {
         if (isLoaderItem(item)) return item;
     } catch (e2) {}
     return null;
+}
+
+function getPreviewCache(player) {
+    try {
+        var cache = player.getTempdata().get(PLAYER_PREVIEW_CACHE_KEY);
+        if (cache != null) return cache;
+    } catch (e) {}
+    return {};
+}
+
+function writePreviewCache(player, cache) {
+    player.getTempdata().put(PLAYER_PREVIEW_CACHE_KEY, cache == null ? {} : cache);
+}
+
+function clearPreviewCache(player) {
+    try {
+        player.getTempdata().remove(PLAYER_PREVIEW_CACHE_KEY);
+    } catch (e) {
+        try {
+            player.getTempdata().put(PLAYER_PREVIEW_CACHE_KEY, {});
+        } catch (e1) {}
+    }
 }
 
 function isNpcTarget(target) {
@@ -721,6 +883,12 @@ function fetchRepoTree(owner, repo, ref, token) {
     return json != null && isArray(json.tree) ? json.tree : [];
 }
 
+function fetchBlobText(owner, repo, sha, token) {
+    var json = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), token);
+    if (trimString(json.encoding).toLowerCase() != "base64") throw "Unsupported blob encoding";
+    return decodeBase64(trimString(json.content).replace(/\s+/g, ""));
+}
+
 function fetchJson(url, token) {
     return JSON.parse(fetchText(url, token));
 }
@@ -751,10 +919,12 @@ function fetchText(url, token) {
     }
 }
 
-function fetchBlobText(owner, repo, sha, token) {
-    var json = fetchJson("https://api.github.com/repos/" + owner + "/" + repo + "/git/blobs/" + encodeQuery(sha), token);
-    if (trimString(json.encoding).toLowerCase() != "base64") throw "Unsupported blob encoding";
-    return decodeBase64(trimString(json.content).replace(/\s+/g, ""));
+function compactSource(source) {
+    var text = source == null ? "" : "" + source;
+    text = text.replace(/\r\n?/g, "\n");
+    text = text.replace(/[ \t]+\n/g, "\n");
+    text = text.replace(/\n{3,}/g, "\n\n");
+    return text;
 }
 
 function validateScript(source, label) {
@@ -763,6 +933,76 @@ function validateScript(source, label) {
     } catch (e) {
         throw "Invalid `" + label + "`";
     }
+}
+
+function makeSharedSourceId(relativePath, index) {
+    var base = normalizePath(relativePath).replace(/[^A-Za-z0-9_]+/g, "_");
+    if (!hasText(base)) base = "shared_" + index;
+    return base + "_" + index;
+}
+
+function splitIntoChunks(text, chunkSize) {
+    var chunks = [];
+    var source = text == null ? "" : "" + text;
+    var size = chunkSize < 1 ? 12000 : chunkSize;
+    if (source.length === 0) return [""];
+    for (var i = 0; i < source.length; i += size) {
+        chunks.push(source.substring(i, i + size));
+    }
+    return chunks;
+}
+
+function sortHooks(hooks) {
+    hooks.sort(function(a, b) {
+        return hookIndex(a.hook) - hookIndex(b.hook);
+    });
+}
+
+function detectHookName(relativePath) {
+    var match = normalizePath(relativePath).match(/^hooks\/([^\/]+)\.js$/i);
+    if (match == null) return "";
+    for (var i = 0; i < HOOK_ORDER.length; i++) {
+        if (HOOK_ORDER[i].toLowerCase() == trimString(match[1]).toLowerCase()) return HOOK_ORDER[i];
+    }
+    return "";
+}
+
+function hookIndex(name) {
+    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i] == name) return i;
+    return -1;
+}
+
+function getRequiredScriptCount(hooks) {
+    var maxIndex = 0;
+    for (var i = 0; i < hooks.length; i++) {
+        var index = hookIndex(hooks[i].hook);
+        if (index > maxIndex) maxIndex = index;
+    }
+    return maxIndex + 1;
+}
+
+function getNpcNbt(npc) {
+    try {
+        if (npc.getEntityNbt != null) return npc.getEntityNbt();
+    } catch (e) {}
+    try {
+        if (typeof npc.nBT != "undefined") return npc.nBT;
+    } catch (e1) {}
+    return null;
+}
+
+function setNpcNbt(npc, nbt) {
+    try {
+        if (npc.setEntityNbt != null) {
+            npc.setEntityNbt(nbt);
+            return;
+        }
+    } catch (e) {}
+    try {
+        npc.nBT = nbt;
+        return;
+    } catch (e1) {}
+    throw "npc nbt write is unavailable";
 }
 
 function encodeText(text) {
@@ -830,6 +1070,13 @@ function getCollectionSize(value) {
     return 0;
 }
 
+function getCollectionValue(value, index) {
+    if (value == null) return null;
+    if (typeof value[index] != "undefined") return value[index];
+    if (value.get != null) return value.get(index);
+    return null;
+}
+
 function encodeQuery(value) {
     return ("" + GitLoader_URLEncoder.encode("" + value, "UTF-8")).replace(/\+/g, "%20");
 }
@@ -838,10 +1085,24 @@ function normalizePath(value) {
     return trimString(value).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
+function shortenSha(sha) {
+    var text = trimString(sha);
+    return text.length > 8 ? text.substring(0, 8) : text;
+}
+
 function objectKeys(obj) {
     var keys = [];
     for (var key in obj) if (Object.prototype.hasOwnProperty.call(obj, key)) keys.push(key);
     return keys;
+}
+
+function parseJsonSafe(raw) {
+    if (raw == null || raw == "" || raw == "null" || raw == "undefined") return null;
+    try {
+        return JSON.parse("" + raw);
+    } catch (e) {
+        return null;
+    }
 }
 
 function isArray(value) {

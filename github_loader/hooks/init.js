@@ -36,8 +36,8 @@ function applyReadyPresentation(item) {
     mcStack.set(GitLoaderInit_DataComponents.CUSTOM_NAME, GitLoaderInit_Component.literal("GitHub NPC Loader"));
     mcStack.set(GitLoaderInit_DataComponents.LORE, new GitLoaderInit_ItemLore(buildLore([
         "Ready GitHub NPC loader.",
-        "Right click air to download and preview NPC packages.",
-        "Right click an NPC to apply the downloaded package."
+        "Right click air to update and preview NPC packages.",
+        "Right click an NPC to apply the updated package."
     ])));
     try {
         item.setCustomName("GitHub NPC Loader");
