@@ -3,7 +3,9 @@ var itemUtils = require("item_utils.js");
 var EnchantUtils_Enchantment = Java.type("net.minecraft.world.item.enchantment.Enchantment");
 var EnchantUtils_EnchantmentHelper = Java.type("net.minecraft.world.item.enchantment.EnchantmentHelper");
 var EnchantUtils_ItemEnchantments = Java.type("net.minecraft.world.item.enchantment.ItemEnchantments");
+var EnchantUtils_ItemEnchantmentsMutable = Java.type("net.minecraft.world.item.enchantment.ItemEnchantments$Mutable");
 var EnchantUtils_BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
+var EnchantUtils_DataComponents = Java.type("net.minecraft.core.component.DataComponents");
 var EnchantUtils_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var EnchantUtils_Items = Java.type("net.minecraft.world.item.Items");
 var EnchantUtils_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
@@ -48,13 +50,76 @@ function getEnchantmentId(enchantment) {
     }
 }
 
+function getEnchantmentIdFromEntryKey(value) {
+    if (value == null) return "";
+
+    try {
+        return "" + value.unwrapKey().get().location().toString();
+    } catch (e1) {}
+
+    try {
+        return "" + EnchantUtils_BuiltInRegistries.ENCHANTMENT.getKey(value.value());
+    } catch (e2) {}
+
+    try {
+        return "" + EnchantUtils_BuiltInRegistries.ENCHANTMENT.getKey(value);
+    } catch (e3) {}
+
+    return "";
+}
+
+function isStoredEnchantedBookStack(mcStack) {
+    return mcStack != null && !mcStack.isEmpty() && mcStack.getItem() == EnchantUtils_Items.ENCHANTED_BOOK;
+}
+
+function getPrimaryEnchantmentComponent(mcStack) {
+    return isStoredEnchantedBookStack(mcStack)
+        ? EnchantUtils_DataComponents.STORED_ENCHANTMENTS
+        : EnchantUtils_DataComponents.ENCHANTMENTS;
+}
+
+function getSecondaryEnchantmentComponent(mcStack) {
+    return isStoredEnchantedBookStack(mcStack)
+        ? EnchantUtils_DataComponents.ENCHANTMENTS
+        : EnchantUtils_DataComponents.STORED_ENCHANTMENTS;
+}
+
+function getEnchantmentsFromComponent(mcStack, componentType) {
+    var map = {};
+    if (mcStack == null || mcStack.isEmpty() || componentType == null) return map;
+
+    try {
+        var itemEnchants = mcStack.get(componentType);
+        if (itemEnchants == null || itemEnchants.isEmpty()) return map;
+
+        var iterator = itemEnchants.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            var id = getEnchantmentIdFromEntryKey(entry.getKey());
+            var level = clampLevel(entry.getValue());
+            if (!itemUtils.hasText(id) || level <= 0) continue;
+            map[id] = level;
+        }
+    } catch (e) {}
+
+    return map;
+}
+
+function hasEnchantments(map) {
+    for (var key in map) {
+        if (!map.hasOwnProperty(key)) continue;
+        if (clampLevel(map[key]) > 0) return true;
+    }
+    return false;
+}
+
 function isEnchantedBook(item) {
     if (itemUtils.isEmptyItem(item)) return false;
     var mcStack = itemUtils.getMcStack(item);
     if (mcStack == null || mcStack.isEmpty()) return false;
     try {
         return mcStack.getItem() == EnchantUtils_Items.ENCHANTED_BOOK
-            && !EnchantUtils_EnchantmentHelper.getEnchantments(mcStack).isEmpty();
+            && hasEnchantments(getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS));
     } catch (e) {
         return false;
     }
@@ -67,6 +132,12 @@ function getEnchantments(item) {
     var mcStack = itemUtils.getMcStack(item);
     if (mcStack == null || mcStack.isEmpty()) return map;
 
+    map = getEnchantmentsFromComponent(mcStack, getPrimaryEnchantmentComponent(mcStack));
+    if (hasEnchantments(map)) return map;
+
+    map = getEnchantmentsFromComponent(mcStack, getSecondaryEnchantmentComponent(mcStack));
+    if (hasEnchantments(map)) return map;
+
     try {
         var itemEnchants = EnchantUtils_EnchantmentHelper.getEnchantments(mcStack);
         if (itemEnchants == null || itemEnchants.isEmpty()) return map;
@@ -76,7 +147,8 @@ function getEnchantments(item) {
             var entry = iterator.next();
             var enchantment = entry.getKey();
             var level = clampLevel(entry.getValue());
-            var id = getEnchantmentId(enchantment);
+            var id = getEnchantmentIdFromEntryKey(enchantment);
+            if (!itemUtils.hasText(id)) id = getEnchantmentId(enchantment);
             if (!itemUtils.hasText(id) || level <= 0) continue;
             map[id] = level;
         }
@@ -125,15 +197,29 @@ function setEnchantments(item, enchantMap) {
 function setEnchantmentsOnMcStack(mcStack, enchantMap) {
     if (mcStack == null || mcStack.isEmpty()) return false;
     try {
-        var builder = EnchantUtils_ItemEnchantments.builder();
+        var mutable = new EnchantUtils_ItemEnchantmentsMutable(EnchantUtils_ItemEnchantments.EMPTY);
         for (var enchantId in enchantMap) {
             if (!enchantMap.hasOwnProperty(enchantId)) continue;
-            var enchantment = resolveEnchantment(enchantId);
+            var holder = resolveHolder(enchantId);
             var level = clampLevel(enchantMap[enchantId]);
-            if (enchantment == null || level <= 0) continue;
-            builder.with(enchantment, level);
+            if (holder == null || level <= 0) continue;
+            mutable.set(holder, level);
         }
-        EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, builder.build());
+
+        var componentType = getPrimaryEnchantmentComponent(mcStack);
+        var otherComponentType = getSecondaryEnchantmentComponent(mcStack);
+        var immutableEnchants = mutable.toImmutable();
+
+        mcStack.set(componentType, immutableEnchants);
+        try {
+            mcStack.remove(otherComponentType);
+        } catch (e1) {}
+
+        if (!isStoredEnchantedBookStack(mcStack)) {
+            try {
+                EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, immutableEnchants);
+            } catch (e2) {}
+        }
         return true;
     } catch (e) {
         return false;
