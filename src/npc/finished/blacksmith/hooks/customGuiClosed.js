@@ -11,6 +11,7 @@ function resolveBlacksmithNpc(event) {
 
 function requireShared(event) {
     var npc = resolveBlacksmithNpc(event);
+    event.__github_loader_npc = npc;
     var data = npc.getStoreddata();
     var factorySource = "" + data.get("__shared");
     var factory = null;

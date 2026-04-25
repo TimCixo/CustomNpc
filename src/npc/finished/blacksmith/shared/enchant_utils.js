@@ -74,14 +74,6 @@ function resolveHolder(id) {
     }
 }
 
-function getEnchantmentId(enchantment) {
-    try {
-        return "" + EnchantUtils_BuiltInRegistries.ENCHANTMENT.getKey(enchantment);
-    } catch (e) {
-        return "";
-    }
-}
-
 function getEnchantmentIdFromEntryKey(value) {
     if (value == null) return "";
 
@@ -195,51 +187,81 @@ function copyEnchantMap(source) {
     return sanitizeEnchantMap(source);
 }
 
-function areEnchantMapsEqual(left, right) {
-    var leftMap = sanitizeEnchantMap(left);
-    var rightMap = sanitizeEnchantMap(right);
+function getMissingEnchantments(expected, actual) {
+    var missing = [];
+    var left = sanitizeEnchantMap(expected);
+    var right = sanitizeEnchantMap(actual);
+    var key;
 
-    if (countEnchantments(leftMap) != countEnchantments(rightMap)) return false;
-
-    for (var key in leftMap) {
-        if (!leftMap.hasOwnProperty(key)) continue;
-        if (!rightMap.hasOwnProperty(key)) return false;
-        if (clampLevel(leftMap[key]) != clampLevel(rightMap[key])) return false;
+    for (key in left) {
+        if (!left.hasOwnProperty(key)) continue;
+        if (!right.hasOwnProperty(key) || clampLevel(right[key]) != clampLevel(left[key])) {
+            missing.push(key);
+        }
     }
 
-    return true;
+    for (key in right) {
+        if (!right.hasOwnProperty(key)) continue;
+        if (!left.hasOwnProperty(key)) {
+            missing.push("unexpected:" + key);
+        }
+    }
+
+    return missing;
 }
 
-function getEnchantmentsFromMcStack(mcStack) {
-    var map = {};
-    if (mcStack == null || mcStack.isEmpty()) return map;
-
-    map = getEnchantmentsFromHelper(mcStack);
-    if (hasEnchantments(map)) return map;
-
-    map = getEnchantmentsFromComponent(mcStack, getPrimaryEnchantmentComponent(mcStack));
-    if (hasEnchantments(map)) return map;
-
-    return getEnchantmentsFromComponent(mcStack, getSecondaryEnchantmentComponent(mcStack));
+function areEnchantMapsEqual(left, right) {
+    return getMissingEnchantments(left, right).length <= 0;
 }
 
-function buildEnchantmentsResult(enchantMap) {
+function buildEnchantmentsResult(expectedMap, actualMap, phase, reason) {
+    var expected = sanitizeEnchantMap(expectedMap);
+    var actual = sanitizeEnchantMap(actualMap);
+    var missing = getMissingEnchantments(expected, actual);
+    var ok = missing.length <= 0;
+
+    return {
+        ok: ok,
+        reason: ok ? "" : (itemUtils.hasText(reason) ? reason : "readback_mismatch"),
+        expected: expected,
+        actual: actual,
+        missing: missing,
+        phase: itemUtils.hasText(phase) ? phase : ""
+    };
+}
+
+function buildFailureResult(reason, phase, expectedMap, actualMap) {
+    return buildEnchantmentsResult(expectedMap, actualMap, phase, reason);
+}
+
+function buildMutableEnchantments(enchantMap, allowEmpty, phase) {
     var expected = sanitizeEnchantMap(enchantMap);
     var mutable = new EnchantUtils_ItemEnchantmentsMutable(EnchantUtils_ItemEnchantments.EMPTY);
     var missing = [];
+
+    if (!allowEmpty && !hasEnchantments(expected)) {
+        return {
+            ok: false,
+            reason: "no_enchantments",
+            expected: expected,
+            actual: {},
+            missing: [],
+            phase: phase,
+            immutable: EnchantUtils_ItemEnchantments.EMPTY
+        };
+    }
 
     for (var enchantId in expected) {
         if (!expected.hasOwnProperty(enchantId)) continue;
 
         var holder = resolveHolder(enchantId);
-        var level = expected[enchantId];
-        if (holder == null || level <= 0) {
+        if (holder == null) {
             missing.push(enchantId);
             continue;
         }
 
         try {
-            mutable.set(holder, level);
+            mutable.set(holder, expected[enchantId]);
         } catch (e) {
             missing.push(enchantId);
         }
@@ -247,10 +269,34 @@ function buildEnchantmentsResult(enchantMap) {
 
     return {
         ok: missing.length <= 0,
+        reason: missing.length <= 0 ? "" : "unsupported",
         expected: expected,
-        immutable: mutable.toImmutable(),
-        missing: missing
+        actual: {},
+        missing: missing,
+        phase: phase,
+        immutable: mutable.toImmutable()
     };
+}
+
+function getEnchantmentsFromMcStack(mcStack) {
+    var map = {};
+    if (mcStack == null || mcStack.isEmpty()) return map;
+
+    if (isStoredEnchantedBookStack(mcStack)) {
+        map = getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS);
+        if (hasEnchantments(map)) return map;
+        map = getEnchantmentsFromHelper(mcStack);
+        if (hasEnchantments(map)) return map;
+        return getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.ENCHANTMENTS);
+    }
+
+    map = getEnchantmentsFromHelper(mcStack);
+    if (hasEnchantments(map)) return map;
+
+    map = getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.ENCHANTMENTS);
+    if (hasEnchantments(map)) return map;
+
+    return getEnchantmentsFromComponent(mcStack, EnchantUtils_DataComponents.STORED_ENCHANTMENTS);
 }
 
 function clearSecondaryComponent(mcStack) {
@@ -260,40 +306,44 @@ function clearSecondaryComponent(mcStack) {
 }
 
 function setBookEnchantmentsOnMcStack(mcStack, enchantMap) {
-    if (mcStack == null || mcStack.isEmpty() || !isStoredEnchantedBookStack(mcStack)) return false;
+    if (mcStack == null || mcStack.isEmpty() || !isStoredEnchantedBookStack(mcStack)) {
+        return buildFailureResult("invalid_book", "book_precheck", enchantMap, {});
+    }
 
-    var built = buildEnchantmentsResult(enchantMap);
-    if (!built.ok) return false;
-    if (!hasEnchantments(built.expected)) return false;
+    var built = buildMutableEnchantments(enchantMap, false, "book_build");
+    if (!built.ok) return built;
 
     try {
-        EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, built.immutable);
+        mcStack.set(EnchantUtils_DataComponents.STORED_ENCHANTMENTS, built.immutable);
         clearSecondaryComponent(mcStack);
-        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
     } catch (e) {
-        return false;
+        return buildFailureResult("write_failed", "book_write", built.expected, getEnchantmentsFromMcStack(mcStack));
     }
+
+    return buildEnchantmentsResult(built.expected, getEnchantmentsFromMcStack(mcStack), "book_readback");
 }
 
 function setItemEnchantmentsOnMcStack(mcStack, enchantMap) {
-    if (mcStack == null || mcStack.isEmpty() || isStoredEnchantedBookStack(mcStack)) return false;
+    if (mcStack == null || mcStack.isEmpty() || isStoredEnchantedBookStack(mcStack)) {
+        return buildFailureResult("invalid_target", "item_precheck", enchantMap, {});
+    }
 
-    var built = buildEnchantmentsResult(enchantMap);
-    if (!built.ok) return false;
+    var built = buildMutableEnchantments(enchantMap, true, "item_build");
+    if (!built.ok) return built;
 
     try {
         EnchantUtils_EnchantmentHelper.setEnchantments(mcStack, built.immutable);
         clearSecondaryComponent(mcStack);
-        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
-    } catch (e1) {}
-
-    try {
-        mcStack.set(EnchantUtils_DataComponents.ENCHANTMENTS, built.immutable);
-        clearSecondaryComponent(mcStack);
-        return areEnchantMapsEqual(getEnchantmentsFromMcStack(mcStack), built.expected);
-    } catch (e2) {
-        return false;
+    } catch (e1) {
+        try {
+            mcStack.set(EnchantUtils_DataComponents.ENCHANTMENTS, built.immutable);
+            clearSecondaryComponent(mcStack);
+        } catch (e2) {
+            return buildFailureResult("write_failed", "item_write", built.expected, getEnchantmentsFromMcStack(mcStack));
+        }
     }
+
+    return buildEnchantmentsResult(built.expected, getEnchantmentsFromMcStack(mcStack), "item_readback");
 }
 
 function isEnchantedBook(item) {
@@ -333,19 +383,25 @@ function getEnchantmentEntries(item) {
 }
 
 function setEnchantments(item, enchantMap) {
-    if (itemUtils.isEmptyItem(item)) return false;
+    if (itemUtils.isEmptyItem(item)) {
+        return buildFailureResult("invalid_target", "item_wrapper_precheck", enchantMap, {});
+    }
     return setEnchantmentsOnMcStack(itemUtils.getMcStack(item), enchantMap);
 }
 
 function setEnchantmentsOnMcStack(mcStack, enchantMap) {
-    if (mcStack == null || mcStack.isEmpty()) return false;
+    if (mcStack == null || mcStack.isEmpty()) {
+        return buildFailureResult("invalid_target", "stack_precheck", enchantMap, {});
+    }
     if (isStoredEnchantedBookStack(mcStack)) return setBookEnchantmentsOnMcStack(mcStack, enchantMap);
     return setItemEnchantmentsOnMcStack(mcStack, enchantMap);
 }
 
 function removeEnchantment(item, enchantId) {
     var map = getEnchantments(item);
-    if (!map.hasOwnProperty(enchantId)) return false;
+    if (!map.hasOwnProperty(enchantId)) {
+        return buildFailureResult("invalid_target", "remove_precheck", map, map);
+    }
     delete map[enchantId];
     return setEnchantments(item, map);
 }
@@ -358,20 +414,32 @@ function createEnchantedBook(enchantId, level) {
 
 function createEnchantedBookFromMap(enchantMap) {
     var expected = sanitizeEnchantMap(enchantMap);
-    if (!hasEnchantments(expected)) return null;
+    if (!hasEnchantments(expected)) {
+        return buildFailureResult("no_enchantments", "book_create_precheck", expected, {});
+    }
 
     try {
         var bookStack = new EnchantUtils_MCItemStack(EnchantUtils_Items.ENCHANTED_BOOK);
-        if (bookStack == null || bookStack.isEmpty()) return null;
-        if (!setBookEnchantmentsOnMcStack(bookStack, expected)) return null;
+        if (bookStack == null || bookStack.isEmpty()) {
+            return buildFailureResult("write_failed", "book_create_stack", expected, {});
+        }
+
+        var writeResult = setBookEnchantmentsOnMcStack(bookStack, expected);
+        if (!writeResult.ok) return writeResult;
 
         var wrapped = itemUtils.wrapMcStack(bookStack);
-        if (itemUtils.isEmptyItem(wrapped)) return null;
-        if (!isEnchantedBook(wrapped)) return null;
-        if (!areEnchantMapsEqual(getEnchantments(wrapped), expected)) return null;
-        return wrapped;
+        if (itemUtils.isEmptyItem(wrapped)) {
+            return buildFailureResult("write_failed", "book_wrap", expected, getEnchantmentsFromMcStack(bookStack));
+        }
+
+        var wrappedResult = buildEnchantmentsResult(expected, getEnchantments(wrapped), "book_wrap_readback");
+        if (!wrappedResult.ok) return wrappedResult;
+
+        wrappedResult.item = wrapped;
+        wrappedResult.mcStack = bookStack;
+        return wrappedResult;
     } catch (e) {
-        return null;
+        return buildFailureResult("write_failed", "book_create_exception", expected, {});
     }
 }
 
@@ -395,29 +463,6 @@ function supportsEnchantmentOnItem(enchantment, mcStack) {
     } catch (e4) {}
 
     return false;
-}
-
-function canApplyEnchantmentToItem(enchantId, level, targetItem) {
-    var enchantment = resolveEnchantment(enchantId);
-    var mcStack = itemUtils.getMcStack(targetItem);
-    if (enchantment == null || mcStack == null || mcStack.isEmpty()) return false;
-    if (isStoredEnchantedBookStack(mcStack)) return false;
-
-    var incomingLevel = clampLevel(level);
-    if (incomingLevel <= 0) return false;
-    if (!supportsEnchantmentOnItem(enchantment, mcStack)) return false;
-
-    var currentMap = getEnchantments(targetItem);
-    if (!canCoexistWithMap(enchantId, currentMap)) return false;
-
-    var oldLevel = currentMap.hasOwnProperty(enchantId) ? clampLevel(currentMap[enchantId]) : 0;
-    var newLevel = computeMergedLevel(oldLevel, incomingLevel);
-    if (newLevel <= oldLevel) return false;
-
-    var verifyCopy = mcStack.copy();
-    var verifyMap = copyEnchantMap(currentMap);
-    verifyMap[enchantId] = newLevel;
-    return setItemEnchantmentsOnMcStack(verifyCopy, verifyMap);
 }
 
 function canEnchantmentsCoexist(enchantA, enchantB) {
@@ -453,64 +498,159 @@ function computeMergedLevel(existingLevel, incomingLevel) {
     return clampLevel(Math.max(left, right));
 }
 
-function applyBookToTarget(bookItem, targetItem) {
+function canApplyEnchantmentToMcStack(enchantId, level, mcStack, baseMap) {
+    var enchantment = resolveEnchantment(enchantId);
+    var currentMap = copyEnchantMap(baseMap == null ? getEnchantmentsFromMcStack(mcStack) : baseMap);
+    var incomingLevel = clampLevel(level);
+
+    if (mcStack == null || mcStack.isEmpty() || isStoredEnchantedBookStack(mcStack)) {
+        return buildFailureResult("invalid_target", "apply_precheck", currentMap, currentMap);
+    }
+
+    if (enchantment == null || incomingLevel <= 0) {
+        return buildFailureResult("unsupported", "apply_precheck", currentMap, currentMap);
+    }
+
+    if (!supportsEnchantmentOnItem(enchantment, mcStack)) {
+        return buildFailureResult("unsupported", "apply_support", currentMap, currentMap);
+    }
+
+    if (!canCoexistWithMap(enchantId, currentMap)) {
+        return buildFailureResult("conflict", "apply_conflict", currentMap, currentMap);
+    }
+
+    var oldLevel = currentMap.hasOwnProperty(enchantId) ? clampLevel(currentMap[enchantId]) : 0;
+    var newLevel = computeMergedLevel(oldLevel, incomingLevel);
+    if (newLevel <= oldLevel) {
+        return buildFailureResult("no_upgrade", "apply_upgrade", currentMap, currentMap);
+    }
+
+    var verifyMap = copyEnchantMap(currentMap);
+    verifyMap[enchantId] = newLevel;
+    var verifyCopy = mcStack.copy();
+    var verifyResult = setItemEnchantmentsOnMcStack(verifyCopy, verifyMap);
+    verifyResult.newLevel = newLevel;
+    return verifyResult;
+}
+
+function canApplyEnchantmentToItem(enchantId, level, targetItem) {
+    var mcStack = itemUtils.getMcStack(targetItem);
+    return canApplyEnchantmentToMcStack(enchantId, level, mcStack, getEnchantments(targetItem));
+}
+
+function applyBookToLiveMainhand(player, bookItem) {
     if (!isEnchantedBook(bookItem)) {
-        return { ok: false, reason: "invalid_book", applied: [], skipped: [] };
+        return {
+            ok: false,
+            reason: "invalid_book",
+            applied: [],
+            skipped: [],
+            expected: {},
+            actual: {},
+            missing: [],
+            phase: "apply_book_precheck"
+        };
     }
 
-    if (itemUtils.isEmptyItem(targetItem)) {
-        return { ok: false, reason: "invalid_target", applied: [], skipped: [] };
-    }
-
-    var targetMcStack = itemUtils.getMcStack(targetItem);
-    if (targetMcStack == null || targetMcStack.isEmpty() || isStoredEnchantedBookStack(targetMcStack)) {
-        return { ok: false, reason: "invalid_target", applied: [], skipped: [] };
+    var workingCopy = itemUtils.cloneLiveMainhandMcStack(player);
+    if (workingCopy == null || workingCopy.isEmpty() || isStoredEnchantedBookStack(workingCopy)) {
+        return {
+            ok: false,
+            reason: "invalid_target",
+            applied: [],
+            skipped: [],
+            expected: {},
+            actual: {},
+            missing: [],
+            phase: "apply_target_precheck"
+        };
     }
 
     var bookMap = getEnchantments(bookItem);
-    var targetMap = getEnchantments(targetItem);
-    var resultMap = copyEnchantMap(targetMap);
+    var resultMap = copyEnchantMap(getEnchantmentsFromMcStack(workingCopy));
     var applied = [];
     var skipped = [];
+    var firstFailure = null;
 
     for (var enchantId in bookMap) {
         if (!bookMap.hasOwnProperty(enchantId)) continue;
 
-        var incomingLevel = clampLevel(bookMap[enchantId]);
-        var oldLevel = resultMap.hasOwnProperty(enchantId) ? clampLevel(resultMap[enchantId]) : 0;
-        if (!canApplyEnchantmentToItem(enchantId, incomingLevel, targetItem)) {
+        var applyCheck = canApplyEnchantmentToMcStack(enchantId, bookMap[enchantId], workingCopy, resultMap);
+        if (!applyCheck.ok) {
             skipped.push(enchantId);
+            if (firstFailure == null) firstFailure = applyCheck;
             continue;
         }
 
-        if (!canCoexistWithMap(enchantId, resultMap)) {
-            skipped.push(enchantId);
-            continue;
-        }
-
-        var newLevel = computeMergedLevel(oldLevel, incomingLevel);
-        if (newLevel <= oldLevel) {
-            skipped.push(enchantId);
-            continue;
-        }
-
-        resultMap[enchantId] = newLevel;
-        applied.push({ id: enchantId, level: newLevel });
+        resultMap[enchantId] = applyCheck.newLevel;
+        applied.push({ id: enchantId, level: applyCheck.newLevel });
     }
 
     if (applied.length <= 0) {
-        return { ok: false, reason: "incompatible", applied: [], skipped: skipped };
+        if (firstFailure == null) firstFailure = buildFailureResult("no_upgrade", "apply_no_change", resultMap, resultMap);
+        firstFailure.applied = [];
+        firstFailure.skipped = skipped;
+        return firstFailure;
     }
 
-    if (!setItemEnchantmentsOnMcStack(targetMcStack, resultMap)) {
-        return { ok: false, reason: "write_failed", applied: [], skipped: skipped };
+    var writeResult = setItemEnchantmentsOnMcStack(workingCopy, resultMap);
+    if (!writeResult.ok) {
+        writeResult.applied = applied;
+        writeResult.skipped = skipped;
+        return writeResult;
     }
 
-    if (!areEnchantMapsEqual(getEnchantments(targetItem), resultMap)) {
-        return { ok: false, reason: "write_failed", applied: [], skipped: skipped };
+    var commitResult = itemUtils.commitHeldMcStack(player, workingCopy, function(readBackMcStack) {
+        return buildEnchantmentsResult(resultMap, getEnchantmentsFromMcStack(readBackMcStack), "apply_commit_readback");
+    });
+    commitResult.applied = applied;
+    commitResult.skipped = skipped;
+    return commitResult;
+}
+
+function setLiveMainhandEnchantments(player, enchantMap) {
+    var workingCopy = itemUtils.cloneLiveMainhandMcStack(player);
+    if (workingCopy == null || workingCopy.isEmpty() || isStoredEnchantedBookStack(workingCopy)) {
+        return buildFailureResult("invalid_target", "live_set_precheck", enchantMap, {});
     }
 
-    return { ok: true, reason: "", applied: applied, skipped: skipped };
+    var writeResult = setItemEnchantmentsOnMcStack(workingCopy, enchantMap);
+    if (!writeResult.ok) return writeResult;
+
+    return itemUtils.commitHeldMcStack(player, workingCopy, function(readBackMcStack) {
+        return buildEnchantmentsResult(enchantMap, getEnchantmentsFromMcStack(readBackMcStack), "live_set_commit_readback");
+    });
+}
+
+function removeEnchantmentFromLiveMainhand(player, enchantId) {
+    var workingCopy = itemUtils.cloneLiveMainhandMcStack(player);
+    if (workingCopy == null || workingCopy.isEmpty() || isStoredEnchantedBookStack(workingCopy)) {
+        return buildFailureResult("invalid_target", "live_remove_precheck", {}, {});
+    }
+
+    var originalMap = copyEnchantMap(getEnchantmentsFromMcStack(workingCopy));
+    if (!originalMap.hasOwnProperty(enchantId)) {
+        return buildFailureResult("invalid_target", "live_remove_missing", originalMap, originalMap);
+    }
+
+    var nextMap = copyEnchantMap(originalMap);
+    delete nextMap[enchantId];
+
+    var writeResult = setItemEnchantmentsOnMcStack(workingCopy, nextMap);
+    if (!writeResult.ok) {
+        writeResult.original = originalMap;
+        return writeResult;
+    }
+
+    var commitResult = itemUtils.commitHeldMcStack(player, workingCopy, function(readBackMcStack) {
+        return buildEnchantmentsResult(nextMap, getEnchantmentsFromMcStack(readBackMcStack), "live_remove_commit_readback");
+    });
+    commitResult.original = originalMap;
+    commitResult.removed = {
+        id: enchantId,
+        level: clampLevel(originalMap[enchantId])
+    };
+    return commitResult;
 }
 
 function mergeBookEnchantments(firstMap, secondMap) {
@@ -607,13 +747,18 @@ module.exports = {
     isEnchantedBook: isEnchantedBook,
     getEnchantments: getEnchantments,
     getEnchantmentEntries: getEnchantmentEntries,
+    buildEnchantmentsResult: buildEnchantmentsResult,
+    setBookEnchantmentsOnMcStack: setBookEnchantmentsOnMcStack,
+    setItemEnchantmentsOnMcStack: setItemEnchantmentsOnMcStack,
     setEnchantments: setEnchantments,
     removeEnchantment: removeEnchantment,
     createEnchantedBook: createEnchantedBook,
     createEnchantedBookFromMap: createEnchantedBookFromMap,
     canApplyEnchantmentToItem: canApplyEnchantmentToItem,
     canEnchantmentsCoexist: canEnchantmentsCoexist,
-    applyBookToTarget: applyBookToTarget,
+    applyBookToLiveMainhand: applyBookToLiveMainhand,
+    setLiveMainhandEnchantments: setLiveMainhandEnchantments,
+    removeEnchantmentFromLiveMainhand: removeEnchantmentFromLiveMainhand,
     mergeBookEnchantments: mergeBookEnchantments,
     getDisplayName: getDisplayName,
     copyEnchantMap: copyEnchantMap,

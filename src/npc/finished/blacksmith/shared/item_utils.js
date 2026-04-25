@@ -102,6 +102,84 @@ function updateInventory(player) {
     } catch (e) {}
 }
 
+function getLiveMainhandMcStack(player) {
+    try {
+        var mcPlayer = player.getMCEntity();
+        if (mcPlayer == null) return null;
+        var mcStack = mcPlayer.getItemInHand(ItemUtils_InteractionHand.MAIN_HAND);
+        if (mcStack == null || mcStack.isEmpty()) return null;
+        return mcStack;
+    } catch (e) {
+        return null;
+    }
+}
+
+function cloneLiveMainhandMcStack(player) {
+    var mcStack = getLiveMainhandMcStack(player);
+    if (mcStack == null || mcStack.isEmpty()) return null;
+
+    try {
+        return mcStack.copy();
+    } catch (e) {
+        return null;
+    }
+}
+
+function buildHeldCommitResult(ok, reason, phase, actualStack) {
+    return {
+        ok: ok === true,
+        reason: hasText(reason) ? reason : "",
+        phase: hasText(phase) ? phase : "",
+        actualStack: actualStack == null || actualStack.isEmpty() ? null : actualStack
+    };
+}
+
+function replaceHeldMcStack(player, mcStack) {
+    try {
+        var mcPlayer = player.getMCEntity();
+        if (mcPlayer == null) {
+            return buildHeldCommitResult(false, "write_failed", "commit", null);
+        }
+
+        if (mcStack == null || mcStack.isEmpty()) {
+            mcPlayer.setItemInHand(
+                ItemUtils_InteractionHand.MAIN_HAND,
+                new ItemUtils_MCItemStack(ItemUtils_Items.AIR)
+            );
+        } else {
+            mcPlayer.setItemInHand(ItemUtils_InteractionHand.MAIN_HAND, mcStack.copy());
+        }
+
+        updateInventory(player);
+        return buildHeldCommitResult(true, "", "commit", getLiveMainhandMcStack(player));
+    } catch (e) {
+        return buildHeldCommitResult(false, "write_failed", "commit", getLiveMainhandMcStack(player));
+    }
+}
+
+function commitHeldMcStack(player, mcStack, readBackValidator) {
+    var commitResult = replaceHeldMcStack(player, mcStack);
+    if (!commitResult.ok) return commitResult;
+
+    if (typeof readBackValidator != "function") return commitResult;
+
+    try {
+        var validation = readBackValidator(getLiveMainhandMcStack(player));
+        if (validation == null) {
+            return buildHeldCommitResult(true, "", "readback", getLiveMainhandMcStack(player));
+        }
+
+        if (validation.actualStack == null || validation.actualStack.isEmpty()) {
+            validation.actualStack = getLiveMainhandMcStack(player);
+        }
+        if (!hasText(validation.phase)) validation.phase = "readback";
+        if (!validation.ok && !hasText(validation.reason)) validation.reason = "readback_mismatch";
+        return validation;
+    } catch (e) {
+        return buildHeldCommitResult(false, "readback_mismatch", "readback", getLiveMainhandMcStack(player));
+    }
+}
+
 function decrementHeldItem(player, count) {
     var amount = count == null ? 1 : count;
     if (amount <= 0) amount = 1;
@@ -127,22 +205,8 @@ function decrementHeldItem(player, count) {
 }
 
 function replaceHeldItem(player, item) {
-    try {
-        var mcPlayer = player.getMCEntity();
-        var mcStack = item == null ? null : getMcStack(item);
-        if (mcStack == null || mcStack.isEmpty()) {
-            mcPlayer.setItemInHand(
-                ItemUtils_InteractionHand.MAIN_HAND,
-                new ItemUtils_MCItemStack(ItemUtils_Items.AIR)
-            );
-        } else {
-            mcPlayer.setItemInHand(ItemUtils_InteractionHand.MAIN_HAND, mcStack.copy());
-        }
-        updateInventory(player);
-        return true;
-    } catch (e) {
-        return false;
-    }
+    var mcStack = item == null ? null : getMcStack(item);
+    return replaceHeldMcStack(player, mcStack).ok;
 }
 
 function giveItemOrDrop(player, item) {
@@ -192,6 +256,10 @@ module.exports = {
     cloneItem: cloneItem,
     cloneSingleItem: cloneSingleItem,
     updateInventory: updateInventory,
+    getLiveMainhandMcStack: getLiveMainhandMcStack,
+    cloneLiveMainhandMcStack: cloneLiveMainhandMcStack,
+    replaceHeldMcStack: replaceHeldMcStack,
+    commitHeldMcStack: commitHeldMcStack,
     decrementHeldItem: decrementHeldItem,
     replaceHeldItem: replaceHeldItem,
     giveItemOrDrop: giveItemOrDrop

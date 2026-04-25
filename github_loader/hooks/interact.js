@@ -543,7 +543,7 @@ function createRootScriptEntry(hookFile, hookName) {
 
 function buildNpcSharedFactory() {
     var source = "(function(event){\n";
-    source += "var npc=event==null?null:event.npc;\n";
+    source += "var npc=event==null?null:(event.__github_loader_npc!=null?event.__github_loader_npc:event.npc);\n";
     source += "if(npc==null||npc.getStoreddata==null)throw 'Shared coordinator `__shared` is missing';\n";
     source += "var data=npc.getStoreddata();\n";
     source += "var manifestRaw=''+data.get(" + JSON.stringify(NPC_SHARED_MANIFEST_KEY) + ");\n";

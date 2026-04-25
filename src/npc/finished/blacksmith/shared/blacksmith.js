@@ -25,7 +25,7 @@ function onInteract(event) {
     if (session == null) return;
 
     if (itemUtils.isEmptyItem(itemUtils.getMainhandItem(player))) {
-        cancelSession(npc, player, runtime, session, "Операция отменена. Материалы возвращены.");
+        cancelSession(npc, player, runtime, session, "Operation canceled. Materials returned.");
         event.setCanceled(true);
         return;
     }
@@ -58,7 +58,7 @@ function onDialogOption(event) {
     var runtime = ensureRuntime(npc);
     var session = getSession(runtime, player, false);
     if (session != null) {
-        cancelSession(npc, player, runtime, session, "Предыдущая операция отменена. Материалы возвращены.");
+        cancelSession(npc, player, runtime, session, "Previous operation canceled. Materials returned.");
     }
 
     if (service == "apply") {
@@ -82,7 +82,7 @@ function onGuiScroll(event) {
     if (gui == null || scroll == null) return;
     if (gui.getID() != REMOVE_GUI_ID) return;
 
-    var npc = resolveGuiNpc(event.player, event.npc);
+    var npc = resolveGuiNpc(event.player, getAuthoritativeEventNpc(event));
     if (npc == null) {
         closePlayerGui(event.player);
         return;
@@ -101,7 +101,7 @@ function onGuiScroll(event) {
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "Снятие зачарования отменено.");
+        tellPlayer(npc, player, "Enchant removal canceled.");
         return;
     }
 
@@ -111,7 +111,7 @@ function onGuiScroll(event) {
 function onGuiClosed(event) {
     if (event.gui == null || event.gui.getID() != REMOVE_GUI_ID) return;
 
-    var npc = resolveGuiNpc(event.player, event.npc);
+    var npc = resolveGuiNpc(event.player, getAuthoritativeEventNpc(event));
     clearGuiNpc(event.player);
     if (npc == null) return;
 
@@ -132,7 +132,7 @@ function beginApply(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "Дай мне зачарованную книгу.");
+    tellPlayer(npc, player, "Give me an enchanted book.");
 }
 
 function beginMerge(npc, player, runtime) {
@@ -143,7 +143,7 @@ function beginMerge(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "Дай мне первую зачарованную книгу.");
+    tellPlayer(npc, player, "Give me the first enchanted book.");
 }
 
 function beginRemove(npc, player, runtime) {
@@ -154,7 +154,7 @@ function beginRemove(npc, player, runtime) {
         firstBook: null,
         removeChoices: null
     });
-    tellPlayer(npc, player, "Нажми ПКМ предметом, с которого хочешь снять зачарование.");
+    tellPlayer(npc, player, "Right-click with the item whose enchantment you want to remove.");
 }
 
 function handleApplyInteract(npc, player, runtime, session) {
@@ -162,26 +162,26 @@ function handleApplyInteract(npc, player, runtime, session) {
 
     if (session.step == "waiting_book") {
         if (!enchantUtils.isEnchantedBook(heldItem)) {
-            tellPlayer(npc, player, "Дай мне именно зачарованную книгу.");
+            tellPlayer(npc, player, "Give me an actual enchanted book.");
             return;
         }
 
         session.heldBook = itemUtils.cloneSingleItem(heldItem);
         if (itemUtils.isEmptyItem(session.heldBook)) {
-            tellPlayer(npc, player, "Не удалось принять книгу.");
+            tellPlayer(npc, player, "Failed to accept the book.");
             clearSession(runtime, player);
             return;
         }
 
         if (!itemUtils.decrementHeldItem(player, 1)) {
             session.heldBook = null;
-            tellPlayer(npc, player, "Не удалось забрать книгу.");
+            tellPlayer(npc, player, "Failed to take the book.");
             clearSession(runtime, player);
             return;
         }
 
         session.step = "waiting_target";
-        tellPlayer(npc, player, "Теперь дай предмет, на который нужно наложить зачарование.");
+        tellPlayer(npc, player, "Now give me the item that should receive the enchantment.");
         return;
     }
 
@@ -189,21 +189,21 @@ function handleApplyInteract(npc, player, runtime, session) {
 
     if (itemUtils.isEmptyItem(session.heldBook)) {
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Операция сбилась. Начни еще раз.");
+        tellPlayer(npc, player, "Operation lost state. Start again.");
         return;
     }
 
-    var applyResult = enchantUtils.applyBookToTarget(session.heldBook, heldItem);
+    var applyResult = enchantUtils.applyBookToLiveMainhand(player, session.heldBook);
     if (!applyResult.ok) {
         returnStoredItem(player, session.heldBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Эту книгу нельзя наложить на этот предмет. Я вернул материалы.");
+        tellPlayer(npc, player, getApplyFailureMessage(applyResult.reason));
         return;
     }
 
     itemUtils.updateInventory(player);
     clearSession(runtime, player);
-    tellPlayer(npc, player, "Зачарование успешно наложено.");
+    tellPlayer(npc, player, "Enchantment applied successfully.");
 }
 
 function handleMergeInteract(npc, player, runtime, session) {
@@ -212,39 +212,39 @@ function handleMergeInteract(npc, player, runtime, session) {
 
     if (session.step == "waiting_first_book") {
         if (!enchantUtils.isEnchantedBook(heldItem)) {
-            tellPlayer(npc, player, "Дай мне первую зачарованную книгу.");
+            tellPlayer(npc, player, "Give me the first enchanted book.");
             return;
         }
 
         session.firstBook = itemUtils.cloneSingleItem(heldItem);
         if (itemUtils.isEmptyItem(session.firstBook)) {
-            tellPlayer(npc, player, "Не удалось принять книгу.");
+            tellPlayer(npc, player, "Failed to accept the book.");
             clearSession(runtime, player);
             return;
         }
 
         if (!itemUtils.decrementHeldItem(player, 1)) {
             session.firstBook = null;
-            tellPlayer(npc, player, "Не удалось забрать книгу.");
+            tellPlayer(npc, player, "Failed to take the book.");
             clearSession(runtime, player);
             return;
         }
 
         session.step = "waiting_second_book";
-        tellPlayer(npc, player, "Теперь дай мне вторую зачарованную книгу.");
+        tellPlayer(npc, player, "Now give me the second enchanted book.");
         return;
     }
 
     if (session.step != "waiting_second_book") return;
 
     if (!enchantUtils.isEnchantedBook(heldItem)) {
-        tellPlayer(npc, player, "Теперь дай именно вторую зачарованную книгу.");
+        tellPlayer(npc, player, "Now give me the second enchanted book specifically.");
         return;
     }
 
     if (itemUtils.isEmptyItem(session.firstBook)) {
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Операция сбилась. Начни еще раз.");
+        tellPlayer(npc, player, "Operation lost state. Start again.");
         return;
     }
 
@@ -257,18 +257,18 @@ function handleMergeInteract(npc, player, runtime, session) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
         if (mergeResult.reason == "max_level") {
-            tellPlayer(npc, player, "Это зачарование уже имеет максимальный уровень.");
+            tellPlayer(npc, player, "That enchantment is already at the maximum level.");
         } else {
-            tellPlayer(npc, player, "Эти книги нельзя корректно объединить. Я вернул материалы.");
+            tellPlayer(npc, player, "These books cannot be merged correctly. Materials were returned.");
         }
         return;
     }
 
     var resultBook = enchantUtils.createEnchantedBookFromMap(mergeResult.map);
-    if (itemUtils.isEmptyItem(resultBook) || !enchantUtils.isEnchantedBook(resultBook)) {
+    if (!resultBook.ok || itemUtils.isEmptyItem(resultBook.item) || !enchantUtils.isEnchantedBook(resultBook.item)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Не удалось создать результат.");
+        tellPlayer(npc, player, "Failed to create a valid enchanted book result.");
         return;
     }
 
@@ -276,29 +276,29 @@ function handleMergeInteract(npc, player, runtime, session) {
     if (itemUtils.isEmptyItem(secondBookCopy)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Не удалось подготовить вторую книгу к объединению.");
+        tellPlayer(npc, player, "Failed to prepare the second book for merging.");
         return;
     }
 
     if (!itemUtils.decrementHeldItem(player, 1)) {
         returnStoredItem(player, session.firstBook);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Не удалось забрать вторую книгу.");
+        tellPlayer(npc, player, "Failed to take the second book.");
         return;
     }
 
-    if (!itemUtils.giveItemOrDrop(player, resultBook)) {
+    if (!itemUtils.giveItemOrDrop(player, resultBook.item)) {
         returnStoredItem(player, session.firstBook);
         returnStoredItem(player, secondBookCopy);
         itemUtils.updateInventory(player);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Не удалось отдать результирующую книгу.");
+        tellPlayer(npc, player, "Failed to give the resulting book.");
         return;
     }
 
     itemUtils.updateInventory(player);
     clearSession(runtime, player);
-    tellPlayer(npc, player, "Книги успешно объединены.");
+    tellPlayer(npc, player, "Books merged successfully.");
 }
 
 function handleRemoveInteract(npc, player, runtime, session) {
@@ -307,7 +307,7 @@ function handleRemoveInteract(npc, player, runtime, session) {
     var heldItem = itemUtils.getMainhandItem(player);
     var entries = enchantUtils.getEnchantmentEntries(heldItem);
     if (entries == null || entries.length <= 0) {
-        tellPlayer(npc, player, "На этом предмете нет зачарований.");
+        tellPlayer(npc, player, "That item has no enchantments.");
         clearSession(runtime, player);
         return;
     }
@@ -321,25 +321,25 @@ function handleRemoveInteract(npc, player, runtime, session) {
     } catch (e) {
         clearGuiNpc(player);
         clearSession(runtime, player);
-        tellPlayer(npc, player, "Не удалось открыть список зачарований.");
+        tellPlayer(npc, player, "Failed to open the enchantment list.");
     }
 }
 
 function createRemoveGui(player, entries) {
     var gui = guiUtils.createGui(REMOVE_GUI_ID, 320, 248, player);
-    gui.addLabel(1, "Снять зачарование", 10, 10, 220, 18, 0xFFFFFF);
+    gui.addLabel(1, "Remove Enchantment", 10, 10, 220, 18, 0xFFFFFF);
     gui.addColoredLine(2, 10, 34, 300, 34, 0x8B6F47, 1.5);
-    gui.addLabel(3, "Выбери одно зачарование", 10, 42, 220, 14, 0xE0E0E0);
+    gui.addLabel(3, "Choose one enchantment", 10, 42, 220, 14, 0xE0E0E0);
     gui.addScroll(REMOVE_SCROLL_ID, 10, 58, 300, 134, buildRemoveEntries(entries));
     gui.addTextArea(REMOVE_STATUS_ID, 10, 198, 300, 28);
-    guiUtils.setGuiText(gui, REMOVE_STATUS_ID, "Выбери зачарование или отмени.");
+    guiUtils.setGuiText(gui, REMOVE_STATUS_ID, "Choose an enchantment or cancel.");
     return gui;
 }
 
 function buildRemoveEntries(entries) {
     var out = [];
     for (var i = 0; i < entries.length; i++) out.push(entries[i].label);
-    out.push("Отмена");
+    out.push("Cancel");
     return out;
 }
 
@@ -350,47 +350,39 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "Держи нужный предмет в основной руке.");
+        tellPlayer(npc, player, "Keep the correct item in main hand.");
         return;
     }
 
     var book = enchantUtils.createEnchantedBook(selected.id, selected.level);
-    if (itemUtils.isEmptyItem(book) || !enchantUtils.isEnchantedBook(book)) {
+    if (!book.ok || itemUtils.isEmptyItem(book.item) || !enchantUtils.isEnchantedBook(book.item)) {
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "Не удалось создать валидную книгу с зачарованием.");
+        tellPlayer(npc, player, "Failed to create a valid enchanted book.");
         return;
     }
 
-    var originalMap = enchantUtils.copyEnchantMap(currentMap);
-    delete currentMap[selected.id];
-    if (!enchantUtils.setEnchantments(heldItem, currentMap)) {
+    var removeResult = enchantUtils.removeEnchantmentFromLiveMainhand(player, selected.id);
+    if (!removeResult.ok) {
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "Не удалось изменить предмет.");
+        tellPlayer(npc, player, getRemoveFailureMessage(removeResult.reason));
         return;
     }
 
-    var updatedMap = enchantUtils.getEnchantments(heldItem);
-    if (updatedMap.hasOwnProperty(selected.id)) {
-        enchantUtils.setEnchantments(heldItem, originalMap);
+    if (!itemUtils.giveItemOrDrop(player, book.item)) {
+        var rollbackResult = enchantUtils.setLiveMainhandEnchantments(player, removeResult.original);
         itemUtils.updateInventory(player);
         clearSession(runtime, player);
         clearGuiNpc(player);
         closePlayerGui(player);
-        tellPlayer(npc, player, "Зачарование не снялось с предмета.");
-        return;
-    }
-
-    if (!itemUtils.giveItemOrDrop(player, book)) {
-        enchantUtils.setEnchantments(heldItem, originalMap);
-        itemUtils.updateInventory(player);
-        clearSession(runtime, player);
-        clearGuiNpc(player);
-        closePlayerGui(player);
-        tellPlayer(npc, player, "Не удалось выдать книгу с зачарованием.");
+        if (!rollbackResult.ok) {
+            tellPlayer(npc, player, "Failed to give book, and rollback failed: " + rollbackResult.reason + ".");
+            return;
+        }
+        tellPlayer(npc, player, "Failed to give enchanted book. Original enchantments were restored.");
         return;
     }
 
@@ -398,7 +390,7 @@ function finalizeRemoveSelection(npc, player, runtime, session, selected) {
     clearSession(runtime, player);
     clearGuiNpc(player);
     closePlayerGui(player);
-    tellPlayer(npc, player, "Зачарование снято.");
+    tellPlayer(npc, player, "Enchantment removed.");
 }
 
 function cancelSession(npc, player, runtime, session, message) {
@@ -497,6 +489,14 @@ function resolveGuiNpc(player, fallbackNpc) {
     return fallbackNpc == null ? null : fallbackNpc;
 }
 
+function getAuthoritativeEventNpc(event) {
+    try {
+        if (event.__github_loader_npc != null) return event.__github_loader_npc;
+    } catch (e1) {}
+
+    return event.npc;
+}
+
 function detectDialogService(event) {
     if (getDialogId(event) != DIALOG_ID) return "";
 
@@ -533,6 +533,23 @@ function getOptionSlot(event) {
 
 function normalizeText(value) {
     return itemUtils.trimString(value).toLowerCase();
+}
+
+function getApplyFailureMessage(reason) {
+    if (reason == "invalid_target") return "Hold a valid non-book item in main hand.";
+    if (reason == "unsupported") return "This enchantment is not supported on that item.";
+    if (reason == "conflict") return "This enchantment conflicts with existing enchantments.";
+    if (reason == "no_upgrade") return "That book would not upgrade the target item.";
+    if (reason == "write_failed") return "Failed to write enchantments to the held item.";
+    if (reason == "readback_mismatch") return "Enchantments did not survive commit validation.";
+    return "Apply failed. Materials were returned.";
+}
+
+function getRemoveFailureMessage(reason) {
+    if (reason == "invalid_target") return "Hold the same enchanted item in main hand.";
+    if (reason == "write_failed") return "Failed to write the updated held item.";
+    if (reason == "readback_mismatch") return "Held item validation failed after remove.";
+    return "Failed to remove the selected enchantment.";
 }
 
 module.exports = {
