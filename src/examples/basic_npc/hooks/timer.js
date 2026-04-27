@@ -1,7 +1,9 @@
 // @ts-check
 
+/** @typedef {import("noppes.npcs.api.event.NpcEvent").TimerEvent} NpcTimerEvent */
+
 /**
- * @param {any} event
+ * @param {NpcTimerEvent} event
  * @returns {any}
  */
 function requireShared(event) {
@@ -22,18 +24,8 @@ function requireShared(event) {
     return factory(event);
 }
 
-/**
- * @param {any} event
- */
-function dialog(event) {
+/** @param {NpcTimerEvent} event */
+function timer(event) {
     var shared = requireShared(event);
-    shared.npc.onDialog(event);
-}
-
-/**
- * @param {any} event
- */
-function dialogOption(event) {
-    var shared = requireShared(event);
-    shared.npc.onDialog(event);
+    shared.npc.onTimer(event);
 }

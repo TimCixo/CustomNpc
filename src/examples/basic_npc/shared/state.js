@@ -1,9 +1,15 @@
 // @ts-check
 
-var STATE_KEY = "template_state";
+var STATE_KEY = "basic_npc_example_state";
 
 function createState() {
     return {
+        sequence: 0,
+        initCount: 0,
+        interactCount: 0,
+        timerCount: 0,
+        deathCount: 0,
+        lastPlayerName: "",
         lastHook: ""
     };
 }

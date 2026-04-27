@@ -18,6 +18,16 @@ function hasText(value) {
 }
 
 /**
+ * @param {any} value
+ * @param {number} fallback
+ * @returns {number}
+ */
+function toInt(value, fallback) {
+    var parsed = parseInt(text(value), 10);
+    return isNaN(parsed) ? fallback : parsed;
+}
+
+/**
  * @param {any} raw
  * @param {any} fallback
  * @returns {any}
@@ -46,9 +56,19 @@ function safeStringifyJson(value, fallback) {
     }
 }
 
+/**
+ * @param {any} value
+ * @returns {boolean}
+ */
+function isObject(value) {
+    return value != null && typeof value == "object";
+}
+
 module.exports = {
     text: text,
     hasText: hasText,
+    toInt: toInt,
     safeParseJson: safeParseJson,
-    safeStringifyJson: safeStringifyJson
+    safeStringifyJson: safeStringifyJson,
+    isObject: isObject
 };

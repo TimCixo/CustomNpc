@@ -1,14 +1,10 @@
-# NPC Template Package
+# NPC Template Skeleton
 
-Reusable loader-friendly NPC template for CustomNPCs Unofficial 1.21.1.
+Minimal starter skeleton for a loader-friendly NPC package in CustomNPCs Unofficial 1.21.1.
 
-This template is a lightweight skeleton with a small live state demo.
+This package is meant to be copied and customized. It keeps the shared module split and hook entry-point pattern, but it intentionally avoids demo-heavy runtime behavior.
 
-- thin hooks
-- shared modules
-- inspector-facing setup in `hooks/init.js`
-- config and dialogs in `storeddata`
-- live mutable state in `tempdata`
+For a working educational package with live state counters and visible hook-to-hook state mutation, see [src/examples/basic_npc](/src/examples/basic_npc).
 
 ## Structure
 
@@ -35,91 +31,66 @@ template/
 ## Shared Modules
 
 - `shared/utils.js`
-  Small generic helpers, mainly safe JSON parse/stringify and string helpers.
+  Small generic helpers for strings and JSON.
 - `shared/config.js`
-  Dumb config storage with `shared.config.set(npc, data)` and `shared.config.get(npc)`.
+  Stores and reads config JSON in `storeddata`.
 - `shared/dialogs.js`
-  Dumb dialog mapping storage with `shared.dialogs.set(npc, data)` and `shared.dialogs.get(npc)`.
-  It also provides `shared.dialogs.isDialog(dialogId, dialogRef)` and `shared.dialogs.isOption(optionId, optionRef)`.
+  Stores and reads dialog id mappings in `storeddata`.
 - `shared/state.js`
-  Stores the live runtime state in `tempdata` with `shared.state.get(npc)`, `shared.state.reset(npc)`, and `shared.state.dispose(npc)`.
+  Manages the live runtime state object in `tempdata`.
 - `shared/npc.js`
-  Small hook orchestrator for the demo behavior.
+  Minimal hook facade used by the hook wrappers.
 
-## Data Model
+## Data Locations
 
 - `storeddata`
-  Persistent setup data. This template stores config JSON and dialog mapping JSON there.
+  Persistent setup data such as config and dialog mappings.
 - `tempdata`
-  Live mutable current-life state. This template stores counters, `lastHook`, and `lastPlayerName` there.
+  Live mutable runtime state for the current NPC runtime.
 
-`shared` is only the shared module layer loaded by the loader. It is not runtime state.
+`shared` is only the module layer returned by the loader factory. It is not persisted runtime state.
 
-## How `state.get(npc)` Works
-
-`shared.state.get(npc)` tries to read the state object from `tempdata`.
-
-- If state exists, it returns that same live object.
-- If state is missing, it creates a fresh default object, stores it in `tempdata`, and returns it.
-
-That means direct mutation is the intended pattern:
+## Public API
 
 ```js
-var state = shared.state.get(npc);
-state.interactCount++;
-state.lastHook = "interact";
+shared.config.set(npc, data);
+shared.config.get(npc);
+
+shared.dialogs.set(npc, data);
+shared.dialogs.get(npc);
+shared.dialogs.isDialog(dialogId, dialogRef);
+shared.dialogs.isOption(optionId, optionRef);
+
+shared.state.get(npc);
+shared.state.reset(npc);
+shared.state.dispose(npc);
 ```
 
-There is intentionally no `shared.state.set(...)`.
+`shared.state.get(npc)` returns the live object stored in `tempdata`. If the object is missing, it creates one, stores it immediately, and returns it.
 
-## Demo Hooks
+## Hook Pattern
 
-Hooks with real demo behavior:
+- `hooks/init.js`
+  Human-editable setup layer. Define grouped config and dialog ids there, write them into `storeddata`, reset state, and delegate to `shared.npc.init(event)`.
+- Other hooks
+  Thin wrappers that load shared and delegate to `shared.npc.*` functions.
 
-- `init.js`
-  Stores config and dialogs, resets state, and starts the timer flow.
-- `interact.js`
-  Reads the current state and prints a compact summary.
-- `timer.js`
-  Increments `timerCount` silently.
-- `died.js`
-  Prints the final accumulated state and then disposes it.
-
-Hooks intentionally left as empty skeleton placeholders:
-
-- `dialog.js`
-- `damaged.js`
-
-## What The State Demo Proves
-
-The state object stays small:
-
-- `sequence`
-- `initCount`
-- `interactCount`
-- `timerCount`
-- `deathCount`
-- `lastPlayerName`
-- `lastHook`
-
-`init` increments `initCount`, `timer` increments `timerCount` silently, `interact` increments `interactCount` and prints the current values, and `died` increments `deathCount` and prints the final values. When `interact` shows a non-zero `timerCount`, that is direct proof that another hook already mutated the same live object in `tempdata`.
+The default implementation is intentionally small. The files exist to show where behavior should be added later, not to act as a full tutorial package.
 
 ## Lifecycle
 
 - `shared.state.reset(npc)`
-  Replaces the current tempdata state with a fresh default object.
+  Replaces the current runtime state with a fresh object.
 - `shared.state.dispose(npc)`
-  Removes the tempdata state completely.
+  Removes the runtime state from `tempdata`.
 
-The template uses `reset` in `init.js` to start a fresh lifecycle and `dispose` in `died.js` after printing the final state summary.
+## When To Use The Example
 
-## Inspector-Facing Setup
+If you want to see:
 
-`hooks/init.js` is the place intended for human editing.
+- visible state mutation between hooks
+- timer-driven state changes
+- compact chat/status output
+- a concrete `storeddata` vs `tempdata` demo
 
-- `TEMPLATE_CONFIG`
-  Generic grouped config such as `initialization`, `interact`, and `death`
-- `TEMPLATE_DIALOGS`
-  Generic dialog refs such as `main.id` and `main.options.hello`
-
-This keeps the durable setup visible in one file while the runtime logic stays in shared modules. There is no config normalization or dialog reconstruction layer in the template.
+use [src/examples/basic_npc](/src/examples/basic_npc) as the reference package.

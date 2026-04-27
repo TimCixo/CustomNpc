@@ -5,67 +5,10 @@ var stateShared = require("state.js");
 var utils = require("utils.js");
 
 /**
- * @param {any} player
- * @returns {string}
- */
-function getPlayerName(player) {
-    if (player == null) return "";
-
-    try {
-        return utils.text(player.getName());
-    } catch (e) {}
-
-    try {
-        return utils.text(player.name);
-    } catch (e2) {}
-
-    return "";
-}
-
-/**
- * @param {any} state
- * @returns {string}
- */
-function getStateLine(state) {
-    var lastPlayerName = utils.hasText(state.lastPlayerName) ? state.lastPlayerName : "<none>";
-    return "seq=" + state.sequence
-        + " init=" + state.initCount
-        + " interact=" + state.interactCount
-        + " timer=" + state.timerCount
-        + " death=" + state.deathCount
-        + " lastHook=" + state.lastHook
-        + " lastPlayer=" + lastPlayerName;
-}
-
-/**
- * @param {import("noppes.npcs.api.entity").ICustomNpc} npc
- * @param {string} message
- */
-function say(npc, message) {
-    if (!utils.hasText(message)) return;
-
-    try {
-        npc.say(message);
-    } catch (e) {}
-}
-
-/**
- * @param {any} player
- * @param {string} message
- */
-function tell(player, message) {
-    if (player == null || !utils.hasText(message)) return;
-
-    try {
-        player.message(message);
-    } catch (e) {}
-}
-
-/**
  * @param {import("noppes.npcs.api.entity").ICustomNpc} npc
  * @param {any} config
  */
-function ensureTimer(npc, config) {
+function startTimer(npc, config) {
     if (config == null || config.initialization == null) return;
 
     try {
@@ -93,35 +36,25 @@ function init(event) {
     var config = configShared.get(npc);
     var state = stateShared.get(npc);
 
-    state.sequence++;
-    state.initCount++;
     state.lastHook = "init";
-    state.lastPlayerName = "";
-
-    ensureTimer(npc, config);
-
-    if (config != null && config.initialization != null && config.initialization.announceInit) {
-        say(npc, "[template:init] " + getStateLine(state));
-    }
+    startTimer(npc, config);
 }
 
 /**
  * @param {any} event
  */
 function onInteract(event) {
-    var config = configShared.get(event.npc);
-    var state = stateShared.get(event.npc);
+    var npc = event.npc;
+    var config = configShared.get(npc);
+    var state = stateShared.get(npc);
 
-    state.sequence++;
-    state.interactCount++;
     state.lastHook = "interact";
-    state.lastPlayerName = getPlayerName(event.player);
 
     if (config != null && config.interact != null && utils.hasText(config.interact.message)) {
-        tell(event.player, "[template:interact] " + config.interact.message);
+        try {
+            event.player.message(config.interact.message);
+        } catch (e) {}
     }
-
-    tell(event.player, "[template:interact] " + getStateLine(state));
 }
 
 /**
@@ -134,8 +67,6 @@ function onTimer(event) {
     if (config == null || config.initialization == null) return;
     if (String(event.id) != String(config.initialization.timerId)) return;
 
-    state.sequence++;
-    state.timerCount++;
     state.lastHook = "timer";
 }
 
@@ -161,15 +92,12 @@ function onDied(event) {
     var config = configShared.get(npc);
     var state = stateShared.get(npc);
 
-    state.sequence++;
-    state.deathCount++;
     state.lastHook = "died";
-    state.lastPlayerName = getPlayerName(event.source);
-
-    say(npc, "[template:died] " + getStateLine(state));
 
     if (config != null && config.death != null && utils.hasText(config.death.goodbyeText)) {
-        say(npc, "[template:died] " + config.death.goodbyeText);
+        try {
+            npc.say(config.death.goodbyeText);
+        } catch (e) {}
     }
 
     stateShared.dispose(npc);

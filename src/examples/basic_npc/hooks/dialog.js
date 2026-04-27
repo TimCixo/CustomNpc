@@ -23,6 +23,7 @@ function requireShared(event) {
 }
 
 /**
+ * Supports both the plain dialog hook and option-style dialog events.
  * @param {any} event
  */
 function dialog(event) {
@@ -31,6 +32,7 @@ function dialog(event) {
 }
 
 /**
+ * Optional compatibility entrypoint when the environment uses dialogOption.
  * @param {any} event
  */
 function dialogOption(event) {

@@ -6,13 +6,14 @@ var TEMPLATE_CONFIG = {
     initialization: {
         timerId: 1,
         timerTicks: 40,
-        timerRepeat: false
+        timerRepeat: true,
+        announceInit: true
     },
     interact: {
-        message: ""
+        message: "This template uses stored config and live tempdata state."
     },
     death: {
-        goodbyeText: ""
+        goodbyeText: "Final state was printed, then tempdata state was disposed."
     }
 };
 

@@ -69,7 +69,8 @@ See:
 - [src/items](/src/items): scripted items and item workflows
 - [src/modules](/src/modules): reusable script helpers where local file structure allows it
 - [src/blocks](/src/blocks): block-related scripted behavior
-- [src/template](/src/template): base templates and reference entry points
+- [src/template](/src/template): minimal starter skeleton for new NPC packages
+- [src/examples/basic_npc](/src/examples/basic_npc): working educational example showing storeddata, tempdata, and live state persistence
 - [github_loader](/github_loader): GitHub NPC Loader item firmware
 - [docs](/docs): project-specific architecture and environment notes
 - [types](/types): editor support for `Java.type(...)` and mod classes
