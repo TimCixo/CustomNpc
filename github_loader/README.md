@@ -123,7 +123,7 @@ This keeps item NBT small enough for large packages.
 When applying a package:
 
 - `hooks/init.js` is pinned to the root init slot
-- other hook files are mapped dynamically by hook filename when the NPC script system exposes a matching slot
+- other hook files are mapped dynamically by hook filename only when the NPC script system exposes a matching slot
 - unknown hook files are skipped as warnings instead of failing the install
 - shared files are stored in NPC storeddata
 - large shared source bodies may be chunked in storeddata

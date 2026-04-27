@@ -36,7 +36,6 @@ var PREVIEW_BACK_ID = 9335;
 
 var SHARED_CHUNK_SIZE = 12000;
 var PREVIEW_MAX_CHARS = 12000;
-var HOOK_ORDER = ["init", "interact", "dialogOption", "customGuiScroll", "customGuiClosed", "timer", "target", "attack", "damaged", "meleeAttack", "killed", "kills", "died", "collide"];
 
 function interact(event) {
     var item = event.item;
@@ -436,107 +435,25 @@ function writeNpcHooks(data, hooks) {
 function writeNpcScriptTabs(npc, hooks) {
     var result = { attempted: false, written: 0, total: hooks == null ? 0 : hooks.length, error: "", namesWritten: [], skipped: [], usedNbt: false };
     try {
-        var handler = getNpcScriptHandler(npc);
-        if (handler == null || handler.scripts == null) {
+        var nbt = getNpcNbt(npc);
+        if (nbt == null) {
             result.error = "script tabs unavailable";
-            return writeNpcScriptTabsViaNbt(npc, hooks, result);
+            return result;
         }
 
-        var scripts = handler.scripts;
-        var scriptCount = getCollectionSize(scripts);
-        if (scriptCount <= 0) {
-            result.error = "script tabs unavailable";
-            return writeNpcScriptTabsViaNbt(npc, hooks, result);
-        }
-
-        var requiredCount = getRequiredScriptCount(hooks);
-        if (scriptCount < requiredCount) {
-            return writeNpcScriptTabsViaNbt(npc, hooks, result);
-        }
-
-        var plan = buildHookWritePlan(scripts, hooks);
         result.attempted = true;
-        for (var i = 0; i < plan.length; i++) {
-            var entry = plan[i];
-            if (entry.slot < 0) {
-                result.skipped.push(buildSkippedHookWarning(entry.hook));
-                continue;
-            }
-
-            var container = getCollectionValue(scripts, entry.slot);
-            if (container == null) {
-                return writeNpcScriptTabsViaNbt(npc, hooks, result);
-            }
-
-            container.script = entry.hook.body;
-            container.fullscript = entry.hook.body;
-            result.written++;
-            result.namesWritten.push(entry.hook.hook);
-        }
-
-        handler.enabled = true;
-        if (handler.saveScriptData != null) handler.saveScriptData();
-        if (handler.loadScriptData != null) handler.loadScriptData();
-        return result;
-    } catch (e) {
-        result.attempted = true;
-        result.error = "" + e;
-        return result;
-    }
-}
-
-function writeNpcScriptTabsViaNbt(npc, hooks, result) {
-    var nbt = getNpcNbt(npc);
-    if (nbt == null) {
-        result.attempted = false;
-        result.error = "script tabs unavailable";
-        return result;
-    }
-
-    result.attempted = true;
-    result.usedNbt = true;
-    try {
-        var nbtHooks = getBindableRootHooks(hooks, result.skipped);
-        nbt.mcSetTag("Scripts", buildScriptsMcTag(nbtHooks));
-        nbt.setBoolean("ScriptEnabled", true);
-        nbt.putString("ScriptLanguage", "ECMAScript");
+        result.usedNbt = true;
+        var scriptsTag = buildNpcScriptsTag(hooks);
+        setNpcScriptsTag(nbt, scriptsTag);
+        setNpcScriptFlags(nbt);
         setNpcNbt(npc, nbt);
-
-        for (var i = 0; i < nbtHooks.length; i++) {
-            result.written++;
-            result.namesWritten.push(nbtHooks[i].hook);
-        }
-
-        if (!hasText(result.error)) result.error = "";
+        finalizeNbtWriteValidation(result, getNpcNbt(npc), hooks);
         return result;
     } catch (e) {
+        result.attempted = true;
         result.error = "" + e;
         return result;
     }
-}
-
-function buildScriptsMcTag(hooks) {
-    var scriptsTag = new GitLoader_ListTag();
-    var hookMap = {};
-    for (var i = 0; i < hooks.length; i++) {
-        if (hooks[i] != null && hasText(hooks[i].hook)) hookMap[hooks[i].hook] = hooks[i];
-    }
-    for (var j = 0; j < HOOK_ORDER.length; j++) {
-        var hookName = HOOK_ORDER[j];
-        scriptsTag.add(createRootScriptEntry(hookMap[hookName], hookName));
-    }
-    return scriptsTag;
-}
-
-function createRootScriptEntry(hookFile, hookName) {
-    var rootTag = new GitLoader_CompoundTag();
-    var body = hookFile == null || hookFile.body == null ? "" : "" + hookFile.body;
-    rootTag.putString("Script", body);
-    rootTag.put("Console", new GitLoader_ListTag());
-    rootTag.put("ScriptList", new GitLoader_ListTag());
-    rootTag.putString("GitHubHook", hookName == null ? "" : "" + hookName);
-    rootTag.putString("GitHubPath", hookFile == null || hookFile.relativePath == null ? "" : "" + hookFile.relativePath);
-    return rootTag;
 }
 
 function buildNpcSharedFactory() {
@@ -956,12 +873,6 @@ function sortHooks(hooks) {
         if (aInit && !bInit) return -1;
         if (!aInit && bInit) return 1;
 
-        var aIndex = hookIndex(a == null ? "" : a.hook);
-        var bIndex = hookIndex(b == null ? "" : b.hook);
-        if (aIndex >= 0 && bIndex >= 0 && aIndex != bIndex) return aIndex - bIndex;
-        if (aIndex >= 0 && bIndex < 0) return -1;
-        if (aIndex < 0 && bIndex >= 0) return 1;
-
         var aPath = a == null ? "" : trimString(a.relativePath);
         var bPath = b == null ? "" : trimString(b.relativePath);
         return aPath < bPath ? -1 : (aPath > bPath ? 1 : 0);
@@ -978,111 +889,126 @@ function isInitHookName(name) {
     return trimString(name).toLowerCase() == "init";
 }
 
-function hookIndex(name) {
-    var target = trimString(name).toLowerCase();
-    for (var i = 0; i < HOOK_ORDER.length; i++) {
-        if (HOOK_ORDER[i].toLowerCase() == target) return i;
-    }
-    return -1;
-}
+function buildNpcScriptsTag(hooks) {
+    var scriptsTag = new GitLoader_ListTag();
+    if (hooks == null) return scriptsTag;
 
-function getRequiredScriptCount(hooks) {
-    var maxIndex = 0;
     for (var i = 0; i < hooks.length; i++) {
-        var index = hookIndex(hooks[i].hook);
-        if (index > maxIndex) maxIndex = index;
+        scriptsTag.add(createNpcScriptTabTag(hooks[i]));
     }
-    return maxIndex + 1;
+    return scriptsTag;
 }
 
-function buildHookWritePlan(scripts, hooks) {
-    var plan = [];
-    var usedSlots = {};
-    var ordered = hooks == null ? [] : hooks;
-
-    for (var i = 0; i < ordered.length; i++) {
-        var hookFile = ordered[i];
-        var slot = resolveHookSlot(scripts, hookFile == null ? "" : hookFile.hook, usedSlots);
-        if (slot >= 0) usedSlots[slot] = true;
-        plan.push({ hook: hookFile, slot: slot });
-    }
-
-    return plan;
+function createNpcScriptTabTag(hookFile) {
+    var scriptTag = new GitLoader_CompoundTag();
+    var source = hookFile == null || hookFile.body == null ? "" : "" + hookFile.body;
+    scriptTag.putString("Script", source);
+    scriptTag.put("Console", new GitLoader_ListTag());
+    scriptTag.put("ScriptList", new GitLoader_ListTag());
+    return scriptTag;
 }
 
-function resolveHookSlot(scripts, hookName, usedSlots) {
-    if (isInitHookName(hookName)) {
-        return isSlotUsable(scripts, 0, usedSlots) ? 0 : -1;
-    }
-
-    var scriptCount = getCollectionSize(scripts);
-    for (var i = 0; i < scriptCount; i++) {
-        if (!isSlotUsable(scripts, i, usedSlots)) continue;
-        if (scriptContainerMatchesHook(getCollectionValue(scripts, i), hookName, i)) return i;
-    }
-
-    var fallbackIndex = hookIndex(hookName);
-    if (fallbackIndex >= 0 && isSlotUsable(scripts, fallbackIndex, usedSlots)) return fallbackIndex;
-    return -1;
-}
-
-function isSlotUsable(scripts, slot, usedSlots) {
-    if (slot < 0) return false;
-    if (usedSlots != null && usedSlots[slot]) return false;
-    return getCollectionValue(scripts, slot) != null;
-}
-
-function scriptContainerMatchesHook(container, hookName, index) {
-    if (container == null || !hasText(hookName)) return false;
-
-    var target = trimString(hookName).toLowerCase();
-    var candidates = [];
-
-    pushHookNameCandidate(candidates, readContainerField(container, "hook"));
-    pushHookNameCandidate(candidates, readContainerField(container, "name"));
-    pushHookNameCandidate(candidates, readContainerField(container, "type"));
-    pushHookNameCandidate(candidates, readContainerField(container, "eventType"));
-    pushHookNameCandidate(candidates, readContainerField(container, "scriptType"));
-    pushHookNameCandidate(candidates, readContainerField(container, "function"));
-
-    for (var i = 0; i < candidates.length; i++) {
-        if (candidates[i] == target) return true;
-    }
-
-    return hookIndex(hookName) == index;
-}
-
-function readContainerField(container, fieldName) {
+function setNpcScriptsTag(nbt, scriptsTag) {
+    if (nbt == null) throw "npc nbt write is unavailable";
     try {
-        if (container != null && typeof container[fieldName] != "undefined") return "" + container[fieldName];
-    } catch (e) {}
-    return "";
-}
-
-function pushHookNameCandidate(list, value) {
-    var normalized = trimString(value).toLowerCase();
-    if (!hasText(normalized)) return;
-    list.push(normalized);
-}
-
-function getBindableRootHooks(hooks, skipped) {
-    var out = [];
-    for (var i = 0; i < hooks.length; i++) {
-        if (hookIndex(hooks[i].hook) < 0) {
-            if (skipped != null) skipped.push(buildSkippedHookWarning(hooks[i]));
-            continue;
+        if (nbt.mcSetTag != null) {
+            nbt.mcSetTag("Scripts", scriptsTag);
+            return;
         }
-        out.push(hooks[i]);
+    } catch (e) {}
+    try {
+        if (nbt.put != null) {
+            nbt.put("Scripts", scriptsTag);
+            return;
+        }
+    } catch (e1) {}
+    try {
+        if (nbt.setTag != null) {
+            nbt.setTag("Scripts", scriptsTag);
+            return;
+        }
+    } catch (e2) {}
+    throw "npc scripts tag write is unavailable";
+}
+
+function setNpcScriptFlags(nbt) {
+    if (nbt == null) return;
+    try {
+        if (nbt.setBoolean != null) nbt.setBoolean("ScriptEnabled", true);
+        else if (nbt.putBoolean != null) nbt.putBoolean("ScriptEnabled", true);
+    } catch (e) {}
+    try {
+        if (nbt.putString != null) nbt.putString("ScriptLanguage", "ECMAScript");
+        else if (nbt.setString != null) nbt.setString("ScriptLanguage", "ECMAScript");
+    } catch (e1) {}
+}
+
+function finalizeNbtWriteValidation(result, nbt, hooks) {
+    var validated = validateWrittenHooksFromNbt(nbt, hooks);
+    result.written = validated.written;
+    result.namesWritten = validated.namesWritten;
+    for (var i = 0; i < validated.skipped.length; i++) {
+        result.skipped.push(validated.skipped[i]);
+    }
+}
+
+function validateWrittenHooksFromNbt(nbt, hooks) {
+    var out = { written: 0, namesWritten: [], skipped: [] };
+    var scriptsTag = getNpcScriptsTag(nbt);
+    var scriptBodies = readNpcScriptBodies(scriptsTag);
+
+    for (var i = 0; i < hooks.length; i++) {
+        var hookFile = hooks[i];
+        if (scriptBodies.length > i && String(scriptBodies[i]) == String(hookFile == null || hookFile.body == null ? "" : hookFile.body)) {
+            out.written++;
+            out.namesWritten.push(hasText(hookFile == null ? "" : hookFile.hook) ? hookFile.hook : hookFile.relativePath);
+        } else {
+            out.skipped.push(buildSkippedHookWarning(hookFile, "write validation failed"));
+        }
+    }
+
+    return out;
+}
+
+function getNpcScriptsTag(nbt) {
+    if (nbt == null) return null;
+    try {
+        if (nbt.getList != null) return nbt.getList("Scripts", 10);
+    } catch (e) {}
+    try {
+        if (nbt.getTagList != null) return nbt.getTagList("Scripts", 10);
+    } catch (e1) {}
+    try {
+        if (nbt.mcGetTag != null) return nbt.mcGetTag("Scripts");
+    } catch (e2) {}
+    return null;
+}
+
+function readNpcScriptBodies(scriptsTag) {
+    var out = [];
+    var count = getCollectionSize(scriptsTag);
+    for (var i = 0; i < count; i++) {
+        var entry = getCollectionValue(scriptsTag, i);
+        out.push(readScriptBodyFromTag(entry));
     }
     return out;
 }
 
-function buildSkippedHookWarning(hookFile) {
+function readScriptBodyFromTag(tag) {
+    if (tag == null) return "";
+    try {
+        if (tag.getString != null) return "" + tag.getString("Script");
+    } catch (e) {}
+    return "";
+}
+
+function buildSkippedHookWarning(hookFile, reason) {
     if (hookFile == null) return "unknown hook";
     var hookName = hasText(hookFile.hook) ? hookFile.hook : "<unknown>";
     var path = hasText(hookFile.relativePath) ? hookFile.relativePath : "";
-    if (!hasText(path)) return hookName + " (hook slot not available)";
-    return hookName + " [" + path + "] (hook slot not available)";
+    var message = hasText(reason) ? reason : "hook binding unavailable";
+    if (!hasText(path)) return hookName + " (" + message + ")";
+    return hookName + " [" + path + "] (" + message + ")";
 }
 
 function getNpcNbt(npc) {

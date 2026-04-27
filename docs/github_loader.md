@@ -75,6 +75,7 @@ Binding policy:
 - every other `hooks/*.js` file is resolved dynamically by filename
 - if the NPC script system exposes a matching hook slot, the file is written there
 - if no matching hook slot exists, that file is skipped with a warning
+- no hardcoded hook whitelist is used for package hook filenames
 
 If script containers are unavailable directly, storeddata remains the canonical package delivery layer and script-tab writes remain best-effort.
 
