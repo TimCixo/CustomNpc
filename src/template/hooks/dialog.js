@@ -1,9 +1,7 @@
 // @ts-check
 
-/** @typedef {import("noppes.npcs.api.event.NpcEvent").InteractEvent} NpcInteractEvent */
-
 /**
- * @param {NpcInteractEvent} event
+ * @param {any} event
  * @returns {any}
  */
 function requireShared(event) {
@@ -24,8 +22,20 @@ function requireShared(event) {
     return factory(event);
 }
 
-/** @param {NpcInteractEvent} event */
-function interact(event) {
+/**
+ * Supports both the plain dialog hook and option-style dialog events.
+ * @param {any} event
+ */
+function dialog(event) {
     var shared = requireShared(event);
-    shared.npc.onInteract(event);
+    shared.npc.onDialog(event);
+}
+
+/**
+ * Optional compatibility entrypoint when the environment uses dialogOption.
+ * @param {any} event
+ */
+function dialogOption(event) {
+    var shared = requireShared(event);
+    shared.npc.onDialog(event);
 }

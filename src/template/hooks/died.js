@@ -1,9 +1,9 @@
 // @ts-check
 
-/** @typedef {import("noppes.npcs.api.event.NpcEvent").InteractEvent} NpcInteractEvent */
+/** @typedef {import("noppes.npcs.api.event.NpcEvent").DiedEvent} NpcDiedEvent */
 
 /**
- * @param {NpcInteractEvent} event
+ * @param {NpcDiedEvent} event
  * @returns {any}
  */
 function requireShared(event) {
@@ -24,8 +24,8 @@ function requireShared(event) {
     return factory(event);
 }
 
-/** @param {NpcInteractEvent} event */
-function interact(event) {
+/** @param {NpcDiedEvent} event */
+function died(event) {
     var shared = requireShared(event);
-    shared.npc.onInteract(event);
+    shared.npc.onDied(event);
 }
