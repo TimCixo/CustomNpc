@@ -454,23 +454,24 @@ function writeNpcScriptTabs(npc, hooks) {
             return writeNpcScriptTabsViaNbt(npc, hooks, result);
         }
 
+        var plan = buildHookWritePlan(scripts, hooks);
         result.attempted = true;
-        for (var i = 0; i < hooks.length; i++) {
-            var slot = hookIndex(hooks[i].hook);
-            if (slot < 0) {
-                result.skipped.push(hooks[i].hook);
+        for (var i = 0; i < plan.length; i++) {
+            var entry = plan[i];
+            if (entry.slot < 0) {
+                result.skipped.push(buildSkippedHookWarning(entry.hook));
                 continue;
             }
 
-            var container = getCollectionValue(scripts, slot);
+            var container = getCollectionValue(scripts, entry.slot);
             if (container == null) {
                 return writeNpcScriptTabsViaNbt(npc, hooks, result);
             }
 
-            container.script = hooks[i].body;
-            container.fullscript = hooks[i].body;
+            container.script = entry.hook.body;
+            container.fullscript = entry.hook.body;
             result.written++;
-            result.namesWritten.push(hooks[i].hook);
+            result.namesWritten.push(entry.hook.hook);
         }
 
         handler.enabled = true;
@@ -495,18 +496,15 @@ function writeNpcScriptTabsViaNbt(npc, hooks, result) {
     result.attempted = true;
     result.usedNbt = true;
     try {
-        nbt.mcSetTag("Scripts", buildScriptsMcTag(hooks));
+        var nbtHooks = getBindableRootHooks(hooks, result.skipped);
+        nbt.mcSetTag("Scripts", buildScriptsMcTag(nbtHooks));
         nbt.setBoolean("ScriptEnabled", true);
         nbt.putString("ScriptLanguage", "ECMAScript");
         setNpcNbt(npc, nbt);
 
-        for (var i = 0; i < hooks.length; i++) {
-            if (hookIndex(hooks[i].hook) < 0) {
-                result.skipped.push(hooks[i].hook);
-                continue;
-            }
+        for (var i = 0; i < nbtHooks.length; i++) {
             result.written++;
-            result.namesWritten.push(hooks[i].hook);
+            result.namesWritten.push(nbtHooks[i].hook);
         }
 
         if (!hasText(result.error)) result.error = "";
@@ -607,7 +605,6 @@ function loadNpcPackageManifest(url, token) {
 
     for (i = 0; i < hooks.length; i++) {
         hooks[i].hook = detectHookName(hooks[i].relativePath);
-        if (!hasText(hooks[i].hook)) throw "Unsupported hook file: " + hooks[i].relativePath;
         totalSize += parseIntSafe(hooks[i].size, 0);
     }
     sortHooks(hooks);
@@ -954,21 +951,38 @@ function splitIntoChunks(text, chunkSize) {
 
 function sortHooks(hooks) {
     hooks.sort(function(a, b) {
-        return hookIndex(a.hook) - hookIndex(b.hook);
+        var aInit = isInitHookName(a == null ? "" : a.hook);
+        var bInit = isInitHookName(b == null ? "" : b.hook);
+        if (aInit && !bInit) return -1;
+        if (!aInit && bInit) return 1;
+
+        var aIndex = hookIndex(a == null ? "" : a.hook);
+        var bIndex = hookIndex(b == null ? "" : b.hook);
+        if (aIndex >= 0 && bIndex >= 0 && aIndex != bIndex) return aIndex - bIndex;
+        if (aIndex >= 0 && bIndex < 0) return -1;
+        if (aIndex < 0 && bIndex >= 0) return 1;
+
+        var aPath = a == null ? "" : trimString(a.relativePath);
+        var bPath = b == null ? "" : trimString(b.relativePath);
+        return aPath < bPath ? -1 : (aPath > bPath ? 1 : 0);
     });
 }
 
 function detectHookName(relativePath) {
     var match = normalizePath(relativePath).match(/^hooks\/([^\/]+)\.js$/i);
     if (match == null) return "";
-    for (var i = 0; i < HOOK_ORDER.length; i++) {
-        if (HOOK_ORDER[i].toLowerCase() == trimString(match[1]).toLowerCase()) return HOOK_ORDER[i];
-    }
-    return "";
+    return trimString(match[1]);
+}
+
+function isInitHookName(name) {
+    return trimString(name).toLowerCase() == "init";
 }
 
 function hookIndex(name) {
-    for (var i = 0; i < HOOK_ORDER.length; i++) if (HOOK_ORDER[i] == name) return i;
+    var target = trimString(name).toLowerCase();
+    for (var i = 0; i < HOOK_ORDER.length; i++) {
+        if (HOOK_ORDER[i].toLowerCase() == target) return i;
+    }
     return -1;
 }
 
@@ -979,6 +993,96 @@ function getRequiredScriptCount(hooks) {
         if (index > maxIndex) maxIndex = index;
     }
     return maxIndex + 1;
+}
+
+function buildHookWritePlan(scripts, hooks) {
+    var plan = [];
+    var usedSlots = {};
+    var ordered = hooks == null ? [] : hooks;
+
+    for (var i = 0; i < ordered.length; i++) {
+        var hookFile = ordered[i];
+        var slot = resolveHookSlot(scripts, hookFile == null ? "" : hookFile.hook, usedSlots);
+        if (slot >= 0) usedSlots[slot] = true;
+        plan.push({ hook: hookFile, slot: slot });
+    }
+
+    return plan;
+}
+
+function resolveHookSlot(scripts, hookName, usedSlots) {
+    if (isInitHookName(hookName)) {
+        return isSlotUsable(scripts, 0, usedSlots) ? 0 : -1;
+    }
+
+    var scriptCount = getCollectionSize(scripts);
+    for (var i = 0; i < scriptCount; i++) {
+        if (!isSlotUsable(scripts, i, usedSlots)) continue;
+        if (scriptContainerMatchesHook(getCollectionValue(scripts, i), hookName, i)) return i;
+    }
+
+    var fallbackIndex = hookIndex(hookName);
+    if (fallbackIndex >= 0 && isSlotUsable(scripts, fallbackIndex, usedSlots)) return fallbackIndex;
+    return -1;
+}
+
+function isSlotUsable(scripts, slot, usedSlots) {
+    if (slot < 0) return false;
+    if (usedSlots != null && usedSlots[slot]) return false;
+    return getCollectionValue(scripts, slot) != null;
+}
+
+function scriptContainerMatchesHook(container, hookName, index) {
+    if (container == null || !hasText(hookName)) return false;
+
+    var target = trimString(hookName).toLowerCase();
+    var candidates = [];
+
+    pushHookNameCandidate(candidates, readContainerField(container, "hook"));
+    pushHookNameCandidate(candidates, readContainerField(container, "name"));
+    pushHookNameCandidate(candidates, readContainerField(container, "type"));
+    pushHookNameCandidate(candidates, readContainerField(container, "eventType"));
+    pushHookNameCandidate(candidates, readContainerField(container, "scriptType"));
+    pushHookNameCandidate(candidates, readContainerField(container, "function"));
+
+    for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] == target) return true;
+    }
+
+    return hookIndex(hookName) == index;
+}
+
+function readContainerField(container, fieldName) {
+    try {
+        if (container != null && typeof container[fieldName] != "undefined") return "" + container[fieldName];
+    } catch (e) {}
+    return "";
+}
+
+function pushHookNameCandidate(list, value) {
+    var normalized = trimString(value).toLowerCase();
+    if (!hasText(normalized)) return;
+    list.push(normalized);
+}
+
+function getBindableRootHooks(hooks, skipped) {
+    var out = [];
+    for (var i = 0; i < hooks.length; i++) {
+        if (hookIndex(hooks[i].hook) < 0) {
+            if (skipped != null) skipped.push(buildSkippedHookWarning(hooks[i]));
+            continue;
+        }
+        out.push(hooks[i]);
+    }
+    return out;
+}
+
+function buildSkippedHookWarning(hookFile) {
+    if (hookFile == null) return "unknown hook";
+    var hookName = hasText(hookFile.hook) ? hookFile.hook : "<unknown>";
+    var path = hasText(hookFile.relativePath) ? hookFile.relativePath : "";
+    if (!hasText(path)) return hookName + " (hook slot not available)";
+    return hookName + " [" + path + "] (hook slot not available)";
 }
 
 function getNpcNbt(npc) {

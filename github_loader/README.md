@@ -65,7 +65,10 @@ Apply reads the manifest, downloads the required files by blob `sha`, builds the
 
 Apply behavior:
 
-- hooks are written into separate NPC script tabs
+- `hooks/init.js` is always written into the root init slot first
+- other `hooks/*.js` files are resolved dynamically by filename
+- if a hook slot exists, that hook is written
+- if a hook slot does not exist, that hook is skipped with a warning
 - shared files are written into NPC storeddata/memory
 - hooks remain raw hook files
 - shared bootstrap is not injected into hook bodies
@@ -119,7 +122,9 @@ This keeps item NBT small enough for large packages.
 
 When applying a package:
 
-- hook files are mapped to separate NPC script tabs
+- `hooks/init.js` is pinned to the root init slot
+- other hook files are mapped dynamically by hook filename when the NPC script system exposes a matching slot
+- unknown hook files are skipped as warnings instead of failing the install
 - shared files are stored in NPC storeddata
 - large shared source bodies may be chunked in storeddata
 - a stored shared factory reconstructs modules from chunked sources

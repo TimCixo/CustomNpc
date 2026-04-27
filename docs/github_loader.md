@@ -69,15 +69,12 @@ Hooks stay separate.
 
 The loader does not merge hooks into one file.
 
-Typical supported hooks include:
+Binding policy:
 
-- `init`
-- `interact`
-- `timer`
-- `damaged`
-- `died`
-- `attack`
-- `meleeAttack`
+- `hooks/init.js` is pinned to the first/root init slot
+- every other `hooks/*.js` file is resolved dynamically by filename
+- if the NPC script system exposes a matching hook slot, the file is written there
+- if no matching hook slot exists, that file is skipped with a warning
 
 If script containers are unavailable directly, storeddata remains the canonical package delivery layer and script-tab writes remain best-effort.
 
