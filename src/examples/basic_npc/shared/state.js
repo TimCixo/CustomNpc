@@ -10,7 +10,8 @@ function createState() {
         timerCount: 0,
         deathCount: 0,
         lastPlayerName: "",
-        lastHook: ""
+        lastHook: "",
+        configCache: null
     };
 }
 

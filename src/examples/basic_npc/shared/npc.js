@@ -4,6 +4,21 @@ var configShared = require("config.js");
 var stateShared = require("state.js");
 var utils = require("utils.js");
 
+var DEFAULT_CONFIG = {
+    initialization: {
+        timerId: 1,
+        timerTicks: 40,
+        timerRepeat: true,
+        announceInit: true
+    },
+    interact: {
+        message: "This template uses stored config and live tempdata state."
+    },
+    death: {
+        goodbyeText: "Final state was printed, then tempdata state was disposed."
+    }
+};
+
 /**
  * @param {any} player
  * @returns {string}
@@ -91,14 +106,21 @@ function ensureTimer(npc, config) {
 function init(event) {
     var npc = event.npc;
     var config = configShared.get(npc);
-    var state = stateShared.get(npc);
+    var state = null;
+
+    if (config == null) {
+        config = configShared.set(npc, DEFAULT_CONFIG);
+    }
+
+    state = stateShared.reset(npc);
+    state.configCache = config;
 
     state.sequence++;
     state.initCount++;
     state.lastHook = "init";
     state.lastPlayerName = "";
 
-    ensureTimer(npc, config);
+    ensureTimer(npc, state.configCache);
 
     if (config != null && config.initialization != null && config.initialization.announceInit) {
         say(npc, "[basic_npc:init] " + getStateLine(state));
@@ -109,8 +131,8 @@ function init(event) {
  * @param {any} event
  */
 function onInteract(event) {
-    var config = configShared.get(event.npc);
     var state = stateShared.get(event.npc);
+    var config = state.configCache;
 
     state.sequence++;
     state.interactCount++;
@@ -128,8 +150,8 @@ function onInteract(event) {
  * @param {any} event
  */
 function onTimer(event) {
-    var config = configShared.get(event.npc);
     var state = stateShared.get(event.npc);
+    var config = state.configCache;
 
     if (config == null || config.initialization == null) return;
     if (String(event.id) != String(config.initialization.timerId)) return;
@@ -158,8 +180,8 @@ function onDamaged(event) {
  */
 function onDied(event) {
     var npc = event.npc;
-    var config = configShared.get(npc);
     var state = stateShared.get(npc);
+    var config = state.configCache;
 
     state.sequence++;
     state.deathCount++;

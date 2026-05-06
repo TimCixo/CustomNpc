@@ -4,6 +4,20 @@ var configShared = require("config.js");
 var stateShared = require("state.js");
 var utils = require("utils.js");
 
+var DEFAULT_CONFIG = {
+    initialization: {
+        timerId: 1,
+        timerTicks: 40,
+        timerRepeat: false
+    },
+    interact: {
+        message: ""
+    },
+    death: {
+        goodbyeText: ""
+    }
+};
+
 /**
  * @param {import("noppes.npcs.api.entity").ICustomNpc} npc
  * @param {any} config
@@ -34,10 +48,17 @@ function startTimer(npc, config) {
 function init(event) {
     var npc = event.npc;
     var config = configShared.get(npc);
-    var state = stateShared.get(npc);
+    var state = null;
+
+    if (config == null) {
+        config = configShared.set(npc, DEFAULT_CONFIG);
+    }
+
+    state = stateShared.reset(npc);
+    state.configCache = config;
 
     state.lastHook = "init";
-    startTimer(npc, config);
+    startTimer(npc, state.configCache);
 }
 
 /**
@@ -45,8 +66,8 @@ function init(event) {
  */
 function onInteract(event) {
     var npc = event.npc;
-    var config = configShared.get(npc);
     var state = stateShared.get(npc);
+    var config = state.configCache;
 
     state.lastHook = "interact";
 
@@ -61,8 +82,8 @@ function onInteract(event) {
  * @param {any} event
  */
 function onTimer(event) {
-    var config = configShared.get(event.npc);
     var state = stateShared.get(event.npc);
+    var config = state.configCache;
 
     if (config == null || config.initialization == null) return;
     if (String(event.id) != String(config.initialization.timerId)) return;
@@ -89,8 +110,8 @@ function onDamaged(event) {
  */
 function onDied(event) {
     var npc = event.npc;
-    var config = configShared.get(npc);
     var state = stateShared.get(npc);
+    var config = state.configCache;
 
     state.lastHook = "died";
 

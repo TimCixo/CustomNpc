@@ -4,7 +4,8 @@ var STATE_KEY = "template_state";
 
 function createState() {
     return {
-        lastHook: ""
+        lastHook: "",
+        configCache: null
     };
 }
 
