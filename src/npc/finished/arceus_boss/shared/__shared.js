@@ -5,5 +5,7 @@ module.exports = {
     npc: "npc.js",
     combat: "combat.js",
     phases: "phases.js",
-    attacks: "attacks.js"
+    attacks: "attacks.js",
+    rewards: "rewards.js",
+    deathFlow: "death_flow.js"
 };

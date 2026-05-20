@@ -1,6 +1,7 @@
 // @ts-check
 
 var phases = require("phases.js");
+var rewards = require("rewards.js");
 
 /**
  * @typedef {import("./config.js").ArceusConfig} ArceusConfig
@@ -57,6 +58,21 @@ function readMaxHealth(npc) {
         return Number(npc.getMCEntity().getMaxHealth());
     } catch (e2) {}
     return 1;
+}
+
+/**
+ * @param {any} npc
+ * @param {number} health
+ */
+function setHealthSafe(npc, health) {
+    var value = Math.max(1, health);
+    try {
+        npc.setHealth(value);
+        return;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setHealth(value);
+    } catch (e2) {}
 }
 
 /**
@@ -220,6 +236,8 @@ function handleDamaged(event, state, config) {
     var nextHealth;
     var phase2Threshold;
     var phase3Threshold;
+    var deathThreshold;
+    var drops;
     var attacker;
 
     if (state.mode != "live") {
@@ -233,20 +251,77 @@ function handleDamaged(event, state, config) {
     nextHealth = currentHealth - damage;
     phase2Threshold = maxHealth * config.phases.phase2Threshold;
     phase3Threshold = maxHealth * config.phases.phase3Threshold;
+    deathThreshold = getDeathThreshold(config, maxHealth);
+
+    attacker = resolveAttacker(event);
+    recordDamage(state, attacker, damage);
+
+    if (state.phase >= 3 && nextHealth <= deathThreshold) {
+        cancelEvent(event);
+        state.mode = "custom_death_start";
+        state.customDeathTicksLeft = readDeathInt(config, "customTicks", 80);
+        setHealthSafe(event.npc, deathThreshold);
+        phases.setInvulnerableSafe(event.npc, true);
+        return;
+    }
 
     if (state.phase == 1 && nextHealth <= phase2Threshold) {
         cancelEvent(event);
         phases.enterPhase(event.npc, state, config, 2);
+        return;
     } else if (state.phase == 2 && nextHealth <= phase3Threshold) {
         cancelEvent(event);
+        drops = rewards.getStageDropCountForHit(state, config, 2, currentHealth, nextHealth, maxHealth);
+        if (drops > 0) {
+            rewards.dropConfiguredItem(event.npc, readRewardString(config, "phase2Item", "cobblemon:rare_candy"), drops, config);
+        }
         phases.enterPhase(event.npc, state, config, 3);
+        return;
     }
 
-    attacker = resolveAttacker(event);
-    recordDamage(state, attacker, damage);
+    drops = rewards.getStageDropCountForHit(state, config, state.phase, currentHealth, nextHealth, maxHealth);
+    if (drops > 0 && state.phase == 2) {
+        rewards.dropConfiguredItem(event.npc, readRewardString(config, "phase2Item", "cobblemon:rare_candy"), drops, config);
+    } else if (drops > 0 && state.phase >= 3) {
+        rewards.dropRandomGems(event.npc, drops, config);
+    }
+}
+
+/**
+ * @param {ArceusConfig} config
+ * @param {number} maxHealth
+ * @returns {number}
+ */
+function getDeathThreshold(config, maxHealth) {
+    var percent = readDeathNumber(config, "thresholdPercent", 0.02);
+    var minHp = readDeathNumber(config, "thresholdMinHp", 20);
+    var threshold = maxHealth * percent;
+    if (threshold < minHp) threshold = minHp;
+    return threshold < 1 ? 1 : threshold;
+}
+
+function readDeathNumber(config, key, fallback) {
+    try {
+        return Number(config.death[key]) || fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function readDeathInt(config, key, fallback) {
+    return Math.max(1, Math.floor(readDeathNumber(config, key, fallback)));
+}
+
+function readRewardString(config, key, fallback) {
+    try {
+        return config.rewards[key] == null || config.rewards[key] == "" ? fallback : "" + config.rewards[key];
+    } catch (e) {
+        return fallback;
+    }
 }
 
 module.exports = {
     handleDamaged: handleDamaged,
-    readDamage: readDamage
+    readDamage: readDamage,
+    getDeathThreshold: getDeathThreshold
 };

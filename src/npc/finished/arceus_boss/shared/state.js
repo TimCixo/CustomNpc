@@ -24,8 +24,11 @@ var STATE_KEY = "arceus_state";
  * @property {ArceusMode} mode
  * @property {number} phase
  * @property {number} transitionTicksLeft
+ * @property {number} customDeathTicksLeft
+ * @property {Object.<string, number>} stageDrops
  * @property {Object.<string, DamageEntry>} damageMap
  * @property {DamageEntry[]} liveSnapshot
+ * @property {boolean} rewardsGiven
  */
 
 /**
@@ -38,8 +41,11 @@ function createState() {
         mode: "live",
         phase: 1,
         transitionTicksLeft: 0,
+        customDeathTicksLeft: 0,
+        stageDrops: { "2": 0, "3": 0 },
         damageMap: {},
-        liveSnapshot: []
+        liveSnapshot: [],
+        rewardsGiven: false
     };
 }
 

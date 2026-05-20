@@ -6,6 +6,8 @@ var utils = require("utils.js");
 var combat = require("combat.js");
 var attacks = require("attacks.js");
 var phases = require("phases.js");
+var deathFlow = require("death_flow.js");
+var rewards = require("rewards.js");
 
 var TIMER_ID = 1;
 
@@ -37,6 +39,8 @@ function init(event) {
     var config = configShared.get(event.npc);
     var state;
 
+    rewards.warmUpPools();
+
     if (config == null) {
         config = configShared.set(event.npc, {});
     }
@@ -58,6 +62,11 @@ function onTimer(event) {
     if (config == null || config.general == null) return;
 
     state.lastHook = "timer";
+
+    if (state.mode == "custom_death_start" || state.mode == "death_commit_pending") {
+        deathFlow.tickDeath(event.npc, state, config);
+        return;
+    }
 
     if (state.mode == "phase_transition") {
         state.transitionTicksLeft -= config.general.timerTicks;

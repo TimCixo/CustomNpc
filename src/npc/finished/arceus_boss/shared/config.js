@@ -33,6 +33,28 @@ var CONFIG_KEY = "arceus_config_json";
  * @typedef {Object} ConfigDeath
  * @property {number} customTicks
  * @property {number} thresholdMinHp
+ * @property {number=} thresholdPercent
+ * @property {number=} spinStep
+ * @property {number=} explosionPower
+ */
+
+/**
+ * @typedef {Object} ConfigRewards
+ * @property {string} phase2Item
+ * @property {number} phase2TotalDropsBase
+ * @property {number} phase2TotalDropsPerExtraPlayer
+ * @property {number} phase2TotalDropsMax
+ * @property {number} phase3TotalDropsBase
+ * @property {number} phase3TotalDropsPerExtraPlayer
+ * @property {number} phase3TotalDropsMax
+ * @property {number} pinataSpeedMin
+ * @property {number} pinataSpeedMax
+ * @property {number} pinataVerticalBoost
+ */
+
+/**
+ * @typedef {Object} ConfigMedia
+ * @property {string} deathSound
  */
 
 /**
@@ -41,6 +63,8 @@ var CONFIG_KEY = "arceus_config_json";
  * @property {ConfigCombat} combat
  * @property {ConfigPhases} phases
  * @property {ConfigDeath} death
+ * @property {ConfigRewards} rewards
+ * @property {ConfigMedia} media
  */
 
 /** @type {ArceusConfig} */
@@ -64,7 +88,25 @@ var DEFAULT_CONFIG = {
     },
     death: {
         customTicks: 80,
-        thresholdMinHp: 20
+        thresholdMinHp: 20,
+        thresholdPercent: 0.02,
+        spinStep: 12,
+        explosionPower: 3.5
+    },
+    rewards: {
+        phase2Item: "cobblemon:rare_candy",
+        phase2TotalDropsBase: 8,
+        phase2TotalDropsPerExtraPlayer: 4,
+        phase2TotalDropsMax: 24,
+        phase3TotalDropsBase: 3,
+        phase3TotalDropsPerExtraPlayer: 2,
+        phase3TotalDropsMax: 12,
+        pinataSpeedMin: 0.20,
+        pinataSpeedMax: 0.55,
+        pinataVerticalBoost: 0.28
+    },
+    media: {
+        deathSound: "cobblemon:pokemon.arceus.cry"
     }
 };
 
