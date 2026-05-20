@@ -3,6 +3,10 @@
 var phases = require("phases.js");
 var rewards = require("rewards.js");
 
+var Combat_System = Java.type("java.lang.System");
+var Combat_MobEffectInstance = Java.type("net.minecraft.world.effect.MobEffectInstance");
+var Combat_MobEffects = Java.type("net.minecraft.world.effect.MobEffects");
+
 /**
  * @typedef {import("./config.js").ArceusConfig} ArceusConfig
  * @typedef {import("./state.js").ArceusState} ArceusState
@@ -23,11 +27,14 @@ function cancelEvent(event) {
  * @returns {number}
  */
 function readDamage(event) {
+    var value;
     try {
-        return Number(event.getDamage());
+        value = Number(event.getDamage());
+        return isNaN(value) ? 0 : value;
     } catch (e) {}
     try {
-        return Number(event.damage);
+        value = Number(event.damage);
+        return isNaN(value) ? 0 : value;
     } catch (e2) {}
     return 0;
 }
@@ -37,11 +44,14 @@ function readDamage(event) {
  * @returns {number}
  */
 function readHealth(npc) {
+    var value;
     try {
-        return Number(npc.getHealth());
+        value = Number(npc.getHealth());
+        return isNaN(value) ? 0 : value;
     } catch (e) {}
     try {
-        return Number(npc.getMCEntity().getHealth());
+        value = Number(npc.getMCEntity().getHealth());
+        return isNaN(value) ? 0 : value;
     } catch (e2) {}
     return 0;
 }
@@ -51,11 +61,14 @@ function readHealth(npc) {
  * @returns {number}
  */
 function readMaxHealth(npc) {
+    var value;
     try {
-        return Number(npc.getMaxHealth());
+        value = Number(npc.getMaxHealth());
+        return isNaN(value) || value <= 0 ? 1 : value;
     } catch (e) {}
     try {
-        return Number(npc.getMCEntity().getMaxHealth());
+        value = Number(npc.getMCEntity().getMaxHealth());
+        return isNaN(value) || value <= 0 ? 1 : value;
     } catch (e2) {}
     return 1;
 }
@@ -222,6 +235,29 @@ function recordDamage(state, attacker, damage) {
     entry.name = name;
     entry.damage += damage;
     state.liveSnapshot = buildLiveSnapshot(state.damageMap);
+    appendRecentHit(state, uuid, name, damage);
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {string} uuid
+ * @param {string} name
+ * @param {number} damage
+ */
+function appendRecentHit(state, uuid, name, damage) {
+    var list;
+
+    if (state.recentHits == null) state.recentHits = {};
+    if (state.recentHits[uuid] == null) state.recentHits[uuid] = [];
+
+    list = state.recentHits[uuid];
+    list.push({
+        time: Combat_System.currentTimeMillis(),
+        damage: damage,
+        name: name
+    });
+
+    if (list.length > 20) list.splice(0, list.length - 20);
 }
 
 /**
@@ -320,8 +356,230 @@ function readRewardString(config, key, fallback) {
     }
 }
 
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickCombat(npc, state, config) {
+    if (state.mode != "live") return;
+
+    tickRegen(npc, state, config);
+    tickRecentAggro(npc, state, config);
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickRegen(npc, state, config) {
+    var interval;
+    var duration;
+    var amplifier;
+
+    if (state.phase < 2) return;
+
+    interval = readPhaseInt(config, "regenInterval", 40);
+    state.pulseTicks += readGeneralInt(config, "timerTicks", 5);
+    if (state.pulseTicks < interval) return;
+
+    state.pulseTicks = 0;
+    duration = readPhaseInt(config, "regenDuration", 60);
+    amplifier = readPhaseInt(config, "regenAmplifier", 2);
+    applyRegeneration(npc, duration, amplifier);
+}
+
+/**
+ * @param {any} npc
+ * @param {number} duration
+ * @param {number} amplifier
+ */
+function applyRegeneration(npc, duration, amplifier) {
+    try {
+        npc.getMCEntity().addEffect(new Combat_MobEffectInstance(Combat_MobEffects.REGENERATION, duration, amplifier));
+    } catch (e) {}
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickRecentAggro(npc, state, config) {
+    var winner = findRecentAggroWinner(state, readCombatInt(config, "aggroRecentMs", 3500));
+    var player;
+
+    if (winner == null) return;
+    player = resolvePlayer(npc, winner.uuid, winner.name);
+    if (player == null) return;
+    setAttackTargetSafe(npc, player);
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {number} windowMs
+ * @returns {any}
+ */
+function findRecentAggroWinner(state, windowMs) {
+    var now = Combat_System.currentTimeMillis();
+    var best = null;
+    var key;
+    var list;
+    var total;
+    var name;
+    var i;
+    var hit;
+
+    if (state.recentHits == null) return null;
+
+    for (key in state.recentHits) {
+        if (!Object.prototype.hasOwnProperty.call(state.recentHits, key)) continue;
+        list = state.recentHits[key];
+        if (list == null || list.length <= 0) continue;
+
+        total = 0;
+        name = key;
+        for (i = list.length - 1; i >= 0; i--) {
+            hit = list[i];
+            if (hit == null || now - hit.time > windowMs) {
+                list.splice(i, 1);
+                continue;
+            }
+            total += hit.damage;
+            if (hit.name != null && hit.name != "") name = hit.name;
+        }
+
+        if (total <= 0) continue;
+        if (best == null || total > best.damage) {
+            best = { uuid: key, name: name, damage: total };
+        }
+    }
+
+    return best;
+}
+
+/**
+ * @param {any} npc
+ * @param {string} uuid
+ * @param {string} name
+ * @returns {any}
+ */
+function resolvePlayer(npc, uuid, name) {
+    var players = getOnlinePlayers(npc);
+    var i;
+    var player;
+
+    if (players != null) {
+        for (i = 0; i < getCollectionSize(players); i++) {
+            player = getCollectionValue(players, i);
+            if (samePlayerUuid(player, uuid)) return player;
+        }
+        for (i = 0; i < getCollectionSize(players); i++) {
+            player = getCollectionValue(players, i);
+            if (samePlayerName(player, name)) return player;
+        }
+    }
+
+    try {
+        return npc.getWorld().getPlayer(name);
+    } catch (e) {
+        return null;
+    }
+}
+
+function getOnlinePlayers(npc) {
+    try {
+        return npc.getWorld().getAllPlayers();
+    } catch (e) {
+        return null;
+    }
+}
+
+function getCollectionSize(collection) {
+    if (collection == null) return 0;
+    try {
+        if (typeof collection.length == "number") return collection.length;
+    } catch (e) {}
+    try {
+        if (collection.size != null) return Number(collection.size());
+    } catch (e2) {}
+    return 0;
+}
+
+function getCollectionValue(collection, index) {
+    try {
+        if (typeof collection.length == "number") return collection[index];
+    } catch (e) {}
+    try {
+        if (collection.get != null) return collection.get(index);
+    } catch (e2) {}
+    return null;
+}
+
+function samePlayerUuid(player, uuid) {
+    if (player == null || uuid == null || uuid == "") return false;
+    try {
+        if (("" + player.getUUID()) == ("" + uuid)) return true;
+    } catch (e) {}
+    try {
+        if (("" + player.getMCEntity().getUUID()) == ("" + uuid)) return true;
+    } catch (e2) {}
+    return false;
+}
+
+function samePlayerName(player, name) {
+    if (player == null || name == null || name == "") return false;
+    try {
+        if (("" + player.getName()) == ("" + name)) return true;
+    } catch (e) {}
+    try {
+        if (("" + player.getDisplayName()) == ("" + name)) return true;
+    } catch (e2) {}
+    return false;
+}
+
+function setAttackTargetSafe(npc, player) {
+    try {
+        npc.setAttackTarget(player);
+        return;
+    } catch (e) {}
+    try {
+        npc.setAttackTarget(player.getMCEntity());
+        return;
+    } catch (e2) {}
+    try {
+        npc.getMCEntity().setTarget(player.getMCEntity());
+    } catch (e3) {}
+}
+
+function readGeneralInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.general[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function readCombatInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.combat[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function readPhaseInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.phases[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
+}
+
 module.exports = {
     handleDamaged: handleDamaged,
+    tickCombat: tickCombat,
     readDamage: readDamage,
     getDeathThreshold: getDeathThreshold
 };

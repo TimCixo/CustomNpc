@@ -6,6 +6,7 @@ module.exports = {
     combat: "combat.js",
     phases: "phases.js",
     attacks: "attacks.js",
+    visuals: "visuals.js",
     rewards: "rewards.js",
     deathFlow: "death_flow.js"
 };

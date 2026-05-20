@@ -8,6 +8,7 @@ var attacks = require("attacks.js");
 var phases = require("phases.js");
 var deathFlow = require("death_flow.js");
 var rewards = require("rewards.js");
+var visuals = require("visuals.js");
 
 var TIMER_ID = 1;
 
@@ -49,6 +50,8 @@ function init(event) {
     state.configCache = config;
     state.lastHook = "init";
 
+    visuals.setBossBarColor(event.npc, "white");
+    visuals.setTitle(event.npc, config.general.baseTitle);
     forceMainTimer(event.npc, config);
 }
 
@@ -75,6 +78,11 @@ function onTimer(event) {
             state.mode = "live";
             phases.setInvulnerableSafe(event.npc, false);
         }
+        return;
+    }
+
+    if (state.mode == "live") {
+        combat.tickCombat(event.npc, state, config);
     }
 }
 

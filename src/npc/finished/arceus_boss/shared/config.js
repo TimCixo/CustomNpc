@@ -17,8 +17,12 @@ var CONFIG_KEY = "arceus_config_json";
  * @property {number} aggroRefreshMs
  * @property {number} aggroRadius
  * @property {number} transitionTicks
+ * @property {number=} transitionLaunchRadius
+ * @property {number=} transitionLaunchPush
+ * @property {number=} transitionLaunchVertical
  * @property {number=} phase2DamageMult
  * @property {number=} phase3DamageMult
+ * @property {number=} aggroRecentMs
  */
 
 /**
@@ -27,6 +31,9 @@ var CONFIG_KEY = "arceus_config_json";
  * @property {number} phase3Threshold
  * @property {number} phase2HealTo
  * @property {number} phase3HealTo
+ * @property {number=} regenInterval
+ * @property {number=} regenDuration
+ * @property {number=} regenAmplifier
  */
 
 /**
@@ -55,6 +62,8 @@ var CONFIG_KEY = "arceus_config_json";
 /**
  * @typedef {Object} ConfigMedia
  * @property {string} deathSound
+ * @property {string=} stage2Sound
+ * @property {string=} stage3Sound
  */
 
 /**
@@ -78,13 +87,22 @@ var DEFAULT_CONFIG = {
     combat: {
         aggroRefreshMs: 500,
         aggroRadius: 32,
-        transitionTicks: 40
+        transitionTicks: 40,
+        transitionLaunchRadius: 18,
+        transitionLaunchPush: 1.85,
+        transitionLaunchVertical: 1.15,
+        phase2DamageMult: 1.2,
+        phase3DamageMult: 1.45,
+        aggroRecentMs: 3500
     },
     phases: {
         phase2Threshold: 0.10,
         phase3Threshold: 0.10,
         phase2HealTo: 0.72,
-        phase3HealTo: 0.45
+        phase3HealTo: 0.45,
+        regenInterval: 40,
+        regenDuration: 60,
+        regenAmplifier: 2
     },
     death: {
         customTicks: 80,
@@ -106,7 +124,9 @@ var DEFAULT_CONFIG = {
         pinataVerticalBoost: 0.28
     },
     media: {
-        deathSound: "cobblemon:pokemon.arceus.cry"
+        deathSound: "cobblemon:pokemon.arceus.cry",
+        stage2Sound: "cobblemon:pokemon.arceus.cry",
+        stage3Sound: "cobblemon:pokemon.arceus.cry"
     }
 };
 
