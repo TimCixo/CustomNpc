@@ -18,5 +18,5 @@ function requireShared(event) {
 
 function timer(event) {
     var shared = requireShared(event);
-    shared.timers.onTimer(event);
+    shared.npc.onTimer(event);
 }

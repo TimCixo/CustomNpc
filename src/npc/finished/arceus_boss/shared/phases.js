@@ -1,101 +1,73 @@
-var utils = require("utils.js");
-var runtimeModule = require("runtime.js");
-var visuals = require("visuals.js");
-var damage = require("damage.js");
+// @ts-check
 
-function enterPhase(npc, runtime, phase, healFraction, line, bossBarColor, soundId) {
-    var state = runtime.state;
-    var config = runtime.config;
-    var maxHp = damage.readNpcMaxHealth(npc);
-    var targetHp = Math.max(1, Math.floor(maxHp * healFraction));
+/**
+ * @typedef {import("./config.js").ArceusConfig} ArceusConfig
+ * @typedef {import("./state.js").ArceusState} ArceusState
+ */
 
-    state.phase = phase;
-    state.mode = "phase_transition";
-    state.transitionTicksLeft = config.transitionTicks;
-    state.pendingPhaseEffect = {
-        phase: phase,
-        line: line,
-        bossBarColor: bossBarColor,
-        soundId: soundId == null ? "" : "" + soundId
-    };
-    state.deathCommitted = false;
-    state.customDeathTicksLeft = 0;
-    state.deathLineStage = 0;
-    state.deathAnimStarted = false;
-    state.deathFinalizeDone = false;
-    state.respawnVisualResetTicks = 0;
-    state.stageDrops["" + phase] = 0;
-
-    visuals.setEntityInvulnerable(npc, true);
-    damage.setNpcHealthSafe(npc, targetHp);
-    forcePhaseTransitionHealthFloor(npc, config, phase);
-    visuals.clearEntityDamageVisuals(npc);
-    stopCombatForDeath(npc);
-
-    applyPhaseVisuals(npc, runtime);
-    runtimeModule.persistRuntimeState(runtime);
-}
-
-function applyPhaseVisuals(npc, runtime) {
-    var effect = runtime.state.pendingPhaseEffect;
-    if (effect == null) return;
-
-    if (utils.hasText(effect.line)) visuals.safeSay(npc, effect.line);
-    visuals.applyBossBarColor(npc, effect.bossBarColor);
-    visuals.playSoundForAllPlayers(npc, effect.soundId, 1.2, 1.0);
-    visuals.spawnPhaseWindChargeBurst(npc, runtime.config);
-    visuals.launchNearbyPlayersOnPhaseStart(npc, runtime.config);
-    runtimeModule.applyPhaseMeleeDelay(npc, runtime.config, effect.phase);
-    runtime.state.pendingPhaseEffect = null;
-}
-
-function getTransitionCompleteLine(phase) {
-    if (phase == 2) {
-        return "§eВторая стадия началась. Аркеус восстанавливает силы в бою.";
-    }
-    if (phase >= 3) {
-        return "§cТретья стадия началась. Самоцветы теперь выбиваются из него ударами.";
-    }
-    return "";
-}
-
-function forcePhaseTransitionHealthFloor(npc, config, phase) {
-    var maxHp = damage.readNpcMaxHealth(npc);
-    var healFraction = phase >= 3 ? config.phase3HealTo : config.phase2HealTo;
-    damage.setNpcHealthSafe(npc, Math.max(1, Math.floor(maxHp * healFraction)));
-}
-
-function forceDeathSafeHealthFloor(npc, config) {
-    var maxHp = damage.readNpcMaxHealth(npc);
-    damage.setNpcHealthSafe(npc, getArceusDeathThresholdHp(maxHp, config));
-}
-
-function getArceusDeathThresholdHp(maxHp, config) {
-    var threshold = maxHp * config.customDeathThresholdPercent;
-    if (threshold < config.customDeathThresholdMinHp) threshold = config.customDeathThresholdMinHp;
-    return threshold < 1 ? 1 : threshold;
-}
-
-function stopCombatForDeath(npc) {
+/**
+ * @param {any} npc
+ * @returns {number}
+ */
+function readMaxHealth(npc) {
     try {
-        npc.setAttackTarget(null);
+        return Number(npc.getMaxHealth());
     } catch (e) {}
     try {
-        npc.getMCEntity().setTarget(null);
+        return Number(npc.getMCEntity().getMaxHealth());
     } catch (e2) {}
+    return 1;
+}
+
+/**
+ * @param {any} npc
+ * @param {number} health
+ */
+function setHealthSafe(npc, health) {
+    var value = Math.max(1, health);
     try {
-        npc.setMoveForward(0);
-        npc.setMoveStrafing(0);
-        npc.setMoveVertical(0);
-    } catch (e3) {}
+        npc.setHealth(value);
+        return;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setHealth(value);
+    } catch (e2) {}
+}
+
+/**
+ * @param {any} npc
+ * @param {boolean} value
+ */
+function setInvulnerableSafe(npc, value) {
+    try {
+        npc.getMCEntity().setInvulnerable(value);
+    } catch (e) {}
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ * @param {number} targetPhase
+ */
+function enterPhase(npc, state, config, targetPhase) {
+    var maxHealth = readMaxHealth(npc);
+    var healKey = "phase" + targetPhase + "HealTo";
+    var healFraction = Number(config.phases[healKey]);
+    var targetHealth;
+
+    if (isNaN(healFraction) || healFraction <= 0) healFraction = 1;
+
+    state.phase = targetPhase;
+    state.mode = "phase_transition";
+    state.transitionTicksLeft = config.combat.transitionTicks;
+
+    targetHealth = Math.max(1, maxHealth * healFraction);
+    setHealthSafe(npc, targetHealth);
+    setInvulnerableSafe(npc, true);
 }
 
 module.exports = {
     enterPhase: enterPhase,
-    applyPhaseVisuals: applyPhaseVisuals,
-    forcePhaseTransitionHealthFloor: forcePhaseTransitionHealthFloor,
-    forceDeathSafeHealthFloor: forceDeathSafeHealthFloor,
-    getArceusDeathThresholdHp: getArceusDeathThresholdHp,
-    getTransitionCompleteLine: getTransitionCompleteLine,
-    stopCombatForDeath: stopCombatForDeath
+    setInvulnerableSafe: setInvulnerableSafe
 };

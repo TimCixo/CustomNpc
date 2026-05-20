@@ -18,5 +18,5 @@ function requireShared(event) {
 
 function meleeAttack(event) {
     var shared = requireShared(event);
-    shared.attacks.onMeleeAttack(event);
+    shared.npc.onMeleeAttack(event);
 }

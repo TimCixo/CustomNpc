@@ -3,6 +3,9 @@
 var configShared = require("config.js");
 var stateShared = require("state.js");
 var utils = require("utils.js");
+var combat = require("combat.js");
+var attacks = require("attacks.js");
+var phases = require("phases.js");
 
 var TIMER_ID = 1;
 
@@ -55,7 +58,15 @@ function onTimer(event) {
     if (config == null || config.general == null) return;
 
     state.lastHook = "timer";
-    // TODO: Route to logic module.
+
+    if (state.mode == "phase_transition") {
+        state.transitionTicksLeft -= config.general.timerTicks;
+        if (state.transitionTicksLeft <= 0) {
+            state.transitionTicksLeft = 0;
+            state.mode = "live";
+            phases.setInvulnerableSafe(event.npc, false);
+        }
+    }
 }
 
 /**
@@ -81,7 +92,20 @@ function onDamaged(event) {
     if (config == null || config.general == null) return;
 
     state.lastHook = "damaged";
-    // TODO: Route to logic module.
+    combat.handleDamaged(event, state, config);
+}
+
+/**
+ * @param {any} event
+ */
+function onMeleeAttack(event) {
+    var state = stateShared.get(event.npc);
+    var config = state.configCache;
+
+    if (config == null || config.general == null) return;
+
+    state.lastHook = "meleeAttack";
+    attacks.handleMelee(event, state, config);
 }
 
 /**
@@ -103,5 +127,6 @@ module.exports = {
     onTimer: onTimer,
     onInteract: onInteract,
     onDamaged: onDamaged,
+    onMeleeAttack: onMeleeAttack,
     onDied: onDied
 };

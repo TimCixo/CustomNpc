@@ -1,289 +1,252 @@
-var utils = require("utils.js");
-var runtimeModule = require("runtime.js");
+// @ts-check
+
 var phases = require("phases.js");
-var rewards = require("rewards.js");
-var damage = require("damage.js");
-var visuals = require("visuals.js");
-var deathFlow = require("death_flow.js");
 
-var Combat_System = Java.type("java.lang.System");
+/**
+ * @typedef {import("./config.js").ArceusConfig} ArceusConfig
+ * @typedef {import("./state.js").ArceusState} ArceusState
+ * @typedef {import("./state.js").DamageEntry} DamageEntry
+ */
 
-function onDamaged(event) {
-    var runtime = runtimeModule.ensureArceusRuntime(event.npc);
+/**
+ * @param {any} event
+ */
+function cancelEvent(event) {
     try {
-        damagedCore(event, runtime);
-    } catch (e) {
-        runtimeModule.markRuntimeError(runtime, "damaged", e);
-        try {
-            damage.cancelDamage(event);
-        } catch (e2) {}
-    }
+        event.setCanceled(true);
+    } catch (e) {}
 }
 
-function damagedCore(event, runtime) {
-    var npc = event.npc;
-    var state = runtime.state;
-    var config = runtime.config;
-
-    if (!config.enabled) return;
-
-    if (state.mode == "phase_transition") {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        phases.forcePhaseTransitionHealthFloor(npc, config, state.phase);
-        visuals.clearEntityDamageVisuals(npc);
-        return;
-    }
-
-    if (state.mode != "live") {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        phases.forceDeathSafeHealthFloor(npc, config);
-        visuals.clearEntityDamageVisuals(npc);
-        return;
-    }
-
-    var currentHp = damage.readNpcHealth(npc);
-    var maxHp = damage.readNpcMaxHealth(npc);
-    var incomingDamage = damage.readDamage(event);
-    var phase = state.phase;
-    var attacker = resolveDamageDealer(event, npc);
-
-    if (incomingDamage <= 0 || maxHp <= 0) return;
-
-    incomingDamage = damage.applyPhaseDamageMitigation(event, npc, phase, incomingDamage, config, attacker);
-    var hpAfterHit = currentHp - incomingDamage;
-    var phase2Threshold = maxHp * config.phase2Threshold;
-    var phase3Threshold = maxHp * config.phase3Threshold;
-    var deathThreshold = phases.getArceusDeathThresholdHp(maxHp, config);
-
-    recordDamageContribution(attacker, incomingDamage, runtime);
-
-    if (phase <= 1 && hpAfterHit <= phase2Threshold) {
-        damage.cancelDamage(event);
-        phases.enterPhase(
-            npc,
-            runtime,
-            2,
-            config.phase2HealTo,
-            "\u00A76\u0410\u0440\u043A\u0435\u0443\u0441 \u043C\u0435\u043D\u044F\u0435\u0442 \u0430\u0441\u043F\u0435\u043A\u0442 \u0438 \u0432\u0445\u043E\u0434\u0438\u0442 \u0432\u043E \u0432\u0442\u043E\u0440\u0443\u044E \u0441\u0442\u0430\u0434\u0438\u044E!",
-            "yellow",
-            config.stage2Sound
-        );
-        return;
-    }
-
-    if (phase == 2 && hpAfterHit <= phase3Threshold) {
-        damage.cancelDamage(event);
-        var phase2DropCount = rewards.getStageDropCountToThreshold(runtime, 2, currentHp, phase3Threshold, maxHp);
-        phases.enterPhase(
-            npc,
-            runtime,
-            3,
-            config.phase3HealTo,
-            "\u00A74\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u044B\u0441\u0432\u043E\u0431\u043E\u0436\u0434\u0430\u0435\u0442 \u0438\u0441\u0442\u0438\u043D\u043D\u0443\u044E \u0441\u0438\u043B\u0443. \u0422\u0440\u0435\u0442\u044C\u044F \u0441\u0442\u0430\u0434\u0438\u044F!",
-            "red",
-            config.stage3Sound
-        );
-        rewards.dropConfiguredItem(npc, config.phase2PinataItem, phase2DropCount, config);
-        return;
-    }
-
-    if (phase >= 3 && hpAfterHit <= deathThreshold) {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        deathFlow.requestStart(runtime);
-        damage.setNpcHealthSafe(npc, deathThreshold);
-        phases.forceDeathSafeHealthFloor(npc, config);
-        phases.stopCombatForDeath(npc);
-        rewards.dropRandomGems(npc, rewards.getStageDropCountToThreshold(runtime, 3, currentHp, deathThreshold, maxHp), config);
-        return;
-    }
-
-    if (phase == 2) {
-        rewards.dropConfiguredItem(
-            npc,
-            config.phase2PinataItem,
-            rewards.getStageDropCountForHit(runtime, 2, currentHp, hpAfterHit, maxHp),
-            config
-        );
-    } else if (phase >= 3) {
-        rewards.dropRandomGems(npc, rewards.getStageDropCountForHit(runtime, 3, currentHp, hpAfterHit, maxHp), config);
-    }
-
+/**
+ * @param {any} event
+ * @returns {number}
+ */
+function readDamage(event) {
+    try {
+        return Number(event.getDamage());
+    } catch (e) {}
+    try {
+        return Number(event.damage);
+    } catch (e2) {}
+    return 0;
 }
 
-function recordDamageContribution(attacker, damageAmount, runtime) {
-    if (attacker == null) return;
-
-    var uuid = safeAttackerUuid(attacker);
-    if (!utils.hasText(uuid)) return;
-
-    var name = getAttackerName(attacker);
-    var current = runtime.state.damageMap[uuid];
-    if (current == null) {
-        current = { uuid: uuid, name: name, damage: 0 };
-        runtime.state.damageMap[uuid] = current;
-    }
-
-    current.name = name;
-    current.damage += damageAmount;
-    runtime.state.liveSnapshot = buildSortedSnapshot(runtime.state.damageMap);
-    appendRecentDamageContribution(runtime.state, uuid, name, damageAmount);
+/**
+ * @param {any} npc
+ * @returns {number}
+ */
+function readHealth(npc) {
+    try {
+        return Number(npc.getHealth());
+    } catch (e) {}
+    try {
+        return Number(npc.getMCEntity().getHealth());
+    } catch (e2) {}
+    return 0;
 }
 
-function appendRecentDamageContribution(state, uuid, name, damageAmount) {
-    if (state.recentHits[uuid] == null) state.recentHits[uuid] = [];
-
-    var list = state.recentHits[uuid];
-    list.push({
-        time: Combat_System.currentTimeMillis(),
-        damage: damageAmount,
-        name: name
-    });
-
-    if (list.length > 20) list.splice(0, list.length - 20);
+/**
+ * @param {any} npc
+ * @returns {number}
+ */
+function readMaxHealth(npc) {
+    try {
+        return Number(npc.getMaxHealth());
+    } catch (e) {}
+    try {
+        return Number(npc.getMCEntity().getMaxHealth());
+    } catch (e2) {}
+    return 1;
 }
 
-function buildSortedSnapshot(map) {
-    var out = [];
-    for (var key in map) {
-        if (!map.hasOwnProperty(key)) continue;
-        var entry = map[key];
-        if (entry == null || entry.damage <= 0) continue;
-        out.push({
-            uuid: entry.uuid,
-            name: utils.hasText(entry.name) ? entry.name : entry.uuid,
-            damage: entry.damage
-        });
-    }
-    out.sort(function(a, b) {
-        return b.damage - a.damage;
-    });
-    return out;
-}
-
-function resolveDamageDealer(event, npc) {
+/**
+ * @param {any} event
+ * @returns {any}
+ */
+function resolveAttacker(event) {
     var attacker = null;
 
     try {
-        if (event.damageSource != null && event.damageSource.getTrueSource() != null) {
-            attacker = event.damageSource.getTrueSource();
-        }
+        if (event.source != null) attacker = event.source;
     } catch (e) {}
 
     if (attacker == null) {
         try {
-            if (event.source != null) attacker = event.source;
+            if (event.damageSource != null && event.damageSource.getEntity != null) {
+                attacker = event.damageSource.getEntity();
+            }
         } catch (e2) {}
     }
 
-    return resolveDamageOwner(npc, attacker);
+    if (attacker == null) {
+        try {
+            if (event.damageSource != null && event.damageSource.getDirectEntity != null) {
+                attacker = event.damageSource.getDirectEntity();
+            }
+        } catch (e3) {}
+    }
+
+    return unwrapProjectileOwner(attacker);
 }
 
-function resolveDamageOwner(npc, attacker) {
+/**
+ * @param {any} attacker
+ * @returns {any}
+ */
+function unwrapProjectileOwner(attacker) {
+    var owner = null;
     if (attacker == null) return null;
-    if (damage.isPlayerAttacker(attacker)) return attacker;
 
-    var directOwner = resolveOwnerEntity(attacker);
-    if (directOwner != null) {
-        if (damage.isPlayerAttacker(directOwner)) return directOwner;
-        attacker = directOwner;
-    }
-
-    var ownerUuid = readOwnerUuid(attacker);
-    if (utils.hasText(ownerUuid)) {
-        var ownerPlayer = findPlayerByUuid(npc, ownerUuid);
-        if (ownerPlayer != null) return ownerPlayer;
-    }
-
-    var mcEntity = damage.unwrapMcEntity(attacker);
-    if (mcEntity != null) {
-        var mcOwner = resolveOwnerEntity(mcEntity);
-        if (mcOwner != null && damage.isPlayerAttacker(mcOwner)) return mcOwner;
-    }
-
-    return attacker;
-}
-
-function resolveOwnerEntity(target) {
-    if (target == null) return null;
-    return callZeroArg(target, "getOwner")
-        || callZeroArg(target, "owner")
-        || callZeroArg(target, "getOwnerEntity")
-        || callZeroArg(target, "getPlayerOwner")
-        || callZeroArg(target, "getOwnerPlayer");
-}
-
-function readOwnerUuid(target) {
-    if (target == null) return "";
-    return normalizeUuidValue(callZeroArg(target, "getOwnerUUID"))
-        || normalizeUuidValue(callZeroArg(target, "getOwnerUuid"))
-        || normalizeUuidValue(callZeroArg(target, "getOwnerId"));
-}
-
-function normalizeUuidValue(value) {
-    if (value == null) return "";
     try {
-        if (value.isPresent && value.isPresent()) value = value.get();
+        if (attacker.getOwner != null) owner = attacker.getOwner();
     } catch (e) {}
-    try {
-        return utils.trimString("" + value);
-    } catch (e2) {
-        return "";
-    }
-}
+    if (owner != null) return owner;
 
-function callZeroArg(target, methodName) {
-    if (target == null || !methodName) return null;
     try {
-        if (target[methodName]) return target[methodName]();
-    } catch (e) {}
-    return null;
-}
-
-function findPlayerByUuid(npc, uuid) {
-    try {
-        var players = npc.getWorld().getAllPlayers();
-        if (players == null) return null;
-        for (var i = 0; i < players.length; i++) {
-            if (("" + players[i].getUUID()) == ("" + uuid)) return players[i];
-        }
-    } catch (e) {}
-    return null;
-}
-
-function safeAttackerUuid(attacker) {
-    try {
-        return "" + attacker.getUUID();
-    } catch (e) {
-        return "";
-    }
-}
-
-function getAttackerName(attacker) {
-    try {
-        var name = "" + attacker.getDisplayName();
-        if (utils.hasText(name) && name != "null") return name;
-    } catch (e) {}
-    try {
-        var name2 = "" + attacker.getName();
-        if (utils.hasText(name2) && name2 != "null") return name2;
+        if (attacker.owner != null) owner = attacker.owner;
     } catch (e2) {}
-    return "Unknown";
+    if (owner != null) return owner;
+
+    try {
+        if (attacker.getMCEntity != null) {
+            var mcEntity = attacker.getMCEntity();
+            if (mcEntity != null && mcEntity.getOwner != null) owner = mcEntity.getOwner();
+        }
+    } catch (e3) {}
+
+    return owner == null ? attacker : owner;
+}
+
+/**
+ * @param {any} entity
+ * @returns {string}
+ */
+function readUuid(entity) {
+    if (entity == null) return "";
+    try {
+        return "" + entity.getUUID();
+    } catch (e) {}
+    try {
+        return "" + entity.getUniqueID();
+    } catch (e2) {}
+    try {
+        return "" + entity.getMCEntity().getUUID();
+    } catch (e3) {}
+    return "";
+}
+
+/**
+ * @param {any} entity
+ * @returns {string}
+ */
+function readName(entity) {
+    if (entity == null) return "";
+    try {
+        return "" + entity.getName();
+    } catch (e) {}
+    try {
+        return "" + entity.getDisplayName();
+    } catch (e2) {}
+    try {
+        return "" + entity.getMCEntity().getName().getString();
+    } catch (e3) {}
+    return readUuid(entity);
+}
+
+/**
+ * @param {Object.<string, DamageEntry>} damageMap
+ * @returns {DamageEntry[]}
+ */
+function buildLiveSnapshot(damageMap) {
+    var snapshot = [];
+    var key;
+    var entry;
+
+    for (key in damageMap) {
+        if (!Object.prototype.hasOwnProperty.call(damageMap, key)) continue;
+        entry = damageMap[key];
+        if (entry == null || entry.damage <= 0) continue;
+        snapshot.push({
+            uuid: entry.uuid,
+            name: entry.name,
+            damage: entry.damage
+        });
+    }
+
+    snapshot.sort(function(a, b) {
+        return b.damage - a.damage;
+    });
+
+    return snapshot;
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {any} attacker
+ * @param {number} damage
+ */
+function recordDamage(state, attacker, damage) {
+    var uuid = readUuid(attacker);
+    var name;
+    var entry;
+
+    if (uuid == "" || damage <= 0) return;
+
+    name = readName(attacker);
+    entry = state.damageMap[uuid];
+    if (entry == null) {
+        entry = {
+            uuid: uuid,
+            name: name,
+            damage: 0
+        };
+        state.damageMap[uuid] = entry;
+    }
+
+    entry.name = name;
+    entry.damage += damage;
+    state.liveSnapshot = buildLiveSnapshot(state.damageMap);
+}
+
+/**
+ * @param {any} event
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function handleDamaged(event, state, config) {
+    var currentHealth;
+    var maxHealth;
+    var damage;
+    var nextHealth;
+    var phase2Threshold;
+    var phase3Threshold;
+    var attacker;
+
+    if (state.mode != "live") {
+        cancelEvent(event);
+        return;
+    }
+
+    currentHealth = readHealth(event.npc);
+    maxHealth = readMaxHealth(event.npc);
+    damage = readDamage(event);
+    nextHealth = currentHealth - damage;
+    phase2Threshold = maxHealth * config.phases.phase2Threshold;
+    phase3Threshold = maxHealth * config.phases.phase3Threshold;
+
+    if (state.phase == 1 && nextHealth <= phase2Threshold) {
+        cancelEvent(event);
+        phases.enterPhase(event.npc, state, config, 2);
+    } else if (state.phase == 2 && nextHealth <= phase3Threshold) {
+        cancelEvent(event);
+        phases.enterPhase(event.npc, state, config, 3);
+    }
+
+    attacker = resolveAttacker(event);
+    recordDamage(state, attacker, damage);
 }
 
 module.exports = {
-    onDamaged: onDamaged,
-    damagedCore: damagedCore,
-    recordDamageContribution: recordDamageContribution,
-    appendRecentDamageContribution: appendRecentDamageContribution,
-    buildSortedSnapshot: buildSortedSnapshot,
-    resolveDamageDealer: resolveDamageDealer,
-    resolveDamageOwner: resolveDamageOwner,
-    resolveOwnerEntity: resolveOwnerEntity,
-    readOwnerUuid: readOwnerUuid,
-    safeAttackerUuid: safeAttackerUuid,
-    getAttackerName: getAttackerName,
-    findPlayerByUuid: findPlayerByUuid
+    handleDamaged: handleDamaged,
+    readDamage: readDamage
 };

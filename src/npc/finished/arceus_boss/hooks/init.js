@@ -18,5 +18,5 @@ function requireShared(event) {
 
 function init(event) {
     var shared = requireShared(event);
-    shared.runtime.initBoss(event.npc);
+    shared.npc.init(event);
 }

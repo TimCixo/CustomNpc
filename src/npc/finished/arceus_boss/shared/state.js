@@ -23,6 +23,7 @@ var STATE_KEY = "arceus_state";
  * @property {ArceusConfig|null} configCache
  * @property {ArceusMode} mode
  * @property {number} phase
+ * @property {number} transitionTicksLeft
  * @property {Object.<string, DamageEntry>} damageMap
  * @property {DamageEntry[]} liveSnapshot
  */
@@ -36,6 +37,7 @@ function createState() {
         configCache: null,
         mode: "live",
         phase: 1,
+        transitionTicksLeft: 0,
         damageMap: {},
         liveSnapshot: []
     };

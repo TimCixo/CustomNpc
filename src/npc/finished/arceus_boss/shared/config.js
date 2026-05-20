@@ -17,6 +17,8 @@ var CONFIG_KEY = "arceus_config_json";
  * @property {number} aggroRefreshMs
  * @property {number} aggroRadius
  * @property {number} transitionTicks
+ * @property {number=} phase2DamageMult
+ * @property {number=} phase3DamageMult
  */
 
 /**
