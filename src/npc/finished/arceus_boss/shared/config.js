@@ -1,117 +1,164 @@
+// @ts-check
+
 var utils = require("utils.js");
-var visuals = require("visuals.js");
-var clock = require("clock_link.js");
 
-var ARCEUS_CONFIG_KEY = "arceus_config_json";
-var ARCEUS_CONFIG_VERSION = 12;
-var ARCEUS_CLOCK_MAIN_UUID_KEY = "respawn_clock_main_uuid";
-var ARCEUS_CLOCK_RESPAWN_SECONDS_KEY = "respawn_clock_respawn_seconds";
+var CONFIG_KEY = "arceus_config_json";
 
-function createDefaultConfig() {
-    return {
-        version: ARCEUS_CONFIG_VERSION,
+/**
+ * @typedef {Object} ConfigGeneral
+ * @property {boolean} enabled
+ * @property {number} timerTicks
+ * @property {boolean} debugRuntime
+ * @property {string} baseTitle
+ */
+
+/**
+ * @typedef {Object} ConfigCombat
+ * @property {number} aggroRefreshMs
+ * @property {number} aggroRadius
+ * @property {number} transitionTicks
+ */
+
+/**
+ * @typedef {Object} ConfigPhases
+ * @property {number} phase2Threshold
+ * @property {number} phase3Threshold
+ * @property {number} phase2HealTo
+ * @property {number} phase3HealTo
+ */
+
+/**
+ * @typedef {Object} ConfigDeath
+ * @property {number} customTicks
+ * @property {number} thresholdMinHp
+ */
+
+/**
+ * @typedef {Object} ArceusConfig
+ * @property {ConfigGeneral} general
+ * @property {ConfigCombat} combat
+ * @property {ConfigPhases} phases
+ * @property {ConfigDeath} death
+ */
+
+/** @type {ArceusConfig} */
+var DEFAULT_CONFIG = {
+    general: {
         enabled: true,
         timerTicks: 5,
+        debugRuntime: false,
+        baseTitle: "Arceus"
+    },
+    combat: {
+        aggroRefreshMs: 500,
+        aggroRadius: 32,
+        transitionTicks: 40
+    },
+    phases: {
         phase2Threshold: 0.10,
         phase3Threshold: 0.10,
         phase2HealTo: 0.72,
-        phase3HealTo: 0.45,
-        transitionTicks: 40,
-        aggroRefreshMs: 500,
-        aggroRadius: 32,
-        phase2RegenInterval: 40,
-        phase3RegenInterval: 20,
-        phase2RegenEffectDuration: 50,
-        phase3RegenEffectDuration: 60,
-        phase2RegenEffectAmplifier: 2,
-        phase3RegenEffectAmplifier: 4,
-        phase2DamageMult: 1.20,
-        phase3DamageMult: 1.45,
-        phase3FlatBonus: 4,
-        phase3ArmorBypassBonus: 8.0,
-        phase1MeleeDelayMult: 1.0,
-        phase2MeleeDelayMult: 0.7,
-        phase3MeleeDelayMult: 0.5,
-        phaseTransitionLaunchRadius: 18.0,
-        phaseTransitionLaunchPush: 1.85,
-        phaseTransitionLaunchVertical: 1.15,
-        reflectArrowSpeed: 2.2,
-        reflectArrowInaccuracy: 0.2,
-        customDeathTicks: 80,
-        customDeathThresholdPercent: 0.02,
-        customDeathThresholdMinHp: 20,
-        deathTimerTicks: 1,
-        rewardIntervalTicks: 20,
-        respawnVisualResetTicks: 20,
-        deathSpinStep: 12,
-        deathExplosionPower: 3.5,
-        deathAnimationId: 5,
-        pinataSpeedMin: 0.20,
-        pinataSpeedMax: 0.55,
-        pinataVerticalBoost: 0.28,
-        phase2PinataItem: "cobblemon:rare_candy",
-        phase2TotalDropsBase: 8,
-        phase2TotalDropsPerExtraPlayer: 4,
-        phase2TotalDropsMax: 24,
-        phase3TotalDropsBase: 3,
-        phase3TotalDropsPerExtraPlayer: 2,
-        phase3TotalDropsMax: 12,
-        stage2Sound: "cobblemon:pokemon.arceus.cry",
-        stage3Sound: "cobblemon:pokemon.arceus.cry",
-        deathSound: "cobblemon:pokemon.arceus.cry",
-        debugRuntime: false,
-        debugIntervalTicks: 20,
-        baseTitle: "",
-        clockMainUuid: "",
-        clockRespawnSeconds: 86400
-    };
+        phase3HealTo: 0.45
+    },
+    death: {
+        customTicks: 80,
+        thresholdMinHp: 20
+    }
+};
+
+/**
+ * @param {any} value
+ * @returns {boolean}
+ */
+function isPlainObject(value) {
+    return value != null
+        && typeof value == "object"
+        && Object.prototype.toString.call(value) == "[object Object]";
 }
 
-function mergeConfig(raw) {
-    var base = createDefaultConfig();
-    if (raw == null) return base;
-    for (var key in base) {
-        if (!base.hasOwnProperty(key)) continue;
-        if (raw[key] === undefined || raw[key] === null) continue;
-        base[key] = raw[key];
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+function cloneValue(value) {
+    var output;
+    var key;
+
+    if (!isPlainObject(value)) {
+        if (Object.prototype.toString.call(value) == "[object Array]") {
+            return /** @type {T} */ (value.slice(0));
+        }
+        return value;
     }
-    base.version = ARCEUS_CONFIG_VERSION;
-    return base;
+
+    output = {};
+    for (key in value) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) {
+            output[key] = cloneValue(value[key]);
+        }
+    }
+    return /** @type {T} */ (output);
 }
 
-function ensureArceusConfig(npc) {
-    var data = npc.getStoreddata();
-    var current = utils.parseJsonSafe(data.get(ARCEUS_CONFIG_KEY));
-    var merged = mergeConfig(current);
+/**
+ * Deep-merges custom config onto defaults without replacing complete nested blocks.
+ *
+ * @template T
+ * @param {T} defaults
+ * @param {any} custom
+ * @returns {T}
+ */
+function mergeConfig(defaults, custom) {
+    var merged = cloneValue(defaults);
+    var key;
 
-    if (merged.baseTitle == "") {
-        merged.baseTitle = visuals.readNpcTitle(npc);
+    if (!isPlainObject(custom)) return merged;
+
+    for (key in custom) {
+        if (!Object.prototype.hasOwnProperty.call(custom, key)) continue;
+        if (custom[key] === undefined || custom[key] === null) continue;
+
+        if (isPlainObject(merged[key]) && isPlainObject(custom[key])) {
+            merged[key] = mergeConfig(merged[key], custom[key]);
+        } else {
+            merged[key] = cloneValue(custom[key]);
+        }
     }
 
-    if (!utils.hasText(utils.trimString(data.get(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY)))) {
-        data.put(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY, "" + clock.readRespawnDelaySeconds(npc));
-    }
-
-    merged.clockRespawnSeconds = utils.parseIntSafe(data.get(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY), merged.clockRespawnSeconds);
-    merged.clockMainUuid = utils.trimString(data.get(ARCEUS_CLOCK_MAIN_UUID_KEY));
-
-    writeConfig(npc, merged);
     return merged;
 }
 
-function writeConfig(npc, config) {
-    npc.getStoreddata().put(ARCEUS_CONFIG_KEY, JSON.stringify(config));
-    npc.getStoreddata().put(ARCEUS_CLOCK_MAIN_UUID_KEY, utils.hasText(config.clockMainUuid) ? config.clockMainUuid : "");
-    npc.getStoreddata().put(ARCEUS_CLOCK_RESPAWN_SECONDS_KEY, "" + utils.clampPositiveInt(config.clockRespawnSeconds, 300));
+/**
+ * @param {any} npc
+ * @param {any} data
+ * @returns {ArceusConfig}
+ */
+function set(npc, data) {
+    var config = /** @type {ArceusConfig} */ (mergeConfig(DEFAULT_CONFIG, data || {}));
+    npc.getStoreddata().put(CONFIG_KEY, JSON.stringify(config));
+    return config;
+}
+
+/**
+ * @param {any} npc
+ * @returns {ArceusConfig|null}
+ */
+function get(npc) {
+    var stored = npc.getStoreddata();
+    var raw = stored.get(CONFIG_KEY);
+    var parsed;
+
+    if (raw == null || raw == "" || raw == "null" || raw == "undefined") return null;
+
+    parsed = utils.parseJsonSafe(raw);
+    return /** @type {ArceusConfig} */ (mergeConfig(DEFAULT_CONFIG, parsed || {}));
 }
 
 module.exports = {
-    ARCEUS_CONFIG_KEY: ARCEUS_CONFIG_KEY,
-    ARCEUS_CONFIG_VERSION: ARCEUS_CONFIG_VERSION,
-    ARCEUS_CLOCK_MAIN_UUID_KEY: ARCEUS_CLOCK_MAIN_UUID_KEY,
-    ARCEUS_CLOCK_RESPAWN_SECONDS_KEY: ARCEUS_CLOCK_RESPAWN_SECONDS_KEY,
-    createDefaultConfig: createDefaultConfig,
-    ensureArceusConfig: ensureArceusConfig,
+    CONFIG_KEY: CONFIG_KEY,
+    DEFAULT_CONFIG: DEFAULT_CONFIG,
     mergeConfig: mergeConfig,
-    writeConfig: writeConfig
+    set: set,
+    get: get
 };
