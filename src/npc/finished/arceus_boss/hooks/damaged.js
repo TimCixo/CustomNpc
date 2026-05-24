@@ -18,5 +18,5 @@ function requireShared(event) {
 
 function damaged(event) {
     var shared = requireShared(event);
-    shared.combat.onDamaged(event);
+    shared.npc.onDamaged(event);
 }

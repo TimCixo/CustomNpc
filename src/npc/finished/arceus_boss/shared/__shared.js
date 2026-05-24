@@ -1,16 +1,12 @@
 module.exports = {
     utils: "utils.js",
     config: "config.js",
-    lifecycle: "lifecycle.js",
-    runtime: "runtime.js",
-    visuals: "visuals.js",
-    clock: "clock_link.js",
+    state: "state.js",
+    npc: "npc.js",
     combat: "combat.js",
     phases: "phases.js",
+    attacks: "attacks.js",
+    visuals: "visuals.js",
     rewards: "rewards.js",
-    damage: "damage.js",
-    timers: "timers.js",
-    deathFlow: "death_flow.js",
-    leaderboard: "leaderboard.js",
-    attacks: "attacks.js"
+    deathFlow: "death_flow.js"
 };

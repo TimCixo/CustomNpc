@@ -1,289 +1,585 @@
-var utils = require("utils.js");
-var runtimeModule = require("runtime.js");
+// @ts-check
+
 var phases = require("phases.js");
 var rewards = require("rewards.js");
-var damage = require("damage.js");
-var visuals = require("visuals.js");
-var deathFlow = require("death_flow.js");
 
 var Combat_System = Java.type("java.lang.System");
+var Combat_MobEffectInstance = Java.type("net.minecraft.world.effect.MobEffectInstance");
+var Combat_MobEffects = Java.type("net.minecraft.world.effect.MobEffects");
 
-function onDamaged(event) {
-    var runtime = runtimeModule.ensureArceusRuntime(event.npc);
+/**
+ * @typedef {import("./config.js").ArceusConfig} ArceusConfig
+ * @typedef {import("./state.js").ArceusState} ArceusState
+ * @typedef {import("./state.js").DamageEntry} DamageEntry
+ */
+
+/**
+ * @param {any} event
+ */
+function cancelEvent(event) {
     try {
-        damagedCore(event, runtime);
-    } catch (e) {
-        runtimeModule.markRuntimeError(runtime, "damaged", e);
+        event.setCanceled(true);
+    } catch (e) {}
+}
+
+/**
+ * @param {any} event
+ * @returns {number}
+ */
+function readDamage(event) {
+    var value;
+    try {
+        value = Number(event.getDamage());
+        return isNaN(value) ? 0 : value;
+    } catch (e) {}
+    try {
+        value = Number(event.damage);
+        return isNaN(value) ? 0 : value;
+    } catch (e2) {}
+    return 0;
+}
+
+/**
+ * @param {any} npc
+ * @returns {number}
+ */
+function readHealth(npc) {
+    var value;
+    try {
+        value = Number(npc.getHealth());
+        return isNaN(value) ? 0 : value;
+    } catch (e) {}
+    try {
+        value = Number(npc.getMCEntity().getHealth());
+        return isNaN(value) ? 0 : value;
+    } catch (e2) {}
+    return 0;
+}
+
+/**
+ * @param {any} npc
+ * @returns {number}
+ */
+function readMaxHealth(npc) {
+    var value;
+    try {
+        value = Number(npc.getMaxHealth());
+        return isNaN(value) || value <= 0 ? 1 : value;
+    } catch (e) {}
+    try {
+        value = Number(npc.getMCEntity().getMaxHealth());
+        return isNaN(value) || value <= 0 ? 1 : value;
+    } catch (e2) {}
+    return 1;
+}
+
+/**
+ * @param {any} npc
+ * @param {number} health
+ */
+function setHealthSafe(npc, health) {
+    var value = Math.max(1, health);
+    try {
+        npc.setHealth(value);
+        return;
+    } catch (e) {}
+    try {
+        npc.getMCEntity().setHealth(value);
+    } catch (e2) {}
+}
+
+/**
+ * @param {any} event
+ * @returns {any}
+ */
+function resolveAttacker(event) {
+    var attacker = null;
+
+    try {
+        if (event.source != null) attacker = event.source;
+    } catch (e) {}
+
+    if (attacker == null) {
         try {
-            damage.cancelDamage(event);
+            if (event.damageSource != null && event.damageSource.getEntity != null) {
+                attacker = event.damageSource.getEntity();
+            }
         } catch (e2) {}
     }
+
+    if (attacker == null) {
+        try {
+            if (event.damageSource != null && event.damageSource.getDirectEntity != null) {
+                attacker = event.damageSource.getDirectEntity();
+            }
+        } catch (e3) {}
+    }
+
+    return unwrapProjectileOwner(attacker);
 }
 
-function damagedCore(event, runtime) {
-    var npc = event.npc;
-    var state = runtime.state;
-    var config = runtime.config;
+/**
+ * @param {any} attacker
+ * @returns {any}
+ */
+function unwrapProjectileOwner(attacker) {
+    var owner = null;
+    if (attacker == null) return null;
 
-    if (!config.enabled) return;
+    try {
+        if (attacker.getOwner != null) owner = attacker.getOwner();
+    } catch (e) {}
+    if (owner != null) return owner;
 
-    if (state.mode == "phase_transition") {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        phases.forcePhaseTransitionHealthFloor(npc, config, state.phase);
-        visuals.clearEntityDamageVisuals(npc);
-        return;
-    }
+    try {
+        if (attacker.owner != null) owner = attacker.owner;
+    } catch (e2) {}
+    if (owner != null) return owner;
 
-    if (state.mode != "live") {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        phases.forceDeathSafeHealthFloor(npc, config);
-        visuals.clearEntityDamageVisuals(npc);
-        return;
-    }
+    try {
+        if (attacker.getMCEntity != null) {
+            var mcEntity = attacker.getMCEntity();
+            if (mcEntity != null && mcEntity.getOwner != null) owner = mcEntity.getOwner();
+        }
+    } catch (e3) {}
 
-    var currentHp = damage.readNpcHealth(npc);
-    var maxHp = damage.readNpcMaxHealth(npc);
-    var incomingDamage = damage.readDamage(event);
-    var phase = state.phase;
-    var attacker = resolveDamageDealer(event, npc);
-
-    if (incomingDamage <= 0 || maxHp <= 0) return;
-
-    incomingDamage = damage.applyPhaseDamageMitigation(event, npc, phase, incomingDamage, config, attacker);
-    var hpAfterHit = currentHp - incomingDamage;
-    var phase2Threshold = maxHp * config.phase2Threshold;
-    var phase3Threshold = maxHp * config.phase3Threshold;
-    var deathThreshold = phases.getArceusDeathThresholdHp(maxHp, config);
-
-    recordDamageContribution(attacker, incomingDamage, runtime);
-
-    if (phase <= 1 && hpAfterHit <= phase2Threshold) {
-        damage.cancelDamage(event);
-        phases.enterPhase(
-            npc,
-            runtime,
-            2,
-            config.phase2HealTo,
-            "\u00A76\u0410\u0440\u043A\u0435\u0443\u0441 \u043C\u0435\u043D\u044F\u0435\u0442 \u0430\u0441\u043F\u0435\u043A\u0442 \u0438 \u0432\u0445\u043E\u0434\u0438\u0442 \u0432\u043E \u0432\u0442\u043E\u0440\u0443\u044E \u0441\u0442\u0430\u0434\u0438\u044E!",
-            "yellow",
-            config.stage2Sound
-        );
-        return;
-    }
-
-    if (phase == 2 && hpAfterHit <= phase3Threshold) {
-        damage.cancelDamage(event);
-        var phase2DropCount = rewards.getStageDropCountToThreshold(runtime, 2, currentHp, phase3Threshold, maxHp);
-        phases.enterPhase(
-            npc,
-            runtime,
-            3,
-            config.phase3HealTo,
-            "\u00A74\u0410\u0440\u043A\u0435\u0443\u0441 \u0432\u044B\u0441\u0432\u043E\u0431\u043E\u0436\u0434\u0430\u0435\u0442 \u0438\u0441\u0442\u0438\u043D\u043D\u0443\u044E \u0441\u0438\u043B\u0443. \u0422\u0440\u0435\u0442\u044C\u044F \u0441\u0442\u0430\u0434\u0438\u044F!",
-            "red",
-            config.stage3Sound
-        );
-        rewards.dropConfiguredItem(npc, config.phase2PinataItem, phase2DropCount, config);
-        return;
-    }
-
-    if (phase >= 3 && hpAfterHit <= deathThreshold) {
-        damage.cancelDamage(event);
-        visuals.setEntityInvulnerable(npc, true);
-        deathFlow.requestStart(runtime);
-        damage.setNpcHealthSafe(npc, deathThreshold);
-        phases.forceDeathSafeHealthFloor(npc, config);
-        phases.stopCombatForDeath(npc);
-        rewards.dropRandomGems(npc, rewards.getStageDropCountToThreshold(runtime, 3, currentHp, deathThreshold, maxHp), config);
-        return;
-    }
-
-    if (phase == 2) {
-        rewards.dropConfiguredItem(
-            npc,
-            config.phase2PinataItem,
-            rewards.getStageDropCountForHit(runtime, 2, currentHp, hpAfterHit, maxHp),
-            config
-        );
-    } else if (phase >= 3) {
-        rewards.dropRandomGems(npc, rewards.getStageDropCountForHit(runtime, 3, currentHp, hpAfterHit, maxHp), config);
-    }
-
+    return owner == null ? attacker : owner;
 }
 
-function recordDamageContribution(attacker, damageAmount, runtime) {
-    if (attacker == null) return;
-
-    var uuid = safeAttackerUuid(attacker);
-    if (!utils.hasText(uuid)) return;
-
-    var name = getAttackerName(attacker);
-    var current = runtime.state.damageMap[uuid];
-    if (current == null) {
-        current = { uuid: uuid, name: name, damage: 0 };
-        runtime.state.damageMap[uuid] = current;
-    }
-
-    current.name = name;
-    current.damage += damageAmount;
-    runtime.state.liveSnapshot = buildSortedSnapshot(runtime.state.damageMap);
-    appendRecentDamageContribution(runtime.state, uuid, name, damageAmount);
+/**
+ * @param {any} entity
+ * @returns {string}
+ */
+function readUuid(entity) {
+    if (entity == null) return "";
+    try {
+        return "" + entity.getUUID();
+    } catch (e) {}
+    try {
+        return "" + entity.getUniqueID();
+    } catch (e2) {}
+    try {
+        return "" + entity.getMCEntity().getUUID();
+    } catch (e3) {}
+    return "";
 }
 
-function appendRecentDamageContribution(state, uuid, name, damageAmount) {
+/**
+ * @param {any} entity
+ * @returns {string}
+ */
+function readName(entity) {
+    if (entity == null) return "";
+    try {
+        return "" + entity.getName();
+    } catch (e) {}
+    try {
+        return "" + entity.getDisplayName();
+    } catch (e2) {}
+    try {
+        return "" + entity.getMCEntity().getName().getString();
+    } catch (e3) {}
+    return readUuid(entity);
+}
+
+/**
+ * @param {Object.<string, DamageEntry>} damageMap
+ * @returns {DamageEntry[]}
+ */
+function buildLiveSnapshot(damageMap) {
+    var snapshot = [];
+    var key;
+    var entry;
+
+    for (key in damageMap) {
+        if (!Object.prototype.hasOwnProperty.call(damageMap, key)) continue;
+        entry = damageMap[key];
+        if (entry == null || entry.damage <= 0) continue;
+        snapshot.push({
+            uuid: entry.uuid,
+            name: entry.name,
+            damage: entry.damage
+        });
+    }
+
+    snapshot.sort(function(a, b) {
+        return b.damage - a.damage;
+    });
+
+    return snapshot;
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {any} attacker
+ * @param {number} damage
+ */
+function recordDamage(state, attacker, damage) {
+    var uuid = readUuid(attacker);
+    var name;
+    var entry;
+
+    if (uuid == "" || damage <= 0) return;
+
+    name = readName(attacker);
+    entry = state.damageMap[uuid];
+    if (entry == null) {
+        entry = {
+            uuid: uuid,
+            name: name,
+            damage: 0
+        };
+        state.damageMap[uuid] = entry;
+    }
+
+    entry.name = name;
+    entry.damage += damage;
+    state.liveSnapshot = buildLiveSnapshot(state.damageMap);
+    appendRecentHit(state, uuid, name, damage);
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {string} uuid
+ * @param {string} name
+ * @param {number} damage
+ */
+function appendRecentHit(state, uuid, name, damage) {
+    var list;
+
+    if (state.recentHits == null) state.recentHits = {};
     if (state.recentHits[uuid] == null) state.recentHits[uuid] = [];
 
-    var list = state.recentHits[uuid];
+    list = state.recentHits[uuid];
     list.push({
         time: Combat_System.currentTimeMillis(),
-        damage: damageAmount,
+        damage: damage,
         name: name
     });
 
     if (list.length > 20) list.splice(0, list.length - 20);
 }
 
-function buildSortedSnapshot(map) {
-    var out = [];
-    for (var key in map) {
-        if (!map.hasOwnProperty(key)) continue;
-        var entry = map[key];
-        if (entry == null || entry.damage <= 0) continue;
-        out.push({
-            uuid: entry.uuid,
-            name: utils.hasText(entry.name) ? entry.name : entry.uuid,
-            damage: entry.damage
-        });
+/**
+ * @param {any} event
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function handleDamaged(event, state, config) {
+    var currentHealth;
+    var maxHealth;
+    var damage;
+    var nextHealth;
+    var phase2Threshold;
+    var phase3Threshold;
+    var deathThreshold;
+    var drops;
+    var attacker;
+
+    if (state.mode != "live") {
+        cancelEvent(event);
+        return;
     }
-    out.sort(function(a, b) {
-        return b.damage - a.damage;
-    });
-    return out;
-}
 
-function resolveDamageDealer(event, npc) {
-    var attacker = null;
+    currentHealth = readHealth(event.npc);
+    maxHealth = readMaxHealth(event.npc);
+    damage = readDamage(event);
+    nextHealth = currentHealth - damage;
+    phase2Threshold = maxHealth * config.phases.phase2Threshold;
+    phase3Threshold = maxHealth * config.phases.phase3Threshold;
+    deathThreshold = getDeathThreshold(config, maxHealth);
 
-    try {
-        if (event.damageSource != null && event.damageSource.getTrueSource() != null) {
-            attacker = event.damageSource.getTrueSource();
+    attacker = resolveAttacker(event);
+    recordDamage(state, attacker, damage);
+
+    if (state.phase >= 3 && nextHealth <= deathThreshold) {
+        cancelEvent(event);
+        state.mode = "custom_death_start";
+        state.customDeathTicksLeft = readDeathInt(config, "customTicks", 80);
+        setHealthSafe(event.npc, deathThreshold);
+        phases.setInvulnerableSafe(event.npc, true);
+        return;
+    }
+
+    if (state.phase == 1 && nextHealth <= phase2Threshold) {
+        cancelEvent(event);
+        phases.enterPhase(event.npc, state, config, 2);
+        return;
+    } else if (state.phase == 2 && nextHealth <= phase3Threshold) {
+        cancelEvent(event);
+        drops = rewards.getStageDropCountForHit(state, config, 2, currentHealth, nextHealth, maxHealth);
+        if (drops > 0) {
+            rewards.dropConfiguredItem(event.npc, readRewardString(config, "phase2Item", "cobblemon:rare_candy"), drops, config);
         }
-    } catch (e) {}
-
-    if (attacker == null) {
-        try {
-            if (event.source != null) attacker = event.source;
-        } catch (e2) {}
+        phases.enterPhase(event.npc, state, config, 3);
+        return;
     }
 
-    return resolveDamageOwner(npc, attacker);
-}
-
-function resolveDamageOwner(npc, attacker) {
-    if (attacker == null) return null;
-    if (damage.isPlayerAttacker(attacker)) return attacker;
-
-    var directOwner = resolveOwnerEntity(attacker);
-    if (directOwner != null) {
-        if (damage.isPlayerAttacker(directOwner)) return directOwner;
-        attacker = directOwner;
-    }
-
-    var ownerUuid = readOwnerUuid(attacker);
-    if (utils.hasText(ownerUuid)) {
-        var ownerPlayer = findPlayerByUuid(npc, ownerUuid);
-        if (ownerPlayer != null) return ownerPlayer;
-    }
-
-    var mcEntity = damage.unwrapMcEntity(attacker);
-    if (mcEntity != null) {
-        var mcOwner = resolveOwnerEntity(mcEntity);
-        if (mcOwner != null && damage.isPlayerAttacker(mcOwner)) return mcOwner;
-    }
-
-    return attacker;
-}
-
-function resolveOwnerEntity(target) {
-    if (target == null) return null;
-    return callZeroArg(target, "getOwner")
-        || callZeroArg(target, "owner")
-        || callZeroArg(target, "getOwnerEntity")
-        || callZeroArg(target, "getPlayerOwner")
-        || callZeroArg(target, "getOwnerPlayer");
-}
-
-function readOwnerUuid(target) {
-    if (target == null) return "";
-    return normalizeUuidValue(callZeroArg(target, "getOwnerUUID"))
-        || normalizeUuidValue(callZeroArg(target, "getOwnerUuid"))
-        || normalizeUuidValue(callZeroArg(target, "getOwnerId"));
-}
-
-function normalizeUuidValue(value) {
-    if (value == null) return "";
-    try {
-        if (value.isPresent && value.isPresent()) value = value.get();
-    } catch (e) {}
-    try {
-        return utils.trimString("" + value);
-    } catch (e2) {
-        return "";
+    drops = rewards.getStageDropCountForHit(state, config, state.phase, currentHealth, nextHealth, maxHealth);
+    if (drops > 0 && state.phase == 2) {
+        rewards.dropConfiguredItem(event.npc, readRewardString(config, "phase2Item", "cobblemon:rare_candy"), drops, config);
+    } else if (drops > 0 && state.phase >= 3) {
+        rewards.dropRandomGems(event.npc, drops, config);
     }
 }
 
-function callZeroArg(target, methodName) {
-    if (target == null || !methodName) return null;
-    try {
-        if (target[methodName]) return target[methodName]();
-    } catch (e) {}
-    return null;
+/**
+ * @param {ArceusConfig} config
+ * @param {number} maxHealth
+ * @returns {number}
+ */
+function getDeathThreshold(config, maxHealth) {
+    var percent = readDeathNumber(config, "thresholdPercent", 0.02);
+    var minHp = readDeathNumber(config, "thresholdMinHp", 20);
+    var threshold = maxHealth * percent;
+    if (threshold < minHp) threshold = minHp;
+    return threshold < 1 ? 1 : threshold;
 }
 
-function findPlayerByUuid(npc, uuid) {
+function readDeathNumber(config, key, fallback) {
     try {
-        var players = npc.getWorld().getAllPlayers();
-        if (players == null) return null;
-        for (var i = 0; i < players.length; i++) {
-            if (("" + players[i].getUUID()) == ("" + uuid)) return players[i];
-        }
-    } catch (e) {}
-    return null;
-}
-
-function safeAttackerUuid(attacker) {
-    try {
-        return "" + attacker.getUUID();
+        return Number(config.death[key]) || fallback;
     } catch (e) {
-        return "";
+        return fallback;
     }
 }
 
-function getAttackerName(attacker) {
+function readDeathInt(config, key, fallback) {
+    return Math.max(1, Math.floor(readDeathNumber(config, key, fallback)));
+}
+
+function readRewardString(config, key, fallback) {
     try {
-        var name = "" + attacker.getDisplayName();
-        if (utils.hasText(name) && name != "null") return name;
+        return config.rewards[key] == null || config.rewards[key] == "" ? fallback : "" + config.rewards[key];
+    } catch (e) {
+        return fallback;
+    }
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickCombat(npc, state, config) {
+    if (state.mode != "live") return;
+
+    tickRegen(npc, state, config);
+    tickRecentAggro(npc, state, config);
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickRegen(npc, state, config) {
+    var interval;
+    var duration;
+    var amplifier;
+
+    if (state.phase < 2) return;
+
+    interval = readPhaseInt(config, "regenInterval", 40);
+    state.pulseTicks += readGeneralInt(config, "timerTicks", 5);
+    if (state.pulseTicks < interval) return;
+
+    state.pulseTicks = 0;
+    duration = readPhaseInt(config, "regenDuration", 60);
+    amplifier = readPhaseInt(config, "regenAmplifier", 2);
+    applyRegeneration(npc, duration, amplifier);
+}
+
+/**
+ * @param {any} npc
+ * @param {number} duration
+ * @param {number} amplifier
+ */
+function applyRegeneration(npc, duration, amplifier) {
+    try {
+        npc.getMCEntity().addEffect(new Combat_MobEffectInstance(Combat_MobEffects.REGENERATION, duration, amplifier));
+    } catch (e) {}
+}
+
+/**
+ * @param {any} npc
+ * @param {ArceusState} state
+ * @param {ArceusConfig} config
+ */
+function tickRecentAggro(npc, state, config) {
+    var winner = findRecentAggroWinner(state, readCombatInt(config, "aggroRecentMs", 3500));
+    var player;
+
+    if (winner == null) return;
+    player = resolvePlayer(npc, winner.uuid, winner.name);
+    if (player == null) return;
+    setAttackTargetSafe(npc, player);
+}
+
+/**
+ * @param {ArceusState} state
+ * @param {number} windowMs
+ * @returns {any}
+ */
+function findRecentAggroWinner(state, windowMs) {
+    var now = Combat_System.currentTimeMillis();
+    var best = null;
+    var key;
+    var list;
+    var total;
+    var name;
+    var i;
+    var hit;
+
+    if (state.recentHits == null) return null;
+
+    for (key in state.recentHits) {
+        if (!Object.prototype.hasOwnProperty.call(state.recentHits, key)) continue;
+        list = state.recentHits[key];
+        if (list == null || list.length <= 0) continue;
+
+        total = 0;
+        name = key;
+        for (i = list.length - 1; i >= 0; i--) {
+            hit = list[i];
+            if (hit == null || now - hit.time > windowMs) {
+                list.splice(i, 1);
+                continue;
+            }
+            total += hit.damage;
+            if (hit.name != null && hit.name != "") name = hit.name;
+        }
+
+        if (total <= 0) continue;
+        if (best == null || total > best.damage) {
+            best = { uuid: key, name: name, damage: total };
+        }
+    }
+
+    return best;
+}
+
+/**
+ * @param {any} npc
+ * @param {string} uuid
+ * @param {string} name
+ * @returns {any}
+ */
+function resolvePlayer(npc, uuid, name) {
+    var players = getOnlinePlayers(npc);
+    var i;
+    var player;
+
+    if (players != null) {
+        for (i = 0; i < getCollectionSize(players); i++) {
+            player = getCollectionValue(players, i);
+            if (samePlayerUuid(player, uuid)) return player;
+        }
+        for (i = 0; i < getCollectionSize(players); i++) {
+            player = getCollectionValue(players, i);
+            if (samePlayerName(player, name)) return player;
+        }
+    }
+
+    try {
+        return npc.getWorld().getPlayer(name);
+    } catch (e) {
+        return null;
+    }
+}
+
+function getOnlinePlayers(npc) {
+    try {
+        return npc.getWorld().getAllPlayers();
+    } catch (e) {
+        return null;
+    }
+}
+
+function getCollectionSize(collection) {
+    if (collection == null) return 0;
+    try {
+        if (typeof collection.length == "number") return collection.length;
     } catch (e) {}
     try {
-        var name2 = "" + attacker.getName();
-        if (utils.hasText(name2) && name2 != "null") return name2;
+        if (collection.size != null) return Number(collection.size());
     } catch (e2) {}
-    return "Unknown";
+    return 0;
+}
+
+function getCollectionValue(collection, index) {
+    try {
+        if (typeof collection.length == "number") return collection[index];
+    } catch (e) {}
+    try {
+        if (collection.get != null) return collection.get(index);
+    } catch (e2) {}
+    return null;
+}
+
+function samePlayerUuid(player, uuid) {
+    if (player == null || uuid == null || uuid == "") return false;
+    try {
+        if (("" + player.getUUID()) == ("" + uuid)) return true;
+    } catch (e) {}
+    try {
+        if (("" + player.getMCEntity().getUUID()) == ("" + uuid)) return true;
+    } catch (e2) {}
+    return false;
+}
+
+function samePlayerName(player, name) {
+    if (player == null || name == null || name == "") return false;
+    try {
+        if (("" + player.getName()) == ("" + name)) return true;
+    } catch (e) {}
+    try {
+        if (("" + player.getDisplayName()) == ("" + name)) return true;
+    } catch (e2) {}
+    return false;
+}
+
+function setAttackTargetSafe(npc, player) {
+    try {
+        npc.setAttackTarget(player);
+        return;
+    } catch (e) {}
+    try {
+        npc.setAttackTarget(player.getMCEntity());
+        return;
+    } catch (e2) {}
+    try {
+        npc.getMCEntity().setTarget(player.getMCEntity());
+    } catch (e3) {}
+}
+
+function readGeneralInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.general[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function readCombatInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.combat[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function readPhaseInt(config, key, fallback) {
+    try {
+        return Math.max(1, Math.floor(Number(config.phases[key]) || fallback));
+    } catch (e) {
+        return fallback;
+    }
 }
 
 module.exports = {
-    onDamaged: onDamaged,
-    damagedCore: damagedCore,
-    recordDamageContribution: recordDamageContribution,
-    appendRecentDamageContribution: appendRecentDamageContribution,
-    buildSortedSnapshot: buildSortedSnapshot,
-    resolveDamageDealer: resolveDamageDealer,
-    resolveDamageOwner: resolveDamageOwner,
-    resolveOwnerEntity: resolveOwnerEntity,
-    readOwnerUuid: readOwnerUuid,
-    safeAttackerUuid: safeAttackerUuid,
-    getAttackerName: getAttackerName,
-    findPlayerByUuid: findPlayerByUuid
+    handleDamaged: handleDamaged,
+    tickCombat: tickCombat,
+    readDamage: readDamage,
+    getDeathThreshold: getDeathThreshold
 };
