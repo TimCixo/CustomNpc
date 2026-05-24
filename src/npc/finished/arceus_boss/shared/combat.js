@@ -317,6 +317,10 @@ function handleDamaged(event, state, config) {
         state.customDeathTicksLeft = readDeathInt(config, "customTicks", 80);
         setHealthSafe(event.npc, deathThreshold);
         phases.setInvulnerableSafe(event.npc, true);
+        drops = rewards.getStageDropCountForHit(state, config, 3, currentHealth, deathThreshold, maxHealth);
+        if (drops > 0) {
+            rewards.dropRandomGems(event.npc, drops, config);
+        }
         return;
     }
 
@@ -490,12 +494,12 @@ function resolvePlayer(npc, uuid, name) {
     var player;
 
     if (players != null) {
-        for (i = 0; i < getCollectionSize(players); i++) {
-            player = getCollectionValue(players, i);
+        for (i = 0; i < players.length; i++) {
+            player = players[i];
             if (samePlayerUuid(player, uuid)) return player;
         }
-        for (i = 0; i < getCollectionSize(players); i++) {
-            player = getCollectionValue(players, i);
+        for (i = 0; i < players.length; i++) {
+            player = players[i];
             if (samePlayerName(player, name)) return player;
         }
     }
@@ -513,27 +517,6 @@ function getOnlinePlayers(npc) {
     } catch (e) {
         return null;
     }
-}
-
-function getCollectionSize(collection) {
-    if (collection == null) return 0;
-    try {
-        if (typeof collection.length == "number") return collection.length;
-    } catch (e) {}
-    try {
-        if (collection.size != null) return Number(collection.size());
-    } catch (e2) {}
-    return 0;
-}
-
-function getCollectionValue(collection, index) {
-    try {
-        if (typeof collection.length == "number") return collection[index];
-    } catch (e) {}
-    try {
-        if (collection.get != null) return collection.get(index);
-    } catch (e2) {}
-    return null;
 }
 
 function samePlayerUuid(player, uuid) {

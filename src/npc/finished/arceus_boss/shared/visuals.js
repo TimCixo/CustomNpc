@@ -77,8 +77,8 @@ function broadcast(npc, message) {
     try {
         players = npc.getWorld().getAllPlayers();
         if (players == null) return;
-        for (i = 0; i < getCollectionSize(players); i++) {
-            if (getCollectionValue(players, i) != null) getCollectionValue(players, i).message(message);
+        for (i = 0; i < players.length; i++) {
+            if (players[i] != null) players[i].message(message);
         }
     } catch (e) {}
 }
@@ -95,8 +95,8 @@ function playSound(npc, soundId) {
     try {
         players = npc.getWorld().getAllPlayers();
         if (players == null) return;
-        for (i = 0; i < getCollectionSize(players); i++) {
-            if (getCollectionValue(players, i) != null) getCollectionValue(players, i).playSound(soundId, 1.2, 1.0);
+        for (i = 0; i < players.length; i++) {
+            if (players[i] != null) players[i].playSound(soundId, 1.2, 1.0);
         }
     } catch (e) {}
 }
@@ -157,44 +157,14 @@ function launchNearbyPlayers(npc, radius, push, vertical) {
     if (players == null) return;
 
     radiusSq = radius * radius;
-    for (i = 0; i < getCollectionSize(players); i++) {
-        player = getCollectionValue(players, i);
+    for (i = 0; i < players.length; i++) {
+        player = players[i];
         if (player == null) continue;
         dx = player.getX() - npc.getX();
         dz = player.getZ() - npc.getZ();
         if (dx * dx + dz * dz > radiusSq) continue;
         launchPlayerFromNpc(npc, player, push, vertical);
     }
-}
-
-/**
- * @param {any} collection
- * @returns {number}
- */
-function getCollectionSize(collection) {
-    if (collection == null) return 0;
-    try {
-        if (typeof collection.length == "number") return collection.length;
-    } catch (e) {}
-    try {
-        if (collection.size != null) return Number(collection.size());
-    } catch (e2) {}
-    return 0;
-}
-
-/**
- * @param {any} collection
- * @param {number} index
- * @returns {any}
- */
-function getCollectionValue(collection, index) {
-    try {
-        if (typeof collection.length == "number") return collection[index];
-    } catch (e) {}
-    try {
-        if (collection.get != null) return collection.get(index);
-    } catch (e2) {}
-    return null;
 }
 
 /**
