@@ -13,7 +13,6 @@ This package is structured for the GitHub NPC Loader format:
 
 - `init.js` -> `init`
 - `damaged.js` -> `damaged`
-- `attack.js` -> `attack`
 - `meleeAttack.js` -> `meleeAttack`
 - `timer.js` -> `timer`
 - `died.js` -> `died`
@@ -24,32 +23,26 @@ This package is structured for the GitHub NPC Loader format:
 - `__shared.js` - shared alias coordinator
 - `utils.js` - parsing, permissions, small helpers
 - `config.js` - durable config from `arceus_config_json`
-- `lifecycle.js` - durable lifecycle snapshot in `arceus_lifecycle_json`
-- `runtime.js` - runtime bootstrap, reset, mode switching, combat-ready state
-- `visuals.js` - bossbar, sounds, particles, respawn announce, launch effects
-- `clock_link.js` - respawn clock integration
+- `state.js` - live boss state cached in NPC tempdata
+- `npc.js` - hook routing and timer bootstrap
+- `visuals.js` - bossbar, sounds, particles, and launch effects
 - `combat.js` - damaged-event combat flow and live damage tracking
-- `damage.js` - low-level health, damage, mitigation, projectile helpers
 - `phases.js` - phase transitions and phase-specific flow
 - `rewards.js` - phase drop helpers
-- `timers.js` - timer dispatcher, aggro reacquisition, regen, transition ticking
-- `death_flow.js` - custom death countdown, leaderboard timing, rewards, physical death
-- `leaderboard.js` - live and frozen damage snapshots
-- `attacks.js` - melee attack logic, godmode handling, whois cache
+- `death_flow.js` - custom death countdown, final rewards, physical death
+- `attacks.js` - melee attack logic and godmode handling
 
 ## Runtime Model
 
 - Durable state lives in `storeddata`.
 - Live combat/runtime state lives in `tempdata`.
+- Hook files cache the compiled `__shared` factory in tempdata as `__shared_compiled`.
 - Hot runtime data is not spread across many per-hit storeddata keys.
 - Hook files stay thin and delegate to shared modules.
 
 Primary durable keys:
 
 - `arceus_config_json`
-- `arceus_lifecycle_json`
-- `respawn_clock_main_uuid`
-- `respawn_clock_respawn_seconds`
 
 ## Current Behavior
 
@@ -58,34 +51,19 @@ Primary durable keys:
 - phase 2 and phase 3 apply passive regeneration
 - phase 2 and phase 3 strengthen boss attacks
 - phase start applies visuals, sound, bossbar updates, and player launch
-- live damage is tracked in runtime for leaderboard and rewards
+- live damage is tracked in tempdata state for rewards
 - phase 3 lethal damage starts a custom death sequence instead of instant death
 - death flow:
   - starts visible spin/animation
-  - moves Arceus 10 blocks underground exactly once
-  - freezes damage snapshot
-  - prints leaderboard
-  - grants reward Pokemon
-  - prints vanish line
+  - grants reward Pokemon from the final damage ranking
+  - moves Arceus below the arena
+  - plays the configured death sound
   - performs physical NPC death
-  - final `died` hook prints the confirmed death line and notifies the respawn clock
 
 ## Interactions
 
-- normal players do not get technical debug output
-- operator right click shows runtime/debug status
-- operator Shift + right click resets the boss runtime
-- operator clock-linker interaction binds the respawn clock
-
-## Respawn
-
-On respawn/live reset the boss announces:
-
-- `Аркеус возродился [Телепортироваться]`
-
-The teleport part is sent as a clickable chat action that runs:
-
-- `/warp arceus_coliseum`
+- hook files stay thin and delegate to `shared.npc`
+- operator-facing controls should be routed through `npc.js` when added
 
 ## Notes
 
