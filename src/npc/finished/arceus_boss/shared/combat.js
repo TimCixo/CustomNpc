@@ -151,15 +151,24 @@ function unwrapProjectileOwner(attacker) {
  * @returns {string}
  */
 function readUuid(entity) {
+    var value;
+    var mcEntity;
+
     if (entity == null) return "";
     try {
-        return "" + entity.getUUID();
+        value = entity.getUUID();
+        if (value != null && ("" + value) != "") return "" + value;
     } catch (e) {}
     try {
-        return "" + entity.getUniqueID();
+        value = entity.getUniqueID();
+        if (value != null && ("" + value) != "") return "" + value;
     } catch (e2) {}
     try {
-        return "" + entity.getMCEntity().getUUID();
+        mcEntity = entity.getMCEntity();
+        if (mcEntity != null) {
+            value = mcEntity.getUUID();
+            if (value != null && ("" + value) != "") return "" + value;
+        }
     } catch (e3) {}
     return "";
 }
@@ -169,15 +178,25 @@ function readUuid(entity) {
  * @returns {string}
  */
 function readName(entity) {
+    var value;
+    var mcEntity;
+
     if (entity == null) return "";
     try {
-        return "" + entity.getName();
+        value = entity.getName();
+        if (value != null && ("" + value) != "") return "" + value;
     } catch (e) {}
     try {
-        return "" + entity.getDisplayName();
+        value = entity.getDisplayName();
+        if (value != null && ("" + value) != "") return "" + value;
     } catch (e2) {}
     try {
-        return "" + entity.getMCEntity().getName().getString();
+        mcEntity = entity.getMCEntity();
+        if (mcEntity != null && mcEntity.getName != null) {
+            value = mcEntity.getName();
+            if (value != null && value.getString != null) value = value.getString();
+            if (value != null && ("" + value) != "") return "" + value;
+        }
     } catch (e3) {}
     return readUuid(entity);
 }

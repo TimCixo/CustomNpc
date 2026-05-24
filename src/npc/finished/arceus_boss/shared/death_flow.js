@@ -2,6 +2,7 @@
 
 var rewards = require("rewards.js");
 var utils = require("utils.js");
+var visuals = require("visuals.js");
 
 /**
  * @typedef {import("./config.js").ArceusConfig} ArceusConfig
@@ -68,7 +69,11 @@ function distributeFinalRewards(npc, state) {
     var player;
 
     rewards.warmUpPools();
+    if (snapshot.length > 0) {
+        visuals.broadcast(npc, "§6Топ по урону по Аркеусу:");
+    }
     for (i = 0; i < snapshot.length; i++) {
+        visuals.broadcast(npc, "§e#" + (i + 1) + " §f" + snapshot[i].name + " §7- §c" + formatDamage(snapshot[i].damage));
         player = resolveRewardPlayer(npc, snapshot[i], players);
         if (player != null) rewards.giveRankReward(player, i);
     }
@@ -93,6 +98,13 @@ function cloneSnapshot(snapshot) {
         return b.damage - a.damage;
     });
     return out;
+}
+
+function formatDamage(value) {
+    var rounded = Math.floor(Number(value) * 10 + 0.5) / 10;
+    if (isNaN(rounded)) rounded = 0;
+    if (rounded == Math.floor(rounded)) return "" + Math.floor(rounded);
+    return "" + rounded;
 }
 
 function spinNpc(npc, step) {

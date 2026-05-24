@@ -2,10 +2,6 @@
 
 var utils = require("utils.js");
 
-var Reward_ItemEntity = Java.type("net.minecraft.world.entity.item.ItemEntity");
-var Reward_MCItemStack = Java.type("net.minecraft.world.item.ItemStack");
-var Reward_BuiltInRegistries = Java.type("net.minecraft.core.registries.BuiltInRegistries");
-var Reward_ResourceLocation = Java.type("net.minecraft.resources.ResourceLocation");
 var Reward_PokemonProperties = Java.type("com.cobblemon.mod.common.api.pokemon.PokemonProperties");
 var Reward_IVs = Java.type("com.cobblemon.mod.common.pokemon.IVs");
 var Reward_Stats = Java.type("com.cobblemon.mod.common.api.pokemon.stats.Stats");
@@ -21,7 +17,6 @@ var Reward_PlayerExtensionsKt = Java.type("com.cobblemon.mod.common.util.PlayerE
  * @typedef {import("./state.js").ArceusState} ArceusState
  */
 
-var ITEM_TYPE_CACHE = {};
 var REWARD_POOLS_ATTEMPTED = false;
 var LEGENDARY_REWARD_POOL = null;
 var MYTHICAL_REWARD_POOL = null;
@@ -69,10 +64,10 @@ function ensureRewardPoolsLoaded() {
     REWARD_POOLS_ATTEMPTED = true;
     if (loadRewardPoolsFromCobblemonJar()) return;
 
-    LEGENDARY_REWARD_POOL = [];
-    MYTHICAL_REWARD_POOL = [];
-    SUPER_RARE_REWARD_POOL = [];
-    NORMAL_REWARD_POOL = [];
+    LEGENDARY_REWARD_POOL = ["cobblemon:mewtwo", "cobblemon:rayquaza", "cobblemon:lugia", "cobblemon:giratina", "cobblemon:dialga", "cobblemon:palkia"];
+    MYTHICAL_REWARD_POOL = ["cobblemon:mew", "cobblemon:celebi", "cobblemon:jirachi", "cobblemon:deoxys", "cobblemon:victini", "cobblemon:darkrai"];
+    SUPER_RARE_REWARD_POOL = ["cobblemon:dragonite", "cobblemon:garchomp", "cobblemon:metagross", "cobblemon:tyranitar", "cobblemon:salamence"];
+    NORMAL_REWARD_POOL = ["cobblemon:charizard", "cobblemon:blastoise", "cobblemon:venusaur", "cobblemon:lucario", "cobblemon:arcanine"];
 }
 
 function areRewardPoolsLoaded() {
@@ -414,28 +409,32 @@ function clamp(value, min, max) {
  * @param {ArceusConfig} config
  */
 function spawnScatterItem(npc, itemId, amount, config) {
-    var itemType;
-    var stack;
-    var level;
+    var world;
+    var item;
     var drop;
+    var vx;
+    var vy;
+    var vz;
 
     if (!utils.hasText(itemId)) return;
 
     try {
-        itemType = getCachedItemType(itemId);
-        if (itemType == null) return;
+        world = npc.getWorld();
+        item = world.createItem(itemId, Math.max(1, Math.floor(amount)));
+        if (item == null || item.isEmpty()) return;
 
-        stack = new Reward_MCItemStack(itemType, Math.max(1, Math.floor(amount)));
-        if (stack == null || stack.isEmpty()) return;
+        drop = npc.dropItem(item);
+        vx = randomSigned(readRewardNumber(config, "pinataSpeedMin", 0.20), readRewardNumber(config, "pinataSpeedMax", 0.55));
+        vy = readRewardNumber(config, "pinataVerticalBoost", 0.28) + Math.random() * 0.18;
+        vz = randomSigned(readRewardNumber(config, "pinataSpeedMin", 0.20), readRewardNumber(config, "pinataSpeedMax", 0.55));
 
-        level = npc.getMCEntity().level();
-        drop = new Reward_ItemEntity(level, npc.getX(), npc.getY() + 1.2, npc.getZ(), stack);
-        drop.setDeltaMovement(
-            randomSigned(readRewardNumber(config, "pinataSpeedMin", 0.20), readRewardNumber(config, "pinataSpeedMax", 0.55)),
-            readRewardNumber(config, "pinataVerticalBoost", 0.28) + Math.random() * 0.18,
-            randomSigned(readRewardNumber(config, "pinataSpeedMin", 0.20), readRewardNumber(config, "pinataSpeedMax", 0.55))
-        );
-        level.addFreshEntity(drop);
+        if (drop != null) {
+            try {
+                drop.setMotionX(vx);
+                drop.setMotionY(vy);
+                drop.setMotionZ(vz);
+            } catch (motionError) {}
+        }
     } catch (e) {}
 }
 
@@ -467,18 +466,6 @@ function dropRandomGems(npc, count, config) {
     for (i = 0; i < count; i++) {
         spawnScatterItem(npc, pickRandomGemId(), 1, config);
     }
-}
-
-function getCachedItemType(itemId) {
-    var item;
-    if (ITEM_TYPE_CACHE[itemId] !== undefined) return ITEM_TYPE_CACHE[itemId];
-    try {
-        item = Reward_BuiltInRegistries.ITEM.get(Reward_ResourceLocation.parse(itemId));
-    } catch (e) {
-        item = null;
-    }
-    ITEM_TYPE_CACHE[itemId] = item;
-    return item;
 }
 
 function pickRandomGemId() {
