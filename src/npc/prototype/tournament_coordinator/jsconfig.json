@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "hooks/**/*.js",
+    "shared/**/*.js",
+    "../../../../types/**/*.d.ts"
+  ]
+}
