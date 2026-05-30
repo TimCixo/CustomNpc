@@ -11,9 +11,9 @@ var STATUS_TEXT_ID = 9823;
 var GUI_NPC_KEY = "tournament_registration_gui_npc";
 
 var ACTIONS = [
-    "Start: Відкрити реєстрацію",
-    "Stop: Закрити реєстрацію",
-    "Clear: Очистити список"
+    "Start: Open registration",
+    "Stop: Close registration",
+    "Clear: Clear registered list"
 ];
 
 /**
@@ -25,7 +25,7 @@ function openAdminGui(npc, player) {
         player.getTempdata().put(GUI_NPC_KEY, npc);
     } catch (e) {}
 
-    player.showCustomGui(createAdminGui(npc, player, "Вибери дію."));
+    player.showCustomGui(createAdminGui(npc, player, "Choose an action."));
 }
 
 /**
@@ -65,13 +65,13 @@ function onGuiScroll(event) {
 
     if (index == 0) {
         registration.setOpen(npc, true);
-        status = "Реєстрацію відкрито.";
+        status = "Registration opened.";
     } else if (index == 1) {
         registration.setOpen(npc, false);
-        status = "Реєстрацію закрито.";
+        status = "Registration closed.";
     } else if (index == 2) {
         registration.clearRegistrations(npc);
-        status = "Список зареєстрованих очищено.";
+        status = "Registered list cleared.";
     } else {
         return;
     }

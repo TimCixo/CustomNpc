@@ -1,8 +1,8 @@
 var registration = require("registration.js");
 var gui = require("gui.js");
 
-var REGISTRATION_CLOSED_MESSAGE = "§eРеєстрація на турнір зараз закрита.";
-var REGISTRATION_SUCCESS_MESSAGE = "§aТебе зареєстровано на турнір.";
+var REGISTRATION_CLOSED_MESSAGE = "§eРегистрация на турнир сейчас закрыта.";
+var REGISTRATION_SUCCESS_MESSAGE = "§aТы зарегистрирован на турнир.";
 
 /**
  * @param {any} event

@@ -7,7 +7,7 @@ CustomNPCs Unofficial 1.21.1 prototype for coordinating Cobblemon tournament due
 - Right click by an operator opens the coordinator GUI.
 - Non-operators receive a denial message.
 - The GUI has two pages:
-  - `Керування`
+  - `Manage`
   - `JSON`
 - Page switching uses safe scroll pseudo-buttons.
 
@@ -15,20 +15,20 @@ CustomNPCs Unofficial 1.21.1 prototype for coordinating Cobblemon tournament due
 
 The management page has three columns:
 
-- `Перший гравець`
+- `First Player`
   - player selector loaded from saved JSON
   - check
   - teleport to arena
   - teleport to balcony
   - teleport to stands
   - announce as winner
-- `Сумісне`
+- `Shared`
   - check both selected players
   - teleport both players to their arena points
   - teleport both players to their balcony points
   - teleport both players to the common stands point
   - announce duel
-- `Другий гравець`
+- `Second Player`
   - mirrors the first player column
 
 ## JSON Page
@@ -57,8 +57,8 @@ Default shape:
     "common": { "x": 5, "y": 85, "z": 25 }
   },
   "messages": {
-    "winner": "§6Переможець дуелі: §e{player}§6!",
-    "duel": "§bДуель: §e{first} §fvs §e{second}§b!"
+    "winner": "§6Победитель: §e{player}§6!",
+    "duel": "§bДуэль: §e{first} §fvs §e{second}§b!"
   }
 }
 ```

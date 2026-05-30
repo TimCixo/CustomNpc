@@ -6,9 +6,9 @@ CustomNPCs Unofficial 1.21.1 prototype for Cobblemon tournament registration.
 
 - `Shift + Right Click` by an operator opens the admin GUI.
 - Admin GUI uses safe scroll pseudo-buttons:
-  - `Start: Відкрити реєстрацію`
-  - `Stop: Закрити реєстрацію`
-  - `Clear: Очистити список`
+  - `Start: Open registration`
+  - `Stop: Close registration`
+  - `Clear: Clear registered list`
 - Normal right click registers or updates the player while registration is open.
 - The admin text area shows the registered players as JSON.
 

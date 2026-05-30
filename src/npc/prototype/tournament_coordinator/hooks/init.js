@@ -6,12 +6,12 @@ var SHARED_COMPILED_KEY = "__shared_compiled";
 
 var TOURNAMENT_COORDINATOR_CONFIG = {
     arena: {
-        first: { x: 0, y: 80, z: 0 },
-        second: { x: 10, y: 80, z: 0 }
+        first: { x: 573, y: 65, z: 3289 },
+        second: { x: 573, y: 65, z: 3335 }
     },
     balcony: {
-        first: { x: 0, y: 90, z: 10 },
-        second: { x: 10, y: 90, z: 10 }
+        first: { x: 570, y: 70, z: 3309 },
+        second: { x: 570, y: 70, z: 3315 }
     },
     stands: {
         common: { x: 5, y: 85, z: 25 }

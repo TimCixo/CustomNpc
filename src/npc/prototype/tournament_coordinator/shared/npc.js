@@ -2,7 +2,7 @@
 
 var gui = require("gui.js");
 
-var NOT_OPERATOR_MESSAGE = "§cЦей NPC доступний тільки операторам.";
+var NOT_OPERATOR_MESSAGE = "§cЭтот NPC доступен только операторам.";
 
 /**
  * @param {any} event

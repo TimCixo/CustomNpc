@@ -47,7 +47,7 @@ function getPlayerNames(npc) {
         if (list[i] != null && hasText(list[i].name)) names.push("" + list[i].name);
     }
 
-    if (names.length < 1) names.push("<немає гравців>");
+    if (names.length < 1) names.push("<no players>");
     return names;
 }
 
@@ -74,10 +74,10 @@ function parseList(raw) {
     try {
         parsed = JSON.parse("" + raw);
     } catch (e) {
-        throw "JSON невалідний: " + e;
+        throw "Invalid JSON: " + e;
     }
 
-    if (parsed == null || parsed.length == null) throw "JSON має бути масивом з tournament_registration.";
+    if (parsed == null || parsed.length == null) throw "JSON must be an array from tournament_registration.";
     return parsed;
 }
 

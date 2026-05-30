@@ -21,24 +21,24 @@ var FIRST_INDEX_KEY = "tournament_coordinator_first_index";
 var SECOND_INDEX_KEY = "tournament_coordinator_second_index";
 
 var NAV_ACTIONS = [
-    "Керування",
+    "Manage",
     "JSON"
 ];
 
 var PLAYER_ACTIONS = [
-    "Перевірити",
-    "Телепортувати на арену",
-    "Телепортувати на балкон",
-    "Телепортувати на трибуни",
-    "Оголосити переможцем"
+    "Check",
+    "Teleport to arena",
+    "Teleport to balcony",
+    "Teleport to stands",
+    "Announce winner"
 ];
 
 var SHARED_ACTIONS = [
-    "Перевірити",
-    "Телепортувати на арену",
-    "Телепортувати на балкон",
-    "Телепортувати на трибуни",
-    "Оголосити дуель"
+    "Check",
+    "Teleport to arena",
+    "Teleport to balcony",
+    "Teleport to stands",
+    "Announce duel"
 ];
 
 var SAVE_ACTIONS = [
@@ -54,7 +54,7 @@ function openAdminGui(npc, player) {
         player.getTempdata().put(GUI_NPC_KEY, npc);
     } catch (e) {}
 
-    player.showCustomGui(createManageGui(npc, player, "Вибери гравців та дію."));
+    player.showCustomGui(createManageGui(npc, player, "Choose players and an action."));
 }
 
 /**
@@ -79,13 +79,13 @@ function onGuiScroll(event) {
 
     if (event.scroll.getID() == FIRST_PLAYER_SCROLL_ID) {
         setSelection(event.player, FIRST_INDEX_KEY, getSelectedIndex(event.scroll));
-        reopenManage(event.player, npc, "Першого гравця вибрано.");
+        reopenManage(event.player, npc, "First player selected.");
         return;
     }
 
     if (event.scroll.getID() == SECOND_PLAYER_SCROLL_ID) {
         setSelection(event.player, SECOND_INDEX_KEY, getSelectedIndex(event.scroll));
-        reopenManage(event.player, npc, "Другого гравця вибрано.");
+        reopenManage(event.player, npc, "Second player selected.");
         return;
     }
 
@@ -126,9 +126,9 @@ function createManageGui(npc, player, status) {
     gui.addScroll(NAV_SCROLL_ID, 390, 8, 160, 30, NAV_ACTIONS);
     gui.addColoredLine(2, 10, 38, 540, 38, 0x4A8F80, 1.5);
 
-    addPlayerColumn(gui, "Перший гравець", 10, FIRST_PLAYER_SCROLL_ID, FIRST_ACTION_SCROLL_ID, names);
-    addSharedColumn(gui, "Сумісне", 198);
-    addPlayerColumn(gui, "Другий гравець", 386, SECOND_PLAYER_SCROLL_ID, SECOND_ACTION_SCROLL_ID, names);
+    addPlayerColumn(gui, "First Player", 10, FIRST_PLAYER_SCROLL_ID, FIRST_ACTION_SCROLL_ID, names);
+    addSharedColumn(gui, "Shared", 198);
+    addPlayerColumn(gui, "Second Player", 386, SECOND_PLAYER_SCROLL_ID, SECOND_ACTION_SCROLL_ID, names);
 
     gui.addTextArea(STATUS_TEXT_ID, 10, 284, 540, 16);
     setGuiText(gui, STATUS_TEXT_ID, status);
@@ -190,9 +190,9 @@ function handleNav(event, npc) {
     var index = getSelectedIndex(event.scroll);
 
     if (index == 0) {
-        event.player.showCustomGui(createManageGui(npc, event.player, "Сторінка керування."));
+        event.player.showCustomGui(createManageGui(npc, event.player, "Management page."));
     } else if (index == 1) {
-        event.player.showCustomGui(createJsonGui(npc, event.player, "Встав JSON з tournament_registration і натисни Save."));
+        event.player.showCustomGui(createJsonGui(npc, event.player, "Paste JSON from tournament_registration and press Save."));
     }
 }
 
@@ -205,7 +205,7 @@ function handleSaveJson(event, npc) {
 
     try {
         registrations.saveRaw(npc, raw);
-        event.player.showCustomGui(createJsonGui(npc, event.player, "JSON збережено."));
+        event.player.showCustomGui(createJsonGui(npc, event.player, "JSON saved."));
     } catch (e) {
         setGuiText(event.gui, STATUS_TEXT_ID, "" + e);
         safeUpdate(event.gui);
@@ -225,7 +225,7 @@ function handlePlayerAction(event, npc, side, actionIndex) {
     var status = "";
 
     if (entry == null) {
-        reopenManage(event.player, npc, "Гравця не вибрано.");
+        reopenManage(event.player, npc, "No player selected.");
         return;
     }
 
@@ -260,7 +260,7 @@ function handleSharedAction(event, npc, actionIndex) {
     var status = "";
 
     if (first == null || second == null) {
-        reopenManage(event.player, npc, "Потрібно вибрати двох гравців.");
+        reopenManage(event.player, npc, "Select two players.");
         return;
     }
 
@@ -291,13 +291,13 @@ function handleSharedAction(event, npc, actionIndex) {
 function teleportEntry(npc, entry, target, point) {
     void npc;
 
-    if (target == null) return "§c" + entry.name + " не онлайн.";
+    if (target == null) return "§c" + entry.name + " is offline.";
 
     try {
         target.setPosition(point.x, point.y, point.z);
-        return "§a" + entry.name + " телепортовано.";
+        return "§a" + entry.name + " teleported.";
     } catch (e) {
-        return "§cНе вдалося телепортувати " + entry.name + ": " + e;
+        return "§cCould not teleport " + entry.name + ": " + e;
     }
 }
 
@@ -310,7 +310,7 @@ function teleportEntry(npc, entry, target, point) {
 function announceWinner(npc, cfg, entry) {
     var text = replaceAll(cfg.messages.winner, "{player}", entry.name);
     broadcast(npc, text);
-    return "Оголошено переможця: " + entry.name;
+    return "Winner announced: " + entry.name;
 }
 
 /**
@@ -324,7 +324,7 @@ function announceDuel(npc, cfg, first, second) {
     var text = replaceAll(cfg.messages.duel, "{first}", first.name);
     text = replaceAll(text, "{second}", second.name);
     broadcast(npc, text);
-    return "Оголошено дуель: " + first.name + " vs " + second.name;
+    return "Duel announced: " + first.name + " vs " + second.name;
 }
 
 /**
