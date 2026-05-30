@@ -1,6 +1,5 @@
 // @ts-check
 
-var config = require("config.js");
 var gui = require("gui.js");
 
 var NOT_OPERATOR_MESSAGE = "§cЦей NPC доступний тільки операторам.";
@@ -9,7 +8,7 @@ var NOT_OPERATOR_MESSAGE = "§cЦей NPC доступний тільки опе
  * @param {any} event
  */
 function init(event) {
-    config.get(event.npc);
+    void event;
 }
 
 /**
